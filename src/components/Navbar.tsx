@@ -1,9 +1,10 @@
 import { NavLink } from "react-router-dom";
-import { Brain, Home, Settings, Info } from "lucide-react";
+import { Brain, Home, Settings, Info, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { to: "/", label: "首页", icon: Home },
+  { to: "/vlm-demo", label: "VLM Demo", icon: Sparkles },
   { to: "/settings", label: "设置", icon: Settings },
   { to: "/about", label: "关于", icon: Info },
 ];

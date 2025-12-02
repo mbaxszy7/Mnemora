@@ -1,6 +1,6 @@
 import { createHashRouter } from "react-router-dom";
 import RootLayout from "@/layouts/RootLayout";
-import { HomePage, SettingsPage, AboutPage, NotFoundPage } from "@/pages";
+import { HomePage, SettingsPage, AboutPage, NotFoundPage, VLMDemoPage } from "@/pages";
 
 // 使用 HashRouter 适配 Electron 环境
 export const router = createHashRouter([
@@ -19,6 +19,10 @@ export const router = createHashRouter([
       {
         path: "about",
         element: <AboutPage />,
+      },
+      {
+        path: "vlm-demo",
+        element: <VLMDemoPage />,
       },
       {
         path: "*",

@@ -11,21 +11,24 @@ export default defineConfig({
     react(),
     electron({
       main: {
-        // Shortcut of `build.lib.entry`.
         entry: "electron/main.ts",
+        onstart(args) {
+          // 只在首次启动时启动 Electron，后续主进程变化时只重启 Electron 进程
+          // 而不是整个 Vite dev server
+          args.startup();
+        },
       },
       preload: {
-        // Shortcut of `build.rollupOptions.input`.
-        // Preload scripts may contain Web assets, so use the `build.rollupOptions.input` instead `build.lib.entry`.
         input: path.join(__dirname, "electron/preload.ts"),
+        onstart(args) {
+          // preload 变化时只刷新渲染进程窗口，不重启整个应用
+          args.reload();
+        },
       },
-      // Ployfill the Electron and Node.js API for Renderer process.
-      // If you want use Node.js in Renderer process, the `nodeIntegration` needs to be enabled in the Main process.
-      // See https://github.com/electron-vite/vite-plugin-electron-renderer
+      // Polyfill the Electron and Node.js API for Renderer process.
       renderer:
         process.env.NODE_ENV === "test"
-          ? // https://github.com/electron-vite/vite-plugin-electron-renderer/issues/78#issuecomment-2053600808
-            undefined
+          ? undefined
           : {},
     }),
   ],

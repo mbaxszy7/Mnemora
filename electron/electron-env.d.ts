@@ -24,4 +24,8 @@ declare namespace NodeJS {
 // Used in Renderer process, expose in `preload.ts`
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
+  vlmApi: {
+    analyze(imageData: string, mimeType: string): Promise<import('./types/vlm').VLMAnalyzeResponse>;
+    getStatus(): Promise<import('./types/vlm').IPCResult<import('./types/vlm').VLMStatusResponse>>;
+  }
 }

@@ -2,8 +2,11 @@ import { app, BrowserWindow } from 'electron'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { initialize as initializeAISDK } from './services/ai-sdk'
+import { registerVLMHandlers } from './ipc/vlm-handlers'
 
-const require = createRequire(import.meta.url)
+// createRequire is available for dynamic requires if needed
+void createRequire(import.meta.url)
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 // The built directory structure
@@ -47,6 +50,30 @@ function createWindow() {
   }
 }
 
+/**
+ * Initialize AI SDK with API key from environment
+ * Logs warning if API key is not configured
+ */
+function initializeServices() {
+  try {
+    // Initialize AI SDK - will use OPENAI_API_KEY from environment
+    initializeAISDK({
+      name:"MOONSHOT",
+      baseURL:"https://api.moonshot.cn/v1",
+      model:"kimi-latest",
+      apiKey:"sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg"
+    })
+    console.log('[AI SDK] Initialized successfully')
+  } catch (error) {
+    // Log warning but don't crash - user can configure API key later
+    console.warn('[AI SDK] Initialization warning:', error instanceof Error ? error.message : error)
+  }
+
+  // Register IPC handlers for VLM operations
+  registerVLMHandlers()
+  console.log('[IPC] VLM handlers registered')
+}
+
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
@@ -65,4 +92,8 @@ app.on('activate', () => {
   }
 })
 
-app.whenReady().then(createWindow)
+app.whenReady().then(() => {
+  // Initialize services before creating window
+  initializeServices()
+  createWindow()
+})

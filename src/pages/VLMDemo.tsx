@@ -24,37 +24,36 @@ interface DemoState {
  * Maps error codes to user-friendly messages
  */
 export function getErrorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null) {
+  if (typeof error === "object" && error !== null) {
     const err = error as { code?: string; message?: string };
     switch (err.code) {
-      case 'API_KEY_MISSING':
-        return '请配置 OpenAI API Key';
-      case 'VLM_ERROR':
-        return '图片分析失败，请重试';
-      case 'VALIDATION_ERROR':
-        return '响应格式异常';
-      case 'IMAGE_TOO_LARGE':
-        return '图片过大，请选择小于 20MB 的图片';
+      case "API_KEY_MISSING":
+        return "请配置 OpenAI API Key";
+      case "VLM_ERROR":
+        return "图片分析失败，请重试";
+      case "VALIDATION_ERROR":
+        return "响应格式异常";
+      case "IMAGE_TOO_LARGE":
+        return "图片过大，请选择小于 20MB 的图片";
       default:
-        if (err.message && typeof err.message === 'string') {
+        if (err.message && typeof err.message === "string") {
           return err.message;
         }
     }
   }
-  if (typeof error === 'string') {
+  if (typeof error === "string") {
     return error;
   }
-  return '发生未知错误，请重试';
+  return "发生未知错误，请重试";
 }
 
 /**
  * Validates if a file is a supported image type
  */
 export function isValidImageFile(file: File): boolean {
-  const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+  const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
   return validTypes.includes(file.type);
 }
-
 
 export default function VLMDemoPage() {
   const [state, setState] = useState<DemoState>({
@@ -76,17 +75,17 @@ export default function VLMDemoPage() {
     if (!file) return;
 
     if (!isValidImageFile(file)) {
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
-        error: '请选择有效的图片文件 (JPEG, PNG, WebP, GIF)',
+        error: "请选择有效的图片文件 (JPEG, PNG, WebP, GIF)",
       }));
       return;
     }
 
     // Create preview URL
     const previewUrl = URL.createObjectURL(file);
-    
-    setState(prev => ({
+
+    setState((prev) => ({
       ...prev,
       selectedImage: file,
       imagePreview: previewUrl,
@@ -98,7 +97,7 @@ export default function VLMDemoPage() {
   const handleAnalyze = async () => {
     if (!state.selectedImage) return;
 
-    setState(prev => ({ ...prev, isAnalyzing: true, error: null }));
+    setState((prev) => ({ ...prev, isAnalyzing: true, error: null }));
 
     try {
       // Read file as base64
@@ -107,7 +106,7 @@ export default function VLMDemoPage() {
         reader.onload = () => {
           const result = reader.result as string;
           // Remove data URL prefix to get pure base64
-          const base64 = result.split(',')[1];
+          const base64 = result.split(",")[1];
           resolve(base64);
         };
         reader.onerror = reject;
@@ -119,14 +118,14 @@ export default function VLMDemoPage() {
       const response = await window.vlmApi.analyze(imageData, state.selectedImage.type);
 
       if (response.success && response.data) {
-        setState(prev => ({
+        setState((prev) => ({
           ...prev,
           isAnalyzing: false,
           result: response.data ?? null,
           error: null,
         }));
       } else {
-        setState(prev => ({
+        setState((prev) => ({
           ...prev,
           isAnalyzing: false,
           result: null,
@@ -134,7 +133,7 @@ export default function VLMDemoPage() {
         }));
       }
     } catch (err) {
-      setState(prev => ({
+      setState((prev) => ({
         ...prev,
         isAnalyzing: false,
         result: null,
@@ -147,9 +146,7 @@ export default function VLMDemoPage() {
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
         <h1 className="text-3xl font-bold">VLM Demo</h1>
-        <p className="text-muted-foreground mt-2">
-          选择一张图片，使用 AI 分析图片内容
-        </p>
+        <p className="text-muted-foreground mt-2">选择一张图片，使用 AI 分析图片内容</p>
       </div>
 
       {/* Image Selection */}
@@ -168,7 +165,7 @@ export default function VLMDemoPage() {
             onChange={handleFileChange}
             className="hidden"
           />
-          
+
           <Button onClick={handleSelectImage} variant="outline" className="w-full">
             <ImagePlus className="mr-2 h-4 w-4" />
             选择图片文件
@@ -190,11 +187,7 @@ export default function VLMDemoPage() {
 
           {/* Analyze Button */}
           {state.selectedImage && (
-            <Button 
-              onClick={handleAnalyze} 
-              disabled={state.isAnalyzing}
-              className="w-full"
-            >
+            <Button onClick={handleAnalyze} disabled={state.isAnalyzing} className="w-full">
               {state.isAnalyzing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -255,7 +248,7 @@ export default function VLMDemoPage() {
               <div>
                 <p className="text-sm font-medium mb-2">识别到的文字:</p>
                 <p className="text-muted-foreground bg-muted p-3 rounded-md">
-                  {state.result.text.join('\n')}
+                  {state.result.text.join("\n")}
                 </p>
               </div>
             )}

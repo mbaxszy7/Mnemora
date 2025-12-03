@@ -3,13 +3,6 @@ import * as fc from "fast-check";
 import { AISDKService, type AISDKConfig } from "./ai-sdk-service";
 import { ServiceError, ErrorCode } from "@shared/errors";
 
-/**
- * **Feature: ai-sdk-refactor, Property 1: Singleton Invariant (AISDKService)**
- * **Validates: Requirements 2.1**
- *
- * _For any_ singleton service class (AISDKService), multiple calls to getInstance()
- * SHALL return the exact same object reference.
- */
 describe("AISDKService Singleton Invariant", () => {
   beforeEach(() => {
     // Reset the singleton before each test to ensure isolation
@@ -64,15 +57,6 @@ describe("AISDKService Singleton Invariant", () => {
   });
 });
 
-/**
- * **Feature: ai-sdk-refactor, Property 5: Service Initialization Behavior**
- * **Validates: Requirements 2.2, 2.3, 3.4**
- *
- * _For any_ AISDKConfig with empty or missing apiKey, initialize() SHALL throw
- * ServiceError with API_KEY_MISSING code.
- * _For any_ call to getClient() before initialization, it SHALL throw ServiceError
- * with NOT_INITIALIZED code.
- */
 describe("AISDKService Initialization Behavior", () => {
   beforeEach(() => {
     AISDKService.resetInstance();

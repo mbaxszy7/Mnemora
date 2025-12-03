@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v4";
 import { IPCResult } from "./ipc-types";
 
 /**
@@ -13,6 +13,13 @@ export const VLMResponseSchema = z.object({
 });
 
 export type VLMResponse = z.infer<typeof VLMResponseSchema>;
+
+/**
+ * Generate JSON Schema with descriptions as the prompt example
+ * The schema itself serves as both format specification and field documentation
+ * Zod v4 has built-in toJsonSchema support
+ */
+export const VLM_RESPONSE_JSON_SCHEMA = z.toJSONSchema(VLMResponseSchema);
 
 /**
  * VLM Analyze Request

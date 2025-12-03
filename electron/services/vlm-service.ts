@@ -7,8 +7,11 @@ import {
   MAX_IMAGE_SIZE,
   SUPPORTED_IMAGE_TYPES,
   type SupportedImageType,
+  VLM_RESPONSE_JSON_SCHEMA,
 } from "@shared/vlm-types";
 import { toIPCError } from "@shared/ipc-types";
+import { VLM_PROMPT_TEMPLATE } from "@shared/prompts";
+import { getLogger } from "./logger";
 
 /**
  * VLMService - Singleton class for Vision Language Model operations
@@ -22,6 +25,7 @@ import { toIPCError } from "@shared/ipc-types";
 export class VLMService {
   private static instance: VLMService | null = null;
   private aiService: AISDKService;
+  private logger = getLogger("VLMService");
 
   /**
    * Private constructor to enforce singleton pattern
@@ -77,34 +81,23 @@ export class VLMService {
       const base64Image = imageBuffer.toString("base64");
       const dataUrl = `data:${mimeType};base64,${base64Image}`;
 
+      const prompt = await VLM_PROMPT_TEMPLATE.user.invoke({
+        vlm_response_schema: JSON.stringify(VLM_RESPONSE_JSON_SCHEMA, null, 2),
+      });
+
+      this.logger.info(`VLM prompt: ${prompt.value}`);
+
       // Call VLM with generateText and parse JSON response manually
       const result = await generateText({
         model: client,
-        system:
-          "You are an image analysis expert. Your task is to analyze the content of images and return results in JSON format.",
+        system: VLM_PROMPT_TEMPLATE.system,
         messages: [
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: `Please analyze this image and return the result in JSON format. The JSON format should be:
-{
-  "title": "A brief title of the image content",
-  "description": "A detailed description of the image content",
-  "objects": ["object1", "object2"],
-  "text": ["recognized text1", "recognized text2"],
-  "confidence": 85
-}
-
-Notes:
-- title: string, a brief title of the image
-- description: string, detailed description
-- objects: string array, list of recognized objects
-- text: string array (optional), text found in the image, can be omitted or empty array if no text
-- confidence: number 0-100, analysis confidence level
-
-Please return only JSON, no other text.`,
+                text: prompt.value,
               },
               {
                 type: "image",

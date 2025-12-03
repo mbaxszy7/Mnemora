@@ -95,16 +95,15 @@ class MainI18nService {
 
   /**
    * Get translation text (synchronous method, available after initialization)
-   * @param key - Translation key (e.g., "common.buttons.save")
-   * @param options - Optional interpolation values
-   * @returns Translated string or the key if not initialized
+   * Proxies to i18next.t with strict type checking
    */
-  t(key: string, options?: Record<string, string | number>): string {
+  t(...args: Parameters<i18n["t"]>): string {
     if (!this.initialized || !this.i18nInstance) {
+      const key = args[0];
       this.logger.warn({ key }, "Translation requested before initialization");
-      return key;
+      return String(Array.isArray(key) ? key[0] : key);
     }
-    return this.i18nInstance.t(key, options);
+    return this.i18nInstance.t(...args);
   }
 
   /**

@@ -4,6 +4,12 @@ import electron from "vite-plugin-electron/simple";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+// Shared alias configuration for both renderer and electron builds
+const sharedAlias = {
+  "@": path.resolve(__dirname, "./src"),
+  "@shared": path.resolve(__dirname, "./shared"),
+};
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
@@ -17,6 +23,11 @@ export default defineConfig({
           // 而不是整个 Vite dev server
           args.startup();
         },
+        vite: {
+          resolve: {
+            alias: sharedAlias,
+          },
+        },
       },
       preload: {
         input: path.join(__dirname, "electron/preload.ts"),
@@ -24,17 +35,17 @@ export default defineConfig({
           // preload 变化时只刷新渲染进程窗口，不重启整个应用
           args.reload();
         },
+        vite: {
+          resolve: {
+            alias: sharedAlias,
+          },
+        },
       },
       // Polyfill the Electron and Node.js API for Renderer process.
-      renderer:
-        process.env.NODE_ENV === "test"
-          ? undefined
-          : {},
+      renderer: process.env.NODE_ENV === "test" ? undefined : {},
     }),
   ],
   resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "./src"),
-    },
+    alias: sharedAlias,
   },
 });

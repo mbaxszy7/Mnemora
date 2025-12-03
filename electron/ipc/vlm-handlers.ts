@@ -1,15 +1,9 @@
-import { ipcMain, IpcMainInvokeEvent } from 'electron';
-import { analyzeImageFromBase64 } from '../services/vlm-service';
-import { isInitialized, getModel } from '../services/ai-sdk';
-import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse, IPCResult } from '../types/vlm';
-
-/**
- * IPC Channel definitions for VLM operations
- */
-export const VLM_CHANNELS = {
-  ANALYZE: 'vlm:analyze',
-  STATUS: 'vlm:status',
-} as const;
+import { IpcMainInvokeEvent } from "electron";
+import { VLMService } from "../services/vlm-service";
+import { AISDKService } from "../services/ai-sdk-service";
+import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
+import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
+import { IPCHandlerRegistry } from "./handler-registry";
 
 /**
  * Handle VLM analyze request
@@ -21,40 +15,29 @@ async function handleAnalyze(
 ): Promise<VLMAnalyzeResponse> {
   try {
     const { imageData, mimeType } = request;
-    
+
     // Validate request
-    if (!imageData || typeof imageData !== 'string') {
+    if (!imageData || typeof imageData !== "string") {
       return {
         success: false,
-        error: {
-          code: 'UNKNOWN',
-          message: '无效的图片数据',
-        },
+        error: toIPCError(new Error("无效的图片数据")),
       };
     }
-    
-    if (!mimeType || typeof mimeType !== 'string') {
+
+    if (!mimeType || typeof mimeType !== "string") {
       return {
         success: false,
-        error: {
-          code: 'UNKNOWN',
-          message: '无效的 MIME 类型',
-        },
+        error: toIPCError(new Error("无效的 MIME 类型")),
       };
     }
-    
-    // Call VLM service
-    const result = await analyzeImageFromBase64(imageData, mimeType);
-    return result;
+
+    // Use VLMService singleton
+    const vlmService = VLMService.getInstance();
+    return await vlmService.analyzeImageFromBase64(imageData, mimeType);
   } catch (error) {
-    // Serialize error properly for IPC
     return {
       success: false,
-      error: {
-        code: 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-        details: error instanceof Error ? error.stack : undefined,
-      },
+      error: toIPCError(error),
     };
   }
 }
@@ -63,13 +46,12 @@ async function handleAnalyze(
  * Handle VLM status request
  * Returns initialization status and current model
  */
-async function handleStatus(
-  _event: IpcMainInvokeEvent
-): Promise<IPCResult<VLMStatusResponse>> {
+async function handleStatus(_event: IpcMainInvokeEvent): Promise<IPCResult<VLMStatusResponse>> {
   try {
-    const initialized = isInitialized();
-    const model = getModel();
-    
+    const aiService = AISDKService.getInstance();
+    const initialized = aiService.isInitialized();
+    const model = aiService.getModel();
+
     return {
       success: true,
       data: {
@@ -80,28 +62,25 @@ async function handleStatus(
   } catch (error) {
     return {
       success: false,
-      error: {
-        code: 'UNKNOWN',
-        message: error instanceof Error ? error.message : String(error),
-      },
+      error: toIPCError(error),
     };
   }
 }
 
 /**
- * Register all VLM IPC handlers
+ * Register all VLM IPC handlers using IPCHandlerRegistry
  * Should be called during app initialization
  */
 export function registerVLMHandlers(): void {
-  ipcMain.handle(VLM_CHANNELS.ANALYZE, handleAnalyze);
-  ipcMain.handle(VLM_CHANNELS.STATUS, handleStatus);
-}
+  const registry = IPCHandlerRegistry.getInstance();
 
-/**
- * Unregister all VLM IPC handlers
- * Useful for cleanup and testing
- */
-export function unregisterVLMHandlers(): void {
-  ipcMain.removeHandler(VLM_CHANNELS.ANALYZE);
-  ipcMain.removeHandler(VLM_CHANNELS.STATUS);
+  registry.registerHandler<VLMAnalyzeRequest, VLMAnalyzeResponse>(
+    IPC_CHANNELS.VLM_ANALYZE,
+    handleAnalyze
+  );
+
+  registry.registerHandler<void, IPCResult<VLMStatusResponse>>(
+    IPC_CHANNELS.VLM_STATUS,
+    handleStatus
+  );
 }

@@ -1,8 +1,8 @@
 import { z } from "zod";
+import { IPCResult } from "./ipc-types";
 
 /**
- * VLM Response Schema - Defines the structure of VLM analysis results
- * Used for structured output validation with AI SDK generateObject
+ * VLM 响应 Schema - 用于结构化输出验证
  */
 export const VLMResponseSchema = z.object({
   title: z.string().describe("图片内容的简短标题"),
@@ -15,35 +15,7 @@ export const VLMResponseSchema = z.object({
 export type VLMResponse = z.infer<typeof VLMResponseSchema>;
 
 /**
- * IPC Error codes for VLM operations
- */
-export type IPCErrorCode =
-  | "API_KEY_MISSING"
-  | "VLM_ERROR"
-  | "VALIDATION_ERROR"
-  | "IMAGE_TOO_LARGE"
-  | "UNKNOWN";
-
-/**
- * IPC Error structure for error responses
- */
-export interface IPCError {
-  code: IPCErrorCode;
-  message: string;
-  details?: unknown;
-}
-
-/**
- * Generic IPC Result wrapper for all IPC responses
- */
-export interface IPCResult<T> {
-  success: boolean;
-  data?: T;
-  error?: IPCError;
-}
-
-/**
- * VLM Analyze Request payload
+ * VLM 分析请求
  */
 export interface VLMAnalyzeRequest {
   imageData: string; // base64 encoded
@@ -51,14 +23,31 @@ export interface VLMAnalyzeRequest {
 }
 
 /**
- * VLM Analyze Response type
+ * VLM 分析响应
  */
 export type VLMAnalyzeResponse = IPCResult<VLMResponse>;
 
 /**
- * VLM Status Response type
+ * VLM 状态响应
  */
 export interface VLMStatusResponse {
   initialized: boolean;
   model: string;
 }
+
+/**
+ * 支持的图片 MIME 类型
+ */
+export const SUPPORTED_IMAGE_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+] as const;
+
+export type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
+
+/**
+ * 图片大小限制 (20MB)
+ */
+export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;

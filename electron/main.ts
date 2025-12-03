@@ -2,8 +2,9 @@ import { app, BrowserWindow } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { initialize as initializeAISDK } from "./services/ai-sdk";
+import { AISDKService } from "./services/ai-sdk-service";
 import { registerVLMHandlers } from "./ipc/vlm-handlers";
+import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 
 initializeLogger();
@@ -14,18 +15,8 @@ const logger = getLogger("main.ts");
 void createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// The built directory structure
-//
-// ├─┬─┬ dist
-// │ │ └── index.html
-// │ │
-// │ ├─┬ dist-electron
-// │ │ ├── main.js
-// │ │ └── preload.mjs
-// │
 process.env.APP_ROOT = path.join(__dirname, "..");
 
-// 🚧 Use ['ENV_NAME'] avoid vite:define plugin - Vite@2.x
 export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
@@ -44,7 +35,6 @@ function createWindow() {
     },
   });
 
-  // Test active push message to Renderer-process.
   win.webContents.on("did-finish-load", () => {
     win?.webContents.send("main-process-message", new Date().toLocaleString());
   });
@@ -52,19 +42,21 @@ function createWindow() {
   if (VITE_DEV_SERVER_URL) {
     win.loadURL(VITE_DEV_SERVER_URL);
   } else {
-    // win.loadFile('dist/index.html')
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
 }
 
-/**
- * Initialize AI SDK with API key from environment
- * Logs warning if API key is not configured
- */
 function initializeServices() {
+  // Clean up existing handlers for hot reload support (dev mode only)
+  if (VITE_DEV_SERVER_URL) {
+    const registry = IPCHandlerRegistry.getInstance();
+    registry.unregisterAll();
+    logger.info("[IPC] Cleaned up existing handlers for hot reload");
+  }
+
   try {
-    // Initialize AI SDK - will use OPENAI_API_KEY from environment
-    initializeAISDK({
+    const aiService = AISDKService.getInstance();
+    aiService.initialize({
       name: "MOONSHOT",
       baseURL: "https://api.moonshot.cn/v1",
       model: "kimi-latest",
@@ -72,14 +64,11 @@ function initializeServices() {
     });
     logger.info("[AI SDK] Initialized successfully");
   } catch (error) {
-    // Log warning but don't crash - user can configure API key later
     logger.warn(
       { error: error instanceof Error ? error.message : error },
       "[AI SDK] Initialization warning"
     );
   }
-
-  // Register IPC handlers for VLM operations
   registerVLMHandlers();
   logger.info("[IPC] VLM handlers registered");
 }

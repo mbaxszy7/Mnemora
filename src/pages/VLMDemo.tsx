@@ -3,14 +3,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ImagePlus, Loader2, AlertCircle, Sparkles } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-
-interface VLMResponse {
-  title: string;
-  description: string;
-  objects: string[];
-  text?: string[];
-  confidence: number;
-}
+import {
+  type VLMResponse,
+  type IPCError,
+  getErrorMessage,
+  SUPPORTED_IMAGE_TYPES,
+  type SupportedImageType,
+} from "@shared/index";
 
 interface DemoState {
   selectedImage: File | null;
@@ -21,38 +20,29 @@ interface DemoState {
 }
 
 /**
- * Maps error codes to user-friendly messages
+ * Extracts error message from an IPCError or unknown error
  */
-export function getErrorMessage(error: unknown): string {
+function extractErrorMessage(error: unknown): string {
   if (typeof error === "object" && error !== null) {
-    const err = error as { code?: string; message?: string };
-    switch (err.code) {
-      case "API_KEY_MISSING":
-        return "请配置 OpenAI API Key";
-      case "VLM_ERROR":
-        return "图片分析失败，请重试";
-      case "VALIDATION_ERROR":
-        return "响应格式异常";
-      case "IMAGE_TOO_LARGE":
-        return "图片过大，请选择小于 20MB 的图片";
-      default:
-        if (err.message && typeof err.message === "string") {
-          return err.message;
-        }
+    const err = error as IPCError;
+    if (err.code) {
+      return getErrorMessage(err.code);
+    }
+    if ("message" in err && typeof err.message === "string") {
+      return err.message;
     }
   }
   if (typeof error === "string") {
     return error;
   }
-  return "发生未知错误，请重试";
+  return getErrorMessage("UNKNOWN");
 }
 
 /**
  * Validates if a file is a supported image type
  */
 export function isValidImageFile(file: File): boolean {
-  const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-  return validTypes.includes(file.type);
+  return SUPPORTED_IMAGE_TYPES.includes(file.type as SupportedImageType);
 }
 
 export default function VLMDemoPage() {
@@ -129,7 +119,7 @@ export default function VLMDemoPage() {
           ...prev,
           isAnalyzing: false,
           result: null,
-          error: getErrorMessage(response.error),
+          error: extractErrorMessage(response.error),
         }));
       }
     } catch (err) {
@@ -137,7 +127,7 @@ export default function VLMDemoPage() {
         ...prev,
         isAnalyzing: false,
         result: null,
-        error: getErrorMessage(err),
+        error: extractErrorMessage(err),
       }));
     }
   };

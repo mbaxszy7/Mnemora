@@ -22,10 +22,11 @@ declare namespace NodeJS {
 }
 
 // Used in Renderer process, expose in `preload.ts`
+// Types are imported from shared module
 interface Window {
   ipcRenderer: import('electron').IpcRenderer
   vlmApi: {
-    analyze(imageData: string, mimeType: string): Promise<import('./types/vlm').VLMAnalyzeResponse>;
-    getStatus(): Promise<import('./types/vlm').IPCResult<import('./types/vlm').VLMStatusResponse>>;
+    analyze(imageData: string, mimeType: string): Promise<import('../shared/vlm-types').VLMAnalyzeResponse>;
+    getStatus(): Promise<import('../shared/ipc-types').IPCResult<import('../shared/vlm-types').VLMStatusResponse>>;
   }
 }

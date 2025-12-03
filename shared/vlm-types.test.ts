@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import {
-  VLMResponseSchema,
-  VLMResponse,
-  SUPPORTED_IMAGE_TYPES,
-  MAX_IMAGE_SIZE,
-} from "./vlm-types";
+import { VLMResponseSchema, VLMResponse, SUPPORTED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "./vlm-types";
 
 /**
  * **Feature: ai-sdk-refactor, Property 2: VLMResponse Schema Validation**

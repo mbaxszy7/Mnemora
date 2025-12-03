@@ -8,10 +8,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && electron-builder",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
+    "prepare": "husky"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.76",
@@ -70,6 +71,9 @@
     "zod": "^4.1.13"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.1.0",
+    "@commitlint/config-conventional": "^20.0.0",
+    "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.1.0",
     "@types/node": "^22.10.1",
     "@types/react": "^19.2.0",
@@ -84,9 +88,12 @@
     "eslint-plugin-prettier": "^5.4.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.16",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "prettier": "^3.5.3",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.48.1",
     "vite": "^6.0.3",
     "vite-plugin-electron": "^0.28.8",
     "vite-plugin-electron-renderer": "^0.14.6",

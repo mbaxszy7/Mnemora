@@ -1,10 +1,5 @@
 // Errors
-export {
-  ErrorCode,
-  ERROR_MESSAGES,
-  getErrorMessage,
-  ServiceError,
-} from "./errors";
+export { ErrorCode, ERROR_MESSAGES, getErrorMessage, ServiceError } from "./errors";
 
 // IPC Types
 export {

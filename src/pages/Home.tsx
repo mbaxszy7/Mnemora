@@ -12,9 +12,7 @@ export default function HomePage() {
         <div className="flex items-center justify-center gap-3">
           <Brain className="w-16 h-16 text-primary" />
         </div>
-        <h1 className="text-4xl font-bold tracking-tight">
-          让你的屏幕成为第二大脑
-        </h1>
+        <h1 className="text-4xl font-bold tracking-tight">让你的屏幕成为第二大脑</h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
           Mnemora 是一款智能上下文感知桌面应用，持续理解你的屏幕内容，提供实时洞见和智能建议。
         </p>

@@ -26,9 +26,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="autoStart">开机自启动</Label>
-            <p className="text-sm text-muted-foreground">
-              系统启动时自动运行 Mnemora
-            </p>
+            <p className="text-sm text-muted-foreground">系统启动时自动运行 Mnemora</p>
           </div>
           <Switch
             id="autoStart"
@@ -40,9 +38,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="notifications">通知提醒</Label>
-            <p className="text-sm text-muted-foreground">
-              接收智能洞见和提醒通知
-            </p>
+            <p className="text-sm text-muted-foreground">接收智能洞见和提醒通知</p>
           </div>
           <Switch
             id="notifications"
@@ -54,9 +50,7 @@ export default function SettingsPage() {
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="darkMode">深色模式</Label>
-            <p className="text-sm text-muted-foreground">
-              使用深色主题界面
-            </p>
+            <p className="text-sm text-muted-foreground">使用深色主题界面</p>
           </div>
           <Switch
             id="darkMode"

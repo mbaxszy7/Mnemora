@@ -1,11 +1,6 @@
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import {
-  ErrorCode,
-  ERROR_MESSAGES,
-  getErrorMessage,
-  ServiceError,
-} from "./errors";
+import { ErrorCode, ERROR_MESSAGES, getErrorMessage, ServiceError } from "./errors";
 
 /**
  * **Feature: ai-sdk-refactor, Property 4: Error System Consistency**

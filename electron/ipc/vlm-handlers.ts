@@ -1,4 +1,4 @@
-import { IpcMainInvokeEvent } from "electron";
+import type { IpcMainInvokeEvent } from "electron";
 import { VLMService } from "../services/vlm-service";
 import { AISDKService } from "../services/ai-sdk-service";
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
@@ -46,7 +46,7 @@ async function handleAnalyze(
  * Handle VLM status request
  * Returns initialization status and current model
  */
-async function handleStatus(_event: IpcMainInvokeEvent): Promise<IPCResult<VLMStatusResponse>> {
+async function handleStatus(): Promise<IPCResult<VLMStatusResponse>> {
   try {
     const aiService = AISDKService.getInstance();
     const initialized = aiService.isInitialized();

@@ -15,18 +15,23 @@ declare namespace NodeJS {
      * │
      * ```
      */
-    APP_ROOT: string
+    APP_ROOT: string;
     /** /dist/ or /public/ */
-    VITE_PUBLIC: string
+    VITE_PUBLIC: string;
   }
 }
 
 // Used in Renderer process, expose in `preload.ts`
 // Types are imported from shared module
 interface Window {
-  ipcRenderer: import('electron').IpcRenderer
+  ipcRenderer: import("electron").IpcRenderer;
   vlmApi: {
-    analyze(imageData: string, mimeType: string): Promise<import('../shared/vlm-types').VLMAnalyzeResponse>;
-    getStatus(): Promise<import('../shared/ipc-types').IPCResult<import('../shared/vlm-types').VLMStatusResponse>>;
-  }
+    analyze(
+      imageData: string,
+      mimeType: string
+    ): Promise<import("../shared/vlm-types").VLMAnalyzeResponse>;
+    getStatus(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/vlm-types").VLMStatusResponse>
+    >;
+  };
 }

@@ -18,22 +18,19 @@ describe("AISDKService Singleton Invariant", () => {
 
   it("Property 1: Multiple getInstance() calls return the same instance", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 2, max: 10 }),
-        (numCalls) => {
-          // Reset before this property run
-          AISDKService.resetInstance();
+      fc.property(fc.integer({ min: 2, max: 10 }), (numCalls) => {
+        // Reset before this property run
+        AISDKService.resetInstance();
 
-          // Get the first instance
-          const firstInstance = AISDKService.getInstance();
+        // Get the first instance
+        const firstInstance = AISDKService.getInstance();
 
-          // Call getInstance() multiple times and verify all return the same reference
-          for (let i = 0; i < numCalls; i++) {
-            const instance = AISDKService.getInstance();
-            expect(instance).toBe(firstInstance);
-          }
+        // Call getInstance() multiple times and verify all return the same reference
+        for (let i = 0; i < numCalls; i++) {
+          const instance = AISDKService.getInstance();
+          expect(instance).toBe(firstInstance);
         }
-      ),
+      }),
       { numRuns: 100 }
     );
   });
@@ -58,7 +55,7 @@ describe("AISDKService Singleton Invariant", () => {
         const firstInstance = AISDKService.getInstance();
         AISDKService.resetInstance();
         const secondInstance = AISDKService.getInstance();
-        
+
         // After reset, we should get a different instance
         expect(secondInstance).not.toBe(firstInstance);
       }),
@@ -66,7 +63,6 @@ describe("AISDKService Singleton Invariant", () => {
     );
   });
 });
-
 
 /**
  * **Feature: ai-sdk-refactor, Property 5: Service Initialization Behavior**

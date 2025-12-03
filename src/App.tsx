@@ -21,9 +21,7 @@ function App() {
             <Brain className="w-12 h-12 text-primary" />
             <h1 className="text-4xl font-bold tracking-tight">Mnemora</h1>
           </div>
-          <p className="text-muted-foreground text-lg">
-            让你的屏幕成为第二大脑
-          </p>
+          <p className="text-muted-foreground text-lg">让你的屏幕成为第二大脑</p>
           <p className="text-sm text-muted-foreground">
             Intelligent context-aware desktop application
           </p>
@@ -34,9 +32,7 @@ function App() {
           <div className="p-6 rounded-lg border bg-card">
             <Eye className="w-8 h-8 text-primary mb-3" />
             <h3 className="font-semibold mb-2">Screen Awareness</h3>
-            <p className="text-sm text-muted-foreground">
-              持续的屏幕感知与语义理解
-            </p>
+            <p className="text-sm text-muted-foreground">持续的屏幕感知与语义理解</p>
           </div>
           <div className="p-6 rounded-lg border bg-card">
             <Zap className="w-8 h-8 text-primary mb-3" />
@@ -51,9 +47,7 @@ function App() {
 
           {/* Tailwind + shadcn Button */}
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setCount((c) => c + 1)}>
-              Count: {count}
-            </Button>
+            <Button onClick={() => setCount((c) => c + 1)}>Count: {count}</Button>
             <Button variant="secondary">Secondary</Button>
             <Button variant="outline">Outline</Button>
             <Button variant="ghost">Ghost</Button>
@@ -62,9 +56,7 @@ function App() {
           {/* React Query Status */}
           <div className="text-sm text-muted-foreground">
             <span className="font-medium">React Query: </span>
-            <span className="text-green-600">
-              {queryStatus ?? "Loading..."}
-            </span>
+            <span className="text-green-600">{queryStatus ?? "Loading..."}</span>
           </div>
 
           {/* Stack Info */}

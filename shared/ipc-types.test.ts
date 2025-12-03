@@ -55,9 +55,7 @@ describe("JSON Serialization Round-Trip", () => {
         // details may be undefined, which gets stripped in JSON
         if (ipcError.details !== undefined) {
           // Compare via JSON to handle edge cases like -0 vs 0
-          expect(JSON.stringify(deserialized.details)).toBe(
-            JSON.stringify(ipcError.details)
-          );
+          expect(JSON.stringify(deserialized.details)).toBe(JSON.stringify(ipcError.details));
         }
       }),
       { numRuns: 100 }
@@ -72,9 +70,7 @@ describe("JSON Serialization Round-Trip", () => {
         expect(deserialized.success).toBe(ipcResult.success);
         if (ipcResult.success && ipcResult.data !== undefined) {
           // Compare via JSON to handle edge cases like -0 vs 0
-          expect(JSON.stringify(deserialized.data)).toBe(
-            JSON.stringify(ipcResult.data)
-          );
+          expect(JSON.stringify(deserialized.data)).toBe(JSON.stringify(ipcResult.data));
         }
         if (!ipcResult.success && ipcResult.error) {
           expect(deserialized.error.code).toBe(ipcResult.error.code);
@@ -128,17 +124,14 @@ describe("JSON Serialization Round-Trip", () => {
 
   it("Property 3.5: toIPCError handles non-Error values", () => {
     fc.assert(
-      fc.property(
-        fc.oneof(fc.string(), fc.integer(), fc.boolean()),
-        (value) => {
-          const ipcError = toIPCError(value);
+      fc.property(fc.oneof(fc.string(), fc.integer(), fc.boolean()), (value) => {
+        const ipcError = toIPCError(value);
 
-          // Verify it's a valid IPCError with UNKNOWN code
-          expect(ipcError.code).toBe(ErrorCode.UNKNOWN);
-          expect(ipcError.message).toBe(String(value));
-          expect(errorCodeValues).toContain(ipcError.code);
-        }
-      ),
+        // Verify it's a valid IPCError with UNKNOWN code
+        expect(ipcError.code).toBe(ErrorCode.UNKNOWN);
+        expect(ipcError.message).toBe(String(value));
+        expect(errorCodeValues).toContain(ipcError.code);
+      }),
       { numRuns: 100 }
     );
   });

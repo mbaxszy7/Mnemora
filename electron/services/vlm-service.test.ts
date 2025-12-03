@@ -19,23 +19,20 @@ describe("VLMService Singleton Invariant", () => {
 
   it("Property 1: Multiple getInstance() calls return the same instance", () => {
     fc.assert(
-      fc.property(
-        fc.integer({ min: 2, max: 10 }),
-        (numCalls) => {
-          // Reset before this property run
-          VLMService.resetInstance();
-          AISDKService.resetInstance();
+      fc.property(fc.integer({ min: 2, max: 10 }), (numCalls) => {
+        // Reset before this property run
+        VLMService.resetInstance();
+        AISDKService.resetInstance();
 
-          // Get the first instance
-          const firstInstance = VLMService.getInstance();
+        // Get the first instance
+        const firstInstance = VLMService.getInstance();
 
-          // Call getInstance() multiple times and verify all return the same reference
-          for (let i = 0; i < numCalls; i++) {
-            const instance = VLMService.getInstance();
-            expect(instance).toBe(firstInstance);
-          }
+        // Call getInstance() multiple times and verify all return the same reference
+        for (let i = 0; i < numCalls; i++) {
+          const instance = VLMService.getInstance();
+          expect(instance).toBe(firstInstance);
         }
-      ),
+      }),
       { numRuns: 100 }
     );
   });
@@ -45,7 +42,7 @@ describe("VLMService Singleton Invariant", () => {
       fc.property(fc.constant(null), () => {
         VLMService.resetInstance();
         AISDKService.resetInstance();
-        
+
         const instance = VLMService.getInstance();
         expect(instance).toBeInstanceOf(VLMService);
         expect(typeof instance.analyzeImage).toBe("function");
@@ -60,11 +57,11 @@ describe("VLMService Singleton Invariant", () => {
       fc.property(fc.constant(null), () => {
         VLMService.resetInstance();
         AISDKService.resetInstance();
-        
+
         const firstInstance = VLMService.getInstance();
         VLMService.resetInstance();
         const secondInstance = VLMService.getInstance();
-        
+
         // After reset, we should get a different instance
         expect(secondInstance).not.toBe(firstInstance);
       }),

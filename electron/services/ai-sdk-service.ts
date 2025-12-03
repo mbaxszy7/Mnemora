@@ -58,7 +58,7 @@ export class AISDKService {
     if (!config.apiKey || config.apiKey.trim() === "") {
       this._initialized = false;
       this.client = null;
-      throw new ServiceError(ErrorCode.API_KEY_MISSING, "请配置 API Key");
+      throw new ServiceError(ErrorCode.API_KEY_MISSING, "Please configure API Key");
     }
 
     try {
@@ -74,7 +74,7 @@ export class AISDKService {
       this.client = null;
       throw new ServiceError(
         ErrorCode.INITIALIZATION_ERROR,
-        `AI SDK 初始化失败: ${error instanceof Error ? error.message : String(error)}`
+        `AI SDK initialization failed: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -94,7 +94,7 @@ export class AISDKService {
    */
   getClient(): LanguageModel {
     if (!this._initialized || !this.client || !this.config) {
-      throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK 未初始化");
+      throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK not initialized");
     }
     return this.client(this.config.model);
   }
@@ -105,7 +105,7 @@ export class AISDKService {
    */
   getModel(): string {
     if (!this.config) {
-      throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK 未初始化");
+      throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK not initialized");
     }
     return this.config.model;
   }

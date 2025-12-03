@@ -1,0 +1,45 @@
+{
+  "common": {
+    "buttons": {
+      "save": "保存",
+      "cancel": "取消",
+      "confirm": "确认",
+      "close": "关闭"
+    },
+    "messages": {
+      "loading": "加载中...",
+      "error": "发生错误",
+      "success": "成功"
+    }
+  },
+  "nav": {
+    "home": "首页",
+    "settings": "设置",
+    "about": "关于"
+  },
+  "settings": {
+    "title": "设置",
+    "language": "语言",
+    "theme": "主题"
+  },
+  "dialogs": {
+    "confirmExit": {
+      "title": "确认退出",
+      "message": "确定要退出吗？"
+    }
+  },
+  "vlmDemo": {
+    "title": "VLM 演示",
+    "description": "选择图片进行 AI 视觉分析",
+    "selectImage": "选择图片文件",
+    "analyzeImage": "分析图片",
+    "analyzing": "分析中...",
+    "imagePreview": "图片预览",
+    "analysisResults": "分析结果",
+    "detectedObjects": "检测到的对象",
+    "detectedText": "检测到的文字",
+    "confidence": "置信度",
+    "error": "错误",
+    "invalidImage": "请选择有效的图片文件（PNG、JPG、JPEG、GIF、WebP）"
+  }
+}

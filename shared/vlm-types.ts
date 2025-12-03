@@ -2,20 +2,20 @@ import { z } from "zod";
 import { IPCResult } from "./ipc-types";
 
 /**
- * VLM 响应 Schema - 用于结构化输出验证
+ * VLM Response Schema - for structured output validation
  */
 export const VLMResponseSchema = z.object({
-  title: z.string().describe("图片内容的简短标题"),
-  description: z.string().describe("图片内容的详细描述"),
-  objects: z.array(z.string()).describe("图片中识别到的物体列表"),
-  text: z.array(z.string()).optional().describe("图片中识别到的文字列表"),
-  confidence: z.number().min(0).max(100).describe("分析置信度"),
+  title: z.string().describe("Brief title of the image content"),
+  description: z.string().describe("Detailed description of the image content"),
+  objects: z.array(z.string()).describe("List of objects recognized in the image"),
+  text: z.array(z.string()).optional().describe("List of text recognized in the image"),
+  confidence: z.number().min(0).max(100).describe("Analysis confidence level"),
 });
 
 export type VLMResponse = z.infer<typeof VLMResponseSchema>;
 
 /**
- * VLM 分析请求
+ * VLM Analyze Request
  */
 export interface VLMAnalyzeRequest {
   imageData: string; // base64 encoded
@@ -23,12 +23,12 @@ export interface VLMAnalyzeRequest {
 }
 
 /**
- * VLM 分析响应
+ * VLM Analyze Response
  */
 export type VLMAnalyzeResponse = IPCResult<VLMResponse>;
 
 /**
- * VLM 状态响应
+ * VLM Status Response
  */
 export interface VLMStatusResponse {
   initialized: boolean;
@@ -36,7 +36,7 @@ export interface VLMStatusResponse {
 }
 
 /**
- * 支持的图片 MIME 类型
+ * Supported image MIME types
  */
 export const SUPPORTED_IMAGE_TYPES = [
   "image/jpeg",
@@ -48,6 +48,6 @@ export const SUPPORTED_IMAGE_TYPES = [
 export type SupportedImageType = (typeof SUPPORTED_IMAGE_TYPES)[number];
 
 /**
- * 图片大小限制 (20MB)
+ * Image size limit (20MB)
  */
 export const MAX_IMAGE_SIZE = 20 * 1024 * 1024;

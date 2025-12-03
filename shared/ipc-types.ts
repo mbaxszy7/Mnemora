@@ -1,7 +1,7 @@
 import { ErrorCode, ServiceError } from "./errors";
 
 /**
- * IPC 错误结构
+ * IPC Error Structure
  */
 export interface IPCError {
   code: ErrorCode;
@@ -10,7 +10,7 @@ export interface IPCError {
 }
 
 /**
- * 通用 IPC 结果包装器
+ * Generic IPC Result Wrapper
  */
 export interface IPCResult<T> {
   success: boolean;
@@ -19,17 +19,28 @@ export interface IPCResult<T> {
 }
 
 /**
- * IPC 通道定义
+ * IPC Channel Definitions
  */
 export const IPC_CHANNELS = {
   VLM_ANALYZE: "vlm:analyze",
   VLM_STATUS: "vlm:status",
+  // i18n channels
+  I18N_CHANGE_LANGUAGE: "i18n:change-language",
+  I18N_GET_LANGUAGE: "i18n:get-language",
+  I18N_GET_SYSTEM_LANGUAGE: "i18n:get-system-language",
 } as const;
+
+/**
+ * i18n IPC Payload Types
+ */
+export interface LanguageChangePayload {
+  language: "en" | "zh-CN";
+}
 
 export type IPCChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
 
 /**
- * 将 Error 转换为 IPCError
+ * Convert Error to IPCError
  */
 export function toIPCError(error: unknown): IPCError {
   if (error instanceof ServiceError) {

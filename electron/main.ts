@@ -4,39 +4,52 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { AISDKService } from "./services/ai-sdk-service";
 import { registerVLMHandlers } from "./ipc/vlm-handlers";
+import { registerI18nHandlers } from "./ipc/i18n-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
+import { mainI18n } from "./services/i18n-service";
 
-initializeLogger();
+// ============================================================================
+// Environment Setup
+// ============================================================================
 
-const logger = getLogger("main.ts");
-
-// createRequire is available for dynamic requires if needed
 void createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 process.env.APP_ROOT = path.join(__dirname, "..");
-
 export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
 export const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
 export const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
-
 process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, "public")
   : RENDERER_DIST;
 
-let win: BrowserWindow | null;
+const isDev = !!VITE_DEV_SERVER_URL;
 
-function createWindow() {
-  win = new BrowserWindow({
-    icon: path.join(process.env.VITE_PUBLIC, "electron-vite.svg"),
+// ============================================================================
+// Logger Initialization
+// ============================================================================
+
+initializeLogger();
+const logger = getLogger("main");
+
+// ============================================================================
+// Window Management
+// ============================================================================
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+let mainWindow: BrowserWindow | null = null;
+
+function createMainWindow(): BrowserWindow {
+  const win = new BrowserWindow({
+    icon: path.join(process.env.VITE_PUBLIC, "logo.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.mjs"),
     },
   });
 
   win.webContents.on("did-finish-load", () => {
-    win?.webContents.send("main-process-message", new Date().toLocaleString());
+    win.webContents.send("main-process-message", new Date().toLocaleString());
   });
 
   if (VITE_DEV_SERVER_URL) {
@@ -44,55 +57,79 @@ function createWindow() {
   } else {
     win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
+
+  return win;
 }
 
-function initializeServices() {
-  // Clean up existing handlers for hot reload support (dev mode only)
-  if (VITE_DEV_SERVER_URL) {
-    const registry = IPCHandlerRegistry.getInstance();
-    registry.unregisterAll();
-    logger.info("[IPC] Cleaned up existing handlers for hot reload");
+// ============================================================================
+// Service Initialization
+// ============================================================================
+
+async function initI18nService(): Promise<void> {
+  await mainI18n.initialize();
+  logger.info("i18n service initialized");
+}
+
+function initAIService(): void {
+  const aiService = AISDKService.getInstance();
+  aiService.initialize({
+    name: "MOONSHOT",
+    baseURL: "https://api.moonshot.cn/v1",
+    model: "kimi-latest",
+    apiKey: "sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg",
+  });
+  logger.info("AI SDK service initialized");
+}
+
+function registerIPCHandlers(): void {
+  // Clean up existing handlers for hot reload (dev mode only)
+  if (isDev) {
+    IPCHandlerRegistry.getInstance().unregisterAll();
+    logger.debug("Cleaned up existing IPC handlers for hot reload");
   }
 
-  try {
-    const aiService = AISDKService.getInstance();
-    aiService.initialize({
-      name: "MOONSHOT",
-      baseURL: "https://api.moonshot.cn/v1",
-      model: "kimi-latest",
-      apiKey: "sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg",
-    });
-    logger.info("[AI SDK] Initialized successfully");
-  } catch (error) {
-    logger.warn(
-      { error: error instanceof Error ? error.message : error },
-      "[AI SDK] Initialization warning"
-    );
-  }
+  registerI18nHandlers();
   registerVLMHandlers();
-  logger.info("[IPC] VLM handlers registered");
+  logger.info("IPC handlers registered");
 }
 
-// Quit when all windows are closed, except on macOS. There, it's common
-// for applications and their menu bar to stay active until the user quits
-// explicitly with Cmd + Q.
+async function initializeApp(): Promise<void> {
+  // 1. Register IPC handlers first (before any async operations)
+  registerIPCHandlers();
+
+  // 2. Initialize i18n (required before UI)
+  try {
+    await initI18nService();
+  } catch (error) {
+    logger.error({ error }, "Failed to initialize i18n service");
+  }
+
+  // 3. Initialize AI service (non-critical, can fail gracefully)
+  try {
+    initAIService();
+  } catch (error) {
+    logger.warn({ error }, "AI service initialization failed");
+  }
+}
+
+// ============================================================================
+// App Lifecycle
+// ============================================================================
+
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
-    win = null;
+    mainWindow = null;
   }
 });
 
 app.on("activate", () => {
-  // On OS X it's common to re-create a window in the app when the
-  // dock icon is clicked and there are no other windows open.
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    mainWindow = createMainWindow();
   }
 });
 
-app.whenReady().then(() => {
-  // Initialize services before creating window
-  initializeServices();
-  createWindow();
+app.whenReady().then(async () => {
+  await initializeApp();
+  mainWindow = createMainWindow();
 });

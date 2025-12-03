@@ -21,7 +21,7 @@ function App() {
             <Brain className="w-12 h-12 text-primary" />
             <h1 className="text-4xl font-bold tracking-tight">Mnemora</h1>
           </div>
-          <p className="text-muted-foreground text-lg">让你的屏幕成为第二大脑</p>
+          <p className="text-muted-foreground text-lg">Turn Your Screen Into a Second Brain</p>
           <p className="text-sm text-muted-foreground">
             Intelligent context-aware desktop application
           </p>
@@ -32,12 +32,16 @@ function App() {
           <div className="p-6 rounded-lg border bg-card">
             <Eye className="w-8 h-8 text-primary mb-3" />
             <h3 className="font-semibold mb-2">Screen Awareness</h3>
-            <p className="text-sm text-muted-foreground">持续的屏幕感知与语义理解</p>
+            <p className="text-sm text-muted-foreground">
+              Continuous screen perception and semantic understanding
+            </p>
           </div>
           <div className="p-6 rounded-lg border bg-card">
             <Zap className="w-8 h-8 text-primary mb-3" />
             <h3 className="font-semibold mb-2">Smart Insights</h3>
-            <p className="text-sm text-muted-foreground">实时洞见和智能建议</p>
+            <p className="text-sm text-muted-foreground">
+              Real-time insights and intelligent suggestions
+            </p>
           </div>
         </div>
 

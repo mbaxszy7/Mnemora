@@ -1,4 +1,5 @@
 import { useState, useRef, ChangeEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ImagePlus, Loader2, AlertCircle, Sparkles } from "lucide-react";
@@ -46,6 +47,7 @@ export function isValidImageFile(file: File): boolean {
 }
 
 export default function VLMDemoPage() {
+  const { t } = useTranslation();
   const [state, setState] = useState<DemoState>({
     selectedImage: null,
     imagePreview: null,
@@ -67,7 +69,7 @@ export default function VLMDemoPage() {
     if (!isValidImageFile(file)) {
       setState((prev) => ({
         ...prev,
-        error: "请选择有效的图片文件 (JPEG, PNG, WebP, GIF)",
+        error: t("vlmDemo.invalidImage"),
       }));
       return;
     }
@@ -135,8 +137,8 @@ export default function VLMDemoPage() {
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div>
-        <h1 className="text-3xl font-bold">VLM Demo</h1>
-        <p className="text-muted-foreground mt-2">选择一张图片，使用 AI 分析图片内容</p>
+        <h1 className="text-3xl font-bold">{t("vlmDemo.title")}</h1>
+        <p className="text-muted-foreground mt-2">{t("vlmDemo.description")}</p>
       </div>
 
       {/* Image Selection */}
@@ -144,7 +146,7 @@ export default function VLMDemoPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <ImagePlus className="h-5 w-5" />
-            选择图片
+            {t("vlmDemo.selectImage")}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -158,17 +160,17 @@ export default function VLMDemoPage() {
 
           <Button onClick={handleSelectImage} variant="outline" className="w-full">
             <ImagePlus className="mr-2 h-4 w-4" />
-            选择图片文件
+            {t("vlmDemo.selectImage")}
           </Button>
 
           {/* Image Preview */}
           {state.imagePreview && (
             <div className="mt-4">
-              <p className="text-sm text-muted-foreground mb-2">图片预览:</p>
+              <p className="text-sm text-muted-foreground mb-2">{t("vlmDemo.imagePreview")}:</p>
               <div className="relative rounded-lg overflow-hidden border bg-muted">
                 <img
                   src={state.imagePreview}
-                  alt="Preview"
+                  alt={t("vlmDemo.imagePreview")}
                   className="max-h-64 w-full object-contain"
                 />
               </div>
@@ -181,12 +183,12 @@ export default function VLMDemoPage() {
               {state.isAnalyzing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  分析中...
+                  {t("vlmDemo.analyzing")}
                 </>
               ) : (
                 <>
                   <Sparkles className="mr-2 h-4 w-4" />
-                  分析图片
+                  {t("vlmDemo.analyzeImage")}
                 </>
               )}
             </Button>
@@ -198,7 +200,7 @@ export default function VLMDemoPage() {
       {state.error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>错误</AlertTitle>
+          <AlertTitle>{t("vlmDemo.error")}</AlertTitle>
           <AlertDescription>{state.error}</AlertDescription>
         </Alert>
       )}
@@ -209,7 +211,7 @@ export default function VLMDemoPage() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              分析结果
+              {t("vlmDemo.analysisResults")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -220,7 +222,7 @@ export default function VLMDemoPage() {
 
             {state.result.objects.length > 0 && (
               <div>
-                <p className="text-sm font-medium mb-2">识别到的物体:</p>
+                <p className="text-sm font-medium mb-2">{t("vlmDemo.detectedObjects")}:</p>
                 <div className="flex flex-wrap gap-2">
                   {state.result.objects.map((obj, idx) => (
                     <span
@@ -236,7 +238,7 @@ export default function VLMDemoPage() {
 
             {state.result.text && state.result.text.length > 0 && (
               <div>
-                <p className="text-sm font-medium mb-2">识别到的文字:</p>
+                <p className="text-sm font-medium mb-2">{t("vlmDemo.detectedText")}:</p>
                 <p className="text-muted-foreground bg-muted p-3 rounded-md">
                   {state.result.text.join("\n")}
                 </p>
@@ -244,12 +246,52 @@ export default function VLMDemoPage() {
             )}
 
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <span>置信度:</span>
+              <span>{t("vlmDemo.confidence")}:</span>
               <span className="font-medium">{state.result.confidence}%</span>
             </div>
           </CardContent>
         </Card>
       )}
+
+      {/* Developer Tools: Icon Converter */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Sparkles className="h-5 w-5" />
+            Developer Tools
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground mb-4">
+            Windows requires a .png or .ico file for the app icon. Click below to convert the SVG
+            logo to PNG, then move the downloaded <code>logo.png</code> to the <code>public/</code>{" "}
+            folder.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const img = new Image();
+              img.src = "/logo.svg";
+              img.onload = () => {
+                const canvas = document.createElement("canvas");
+                canvas.width = 512;
+                canvas.height = 512;
+                const ctx = canvas.getContext("2d");
+                if (ctx) {
+                  ctx.drawImage(img, 0, 0, 512, 512);
+                  const pngUrl = canvas.toDataURL("image/png");
+                  const a = document.createElement("a");
+                  a.href = pngUrl;
+                  a.download = "logo.png";
+                  a.click();
+                }
+              };
+            }}
+          >
+            Download logo.png
+          </Button>
+        </CardContent>
+      </Card>
     </div>
   );
 }

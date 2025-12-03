@@ -1,10 +1,29 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
-import { Save } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Save, Languages } from "lucide-react";
+import { useLanguage } from "@/hooks/use-language";
+import type { SupportedLanguage } from "@shared/i18n-types";
 
 export default function SettingsPage() {
+  const { t } = useTranslation();
+  const {
+    currentLanguage,
+    changeLanguage,
+    isLoading: isLanguageLoading,
+    supportedLanguages,
+    languageDisplayNames,
+  } = useLanguage();
+
   const [settings, setSettings] = useState({
     autoStart: false,
     notifications: true,
@@ -15,18 +34,51 @@ export default function SettingsPage() {
     setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const handleLanguageChange = (value: string) => {
+    changeLanguage(value as SupportedLanguage);
+  };
+
   return (
     <div className="max-w-2xl mx-auto space-y-8">
       <div>
-        <h1 className="text-3xl font-bold">设置</h1>
-        <p className="text-muted-foreground mt-2">管理你的应用偏好设置</p>
+        <h1 className="text-3xl font-bold">{t("settings.title")}</h1>
+        <p className="text-muted-foreground mt-2">Manage your application preferences</p>
       </div>
 
       <div className="space-y-6">
+        {/* Language Selector */}
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="autoStart">开机自启动</Label>
-            <p className="text-sm text-muted-foreground">系统启动时自动运行 Mnemora</p>
+            <Label htmlFor="language" className="flex items-center gap-2">
+              <Languages className="h-4 w-4" />
+              {t("settings.language")}
+            </Label>
+            <p className="text-sm text-muted-foreground">Select your preferred language</p>
+          </div>
+          <Select
+            value={currentLanguage}
+            onValueChange={handleLanguageChange}
+            disabled={isLanguageLoading}
+          >
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder={t("settings.language")} />
+            </SelectTrigger>
+            <SelectContent>
+              {supportedLanguages.map((lang) => (
+                <SelectItem key={lang} value={lang}>
+                  {languageDisplayNames[lang]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center justify-between p-4 rounded-lg border">
+          <div className="space-y-0.5">
+            <Label htmlFor="autoStart">Launch at Startup</Label>
+            <p className="text-sm text-muted-foreground">
+              Automatically run Mnemora when system starts
+            </p>
           </div>
           <Switch
             id="autoStart"
@@ -37,8 +89,10 @@ export default function SettingsPage() {
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="notifications">通知提醒</Label>
-            <p className="text-sm text-muted-foreground">接收智能洞见和提醒通知</p>
+            <Label htmlFor="notifications">Notifications</Label>
+            <p className="text-sm text-muted-foreground">
+              Receive smart insights and reminder notifications
+            </p>
           </div>
           <Switch
             id="notifications"
@@ -49,8 +103,8 @@ export default function SettingsPage() {
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="darkMode">深色模式</Label>
-            <p className="text-sm text-muted-foreground">使用深色主题界面</p>
+            <Label htmlFor="darkMode">Dark Mode</Label>
+            <p className="text-sm text-muted-foreground">Use dark theme interface</p>
           </div>
           <Switch
             id="darkMode"
@@ -62,7 +116,7 @@ export default function SettingsPage() {
 
       <Button className="w-full">
         <Save className="mr-2 h-4 w-4" />
-        保存设置
+        {t("common.buttons.save")}
       </Button>
     </div>
   );

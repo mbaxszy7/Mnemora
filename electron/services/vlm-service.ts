@@ -60,17 +60,17 @@ export class VLMService {
     try {
       // Check if AI SDK is initialized
       if (!this.aiService.isInitialized()) {
-        throw new ServiceError(ErrorCode.API_KEY_MISSING, "请配置 API Key");
+        throw new ServiceError(ErrorCode.API_KEY_MISSING, "Please configure API Key");
       }
 
       // Validate image type
       if (!SUPPORTED_IMAGE_TYPES.includes(mimeType as SupportedImageType)) {
-        throw new ServiceError(ErrorCode.INVALID_IMAGE_TYPE, "不支持的图片格式");
+        throw new ServiceError(ErrorCode.INVALID_IMAGE_TYPE, "Unsupported image format");
       }
 
       // Validate image size
       if (imageBuffer.length > MAX_IMAGE_SIZE) {
-        throw new ServiceError(ErrorCode.IMAGE_TOO_LARGE, "图片过大");
+        throw new ServiceError(ErrorCode.IMAGE_TOO_LARGE, "Image too large");
       }
 
       const client = this.aiService.getClient();
@@ -80,30 +80,31 @@ export class VLMService {
       // Call VLM with generateText and parse JSON response manually
       const result = await generateText({
         model: client,
-        system: "你是一位图像分析专家，你的任务是分析图片中的内容，并以 JSON 格式返回结果。",
+        system:
+          "You are an image analysis expert. Your task is to analyze the content of images and return results in JSON format.",
         messages: [
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: `请分析这张图片，并以 JSON 格式返回结果。JSON 格式如下：
+                text: `Please analyze this image and return the result in JSON format. The JSON format should be:
 {
-  "title": "图片内容的简短标题",
-  "description": "图片内容的详细描述",
-  "objects": ["物体1", "物体2"],
-  "text": ["识别到的文字1", "识别到的文字2"],
+  "title": "A brief title of the image content",
+  "description": "A detailed description of the image content",
+  "objects": ["object1", "object2"],
+  "text": ["recognized text1", "recognized text2"],
   "confidence": 85
 }
 
-注意：
-- title: 字符串，图片的简短标题
-- description: 字符串，详细描述
-- objects: 字符串数组，识别到的物体列表
-- text: 字符串数组（可选），图片中的文字，如果没有文字可以省略或返回空数组
-- confidence: 数字 0-100，分析置信度
+Notes:
+- title: string, a brief title of the image
+- description: string, detailed description
+- objects: string array, list of recognized objects
+- text: string array (optional), text found in the image, can be omitted or empty array if no text
+- confidence: number 0-100, analysis confidence level
 
-请只返回 JSON，不要包含其他文字。`,
+Please return only JSON, no other text.`,
               },
               {
                 type: "image",
@@ -117,7 +118,7 @@ export class VLMService {
       // Parse JSON from text response
       const jsonMatch = result.text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) {
-        throw new ServiceError(ErrorCode.VALIDATION_ERROR, "无法解析响应中的 JSON", {
+        throw new ServiceError(ErrorCode.VALIDATION_ERROR, "Unable to parse JSON from response", {
           rawText: result.text,
         });
       }
@@ -126,7 +127,7 @@ export class VLMService {
       try {
         parsedObject = JSON.parse(jsonMatch[0]);
       } catch {
-        throw new ServiceError(ErrorCode.VALIDATION_ERROR, "JSON 解析失败", {
+        throw new ServiceError(ErrorCode.VALIDATION_ERROR, "JSON parsing failed", {
           rawText: jsonMatch[0],
         });
       }
@@ -137,7 +138,7 @@ export class VLMService {
       if (!parseResult.success) {
         throw new ServiceError(
           ErrorCode.VALIDATION_ERROR,
-          "响应格式异常",
+          "Response format error",
           parseResult.error.issues
         );
       }

@@ -1,0 +1,73 @@
+import { describe, it, expect } from "vitest";
+import * as fc from "fast-check";
+import { detectLanguageFromLocale } from "./i18n-utils";
+
+/**
+ * **Feature: electron-i18n, Property 1: Locale Detection Correctness**
+ * **Validates: Requirements 1.1, 1.4**
+ *
+ * _For any_ system locale string, the locale detection function SHALL return
+ * 'zh-CN' if the locale starts with 'zh', otherwise return 'en'.
+ */
+describe("Locale Detection Correctness", () => {
+  it("Property 1: Returns 'zh-CN' for any locale starting with 'zh', otherwise returns 'en'", () => {
+    fc.assert(
+      fc.property(fc.string(), (locale) => {
+        const result = detectLanguageFromLocale(locale);
+
+        // Property: if locale starts with "zh" (case-insensitive), return "zh-CN"
+        // Otherwise, return "en"
+        if (locale.toLowerCase().startsWith("zh")) {
+          expect(result).toBe("zh-CN");
+        } else {
+          expect(result).toBe("en");
+        }
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it("Property 1.1: Returns 'zh-CN' for Chinese locale variants", () => {
+    fc.assert(
+      fc.property(
+        // Generate strings that start with "zh" followed by arbitrary suffix
+        fc.string().map((suffix) => "zh" + suffix),
+        (chineseLocale) => {
+          const result = detectLanguageFromLocale(chineseLocale);
+          expect(result).toBe("zh-CN");
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it("Property 1.2: Returns 'en' for non-Chinese locales", () => {
+    fc.assert(
+      fc.property(
+        // Generate strings that don't start with "zh" (case-insensitive)
+        fc.string().filter((s) => !s.toLowerCase().startsWith("zh")),
+        (nonChineseLocale) => {
+          const result = detectLanguageFromLocale(nonChineseLocale);
+          expect(result).toBe("en");
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it("Property 1.3: Case-insensitive detection for Chinese locales", () => {
+    fc.assert(
+      fc.property(
+        // Generate "zh" with random casing followed by arbitrary suffix
+        fc
+          .tuple(fc.constantFrom("zh", "Zh", "zH", "ZH"), fc.string())
+          .map(([prefix, suffix]) => prefix + suffix),
+        (mixedCaseLocale) => {
+          const result = detectLanguageFromLocale(mixedCaseLocale);
+          expect(result).toBe("zh-CN");
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});

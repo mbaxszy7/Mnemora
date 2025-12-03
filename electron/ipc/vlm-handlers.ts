@@ -20,14 +20,14 @@ async function handleAnalyze(
     if (!imageData || typeof imageData !== "string") {
       return {
         success: false,
-        error: toIPCError(new Error("无效的图片数据")),
+        error: toIPCError(new Error("Invalid image data")),
       };
     }
 
     if (!mimeType || typeof mimeType !== "string") {
       return {
         success: false,
-        error: toIPCError(new Error("无效的 MIME 类型")),
+        error: toIPCError(new Error("Invalid MIME type")),
       };
     }
 

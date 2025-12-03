@@ -12,17 +12,18 @@ export default function HomePage() {
         <div className="flex items-center justify-center gap-3">
           <Brain className="w-16 h-16 text-primary" />
         </div>
-        <h1 className="text-4xl font-bold tracking-tight">让你的屏幕成为第二大脑</h1>
+        <h1 className="text-4xl font-bold tracking-tight">Turn Your Screen Into a Second Brain</h1>
         <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-          Mnemora 是一款智能上下文感知桌面应用，持续理解你的屏幕内容，提供实时洞见和智能建议。
+          Mnemora is an intelligent context-aware desktop app that continuously understands your
+          screen content, providing real-time insights and smart suggestions.
         </p>
         <div className="flex justify-center gap-4 pt-4">
           <Button size="lg" onClick={() => navigate("/about")}>
-            了解更多
+            Learn More
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>
           <Button size="lg" variant="outline" onClick={() => navigate("/settings")}>
-            开始配置
+            Get Started
           </Button>
         </div>
       </div>
@@ -33,14 +34,16 @@ export default function HomePage() {
           <Eye className="w-10 h-10 text-primary mb-4" />
           <h3 className="text-xl font-semibold mb-2">Screen Awareness</h3>
           <p className="text-muted-foreground">
-            持续的屏幕感知与语义理解，自动识别你正在处理的内容和上下文。
+            Continuous screen perception and semantic understanding, automatically recognizing the
+            content and context you're working with.
           </p>
         </div>
         <div className="p-6 rounded-lg border bg-card">
           <Zap className="w-10 h-10 text-primary mb-4" />
           <h3 className="text-xl font-semibold mb-2">Smart Insights</h3>
           <p className="text-muted-foreground">
-            基于上下文的实时洞见和智能建议，帮助你更高效地完成工作。
+            Context-based real-time insights and intelligent suggestions to help you work more
+            efficiently.
           </p>
         </div>
       </div>

@@ -1,79 +1,78 @@
-# 产品命名：Mnemora
+# Product Naming: Mnemora
 
-## 最终选定
+## Final Selection
 
-| 名称        | 词源                                    | 含义                           |
-| :---------- | :-------------------------------------- | :----------------------------- |
-| **Mnemora** | mnem-(希腊语"记忆") + ora(拉丁语"此刻") | 记住当下，暗示实时捕捉屏幕活动 |
+| Name        | Etymology                                     | Meaning                                               |
+| :---------- | :-------------------------------------------- | :---------------------------------------------------- |
+| **Mnemora** | mnem- (Greek "memory") + ora (Latin "moment") | Remember the moment, implies real-time screen capture |
 
-**Slogan：** **"Every moment, remembered."**  
-**中文版：** **"每一刻，都被记住。"**
-
----
-
-## Slogan 备选方案
-
-### 核心价值型 (Direct & Functional)
-
-| Slogan                                  | 中文释义                   |
-| :-------------------------------------- | :------------------------- |
-| **"Every moment, remembered."**         | 每一刻，都被记住。         |
-| **"Your screen, your memory."**         | 你的屏幕，你的记忆。       |
-| **"Capture now. Recall forever."**      | 捕捉当下，永久回溯。       |
-| **"Context captured. Knowledge kept."** | 上下文已捕获，知识已留存。 |
-
-### 愿景启发型 (Inspirational)
-
-| Slogan                                        | 中文释义                   |
-| :-------------------------------------------- | :------------------------- |
-| **"Think forward. We remember back."**        | 你向前思考，我们帮你回溯。 |
-| **"Nothing worth knowing is ever lost."**     | 值得知道的，永不遗失。     |
-| **"Your second brain, always watching."**     | 你的第二大脑，时刻守护。   |
-| **"Let your mind wander. We'll keep track."** | 放飞思绪，我们帮你追踪。   |
-
-### 短小有力型 (Punchy)
-
-| Slogan                     | 中文释义       |
-| :------------------------- | :------------- |
-| **"Remember everything."** | 记住一切。     |
-| **"Memory, amplified."**   | 记忆，增强。   |
-| **"Forget forgetting."**   | 忘掉遗忘。     |
-| **"Pixels to memory."**    | 从像素到记忆。 |
+**Slogan:** **"Every moment, remembered."**
 
 ---
 
-## 命名历程参考
+## Slogan Alternatives
 
-### 曾考虑的其他方向
+### Core Value Type (Direct & Functional)
 
-**认知/大脑方向**
+| Slogan                                  | Description                           |
+| :-------------------------------------- | :------------------------------------ |
+| **"Every moment, remembered."**         | Every moment is remembered            |
+| **"Your screen, your memory."**         | Your screen, your memory              |
+| **"Capture now. Recall forever."**      | Capture now, recall forever           |
+| **"Context captured. Knowledge kept."** | Context captured, knowledge preserved |
 
-| 名称     | 含义           | 风格                   |
-| :------- | :------------- | :--------------------- |
-| Cortex   | 大脑皮层       | 科技感强，暗示智能处理 |
-| Engram   | 记忆痕迹       | 神经科学术语，独特     |
-| Mnemonic | 记忆的、助记的 | 直击"第二大脑"定位     |
+### Inspirational Type
 
-**感知/观察方向**
+| Slogan                                        | Description                            |
+| :-------------------------------------------- | :------------------------------------- |
+| **"Think forward. We remember back."**        | You think forward, we help you recall  |
+| **"Nothing worth knowing is ever lost."**     | Nothing worth knowing is ever lost     |
+| **"Your second brain, always watching."**     | Your second brain, always watching     |
+| **"Let your mind wander. We'll keep track."** | Let your mind wander, we'll keep track |
 
-| 名称    | 含义       | 风格                     |
-| :------ | :--------- | :----------------------- |
-| Glimpse | 一瞥、洞察 | 简洁有力（已有同名产品） |
-| Lucid   | 清晰的     | 高级感，"清醒梦"意境     |
-| Ambient | 环境的     | "环境智能"概念           |
+### Punchy Type
 
-**洞见/智慧方向**
+| Slogan                     | Description           |
+| :------------------------- | :-------------------- |
+| **"Remember everything."** | Remember everything   |
+| **"Memory, amplified."**   | Memory, amplified     |
+| **"Forget forgetting."**   | Forget forgetting     |
+| **"Pixels to memory."**    | From pixels to memory |
 
-| 名称    | 含义       | 风格             |
-| :------ | :--------- | :--------------- |
-| Clarity | 清晰       | 简洁明了         |
-| Distill | 蒸馏、提炼 | 从噪音中提炼精华 |
-| Prism   | 棱镜       | 分解上下文       |
+---
 
-### Mnemora 词根变体参考
+## Naming Process Reference
 
-| 名称  | 构词逻辑         | 说明                     |
-| :---- | :--------------- | :----------------------- |
-| Mnemo | mnem- 极简形式   | 发音类似 Nemo            |
-| Mneme | 希腊语"记忆"本体 | 希腊神话记忆女神之一     |
-| Remni | remember + mni   | 发音友好，暗示"帮你记住" |
+### Other Directions Considered
+
+**Cognitive/Brain Direction**
+
+| Name     | Meaning        | Style                                        |
+| :------- | :------------- | :------------------------------------------- |
+| Cortex   | Brain cortex   | Tech-forward, implies intelligent processing |
+| Engram   | Memory trace   | Neuroscience term, unique                    |
+| Mnemonic | Memory-related | Directly targets "second brain" positioning  |
+
+**Perception/Observation Direction**
+
+| Name    | Meaning            | Style                                   |
+| :------ | :----------------- | :-------------------------------------- |
+| Glimpse | A glimpse, insight | Concise and powerful (existing product) |
+| Lucid   | Clear              | Premium feel, "lucid dream" imagery     |
+| Ambient | Environmental      | "Ambient intelligence" concept          |
+
+**Insight/Wisdom Direction**
+
+| Name    | Meaning         | Style                      |
+| :------ | :-------------- | :------------------------- |
+| Clarity | Clarity         | Simple and clear           |
+| Distill | Distill, refine | Extract essence from noise |
+| Prism   | Prism           | Decompose context          |
+
+### Mnemora Root Variants Reference
+
+| Name  | Word Formation Logic    | Description                                         |
+| :---- | :---------------------- | :-------------------------------------------------- |
+| Mnemo | mnem- minimal form      | Pronunciation similar to Nemo                       |
+| Mneme | Greek "memory" original | One of the Greek mythology memory goddesses         |
+| Remni | remember + mni          | Friendly pronunciation, implies "help you remember" |

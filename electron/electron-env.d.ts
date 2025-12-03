@@ -34,4 +34,9 @@ interface Window {
       import("../shared/ipc-types").IPCResult<import("../shared/vlm-types").VLMStatusResponse>
     >;
   };
+  i18nApi: {
+    changeLanguage(lang: import("../shared/i18n-types").SupportedLanguage): Promise<void>;
+    getLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
+    getSystemLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
+  };
 }

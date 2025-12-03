@@ -7,12 +7,12 @@ export default function AboutPage() {
     <div className="max-w-2xl mx-auto space-y-8">
       <div className="text-center space-y-4">
         <Brain className="w-20 h-20 text-primary mx-auto" />
-        <h1 className="text-3xl font-bold">关于 Mnemora</h1>
-        <p className="text-muted-foreground">版本 0.0.1</p>
+        <h1 className="text-3xl font-bold">About Mnemora</h1>
+        <p className="text-muted-foreground">Version 0.0.1</p>
       </div>
 
       <div className="p-6 rounded-lg border bg-card space-y-4">
-        <h2 className="text-xl font-semibold">技术栈</h2>
+        <h2 className="text-xl font-semibold">Tech Stack</h2>
         <ul className="space-y-2 text-muted-foreground">
           <li>✓ React 19 + TypeScript</li>
           <li>✓ Electron + Vite</li>
@@ -24,13 +24,13 @@ export default function AboutPage() {
       </div>
 
       <div className="p-6 rounded-lg border bg-card space-y-4">
-        <h2 className="text-xl font-semibold">路由最佳实践</h2>
+        <h2 className="text-xl font-semibold">Routing Best Practices</h2>
         <ul className="space-y-2 text-sm text-muted-foreground">
-          <li>• 使用 createHashRouter 适配 Electron</li>
-          <li>• 集中式路由配置 (src/router/index.tsx)</li>
-          <li>• Layout 组件 + Outlet 嵌套路由</li>
-          <li>• NavLink 实现导航高亮</li>
-          <li>• useNavigate 编程式导航</li>
+          <li>• Using createHashRouter for Electron compatibility</li>
+          <li>• Centralized route configuration (src/router/index.tsx)</li>
+          <li>• Layout component + Outlet nested routing</li>
+          <li>• NavLink for navigation highlighting</li>
+          <li>• useNavigate for programmatic navigation</li>
         </ul>
       </div>
 
@@ -38,7 +38,7 @@ export default function AboutPage() {
         <Button variant="outline" asChild className="flex-1">
           <Link to="/">
             <ArrowLeft className="mr-2 h-4 w-4" />
-            返回首页
+            Back to Home
           </Link>
         </Button>
         <Button variant="outline" className="flex-1">

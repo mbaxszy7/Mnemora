@@ -19,20 +19,24 @@ export default defineConfig({
       main: {
         entry: "electron/main.ts",
         onstart(args) {
-          // 只在首次启动时启动 Electron，后续主进程变化时只重启 Electron 进程
-          // 而不是整个 Vite dev server
+          // Only start Electron on first launch, restart Electron process on main process changes
+          // instead of restarting the entire Vite dev server
           args.startup();
         },
         vite: {
           resolve: {
             alias: sharedAlias,
           },
+          build: {
+            // Support top-level await in dependencies
+            target: "esnext",
+          },
         },
       },
       preload: {
         input: path.join(__dirname, "electron/preload.ts"),
         onstart(args) {
-          // preload 变化时只刷新渲染进程窗口，不重启整个应用
+          // Only reload renderer window on preload changes, don't restart the entire app
           args.reload();
         },
         vite: {

@@ -2,7 +2,7 @@ import { createHashRouter } from "react-router-dom";
 import RootLayout from "@/layouts/RootLayout";
 import { HomePage, SettingsPage, AboutPage, NotFoundPage, VLMDemoPage } from "@/pages";
 
-// 使用 HashRouter 适配 Electron 环境
+// Use HashRouter for Electron environment compatibility
 export const router = createHashRouter([
   {
     path: "/",

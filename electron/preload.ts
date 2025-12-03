@@ -1,6 +1,7 @@
 import { ipcRenderer, contextBridge } from "electron";
 import { IPC_CHANNELS, IPCResult } from "@shared/ipc-types";
 import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
+import type { SupportedLanguage } from "@shared/i18n-types";
 
 /**
  * VLM API exposed to renderer process
@@ -8,6 +9,12 @@ import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@
 export interface VLMApi {
   analyze(imageData: string, mimeType: string): Promise<VLMAnalyzeResponse>;
   getStatus(): Promise<IPCResult<VLMStatusResponse>>;
+}
+
+export interface I18nApi {
+  changeLanguage(lang: SupportedLanguage): Promise<void>;
+  getLanguage(): Promise<SupportedLanguage>;
+  getSystemLanguage(): Promise<SupportedLanguage>;
 }
 
 // --------- Expose some API to the Renderer process ---------
@@ -32,21 +39,11 @@ contextBridge.exposeInMainWorld("ipcRenderer", {
 
 // --------- Expose VLM API to the Renderer process ---------
 const vlmApi: VLMApi = {
-  /**
-   * Analyze an image using VLM
-   * @param imageData - Base64 encoded image data
-   * @param mimeType - MIME type of the image (e.g., 'image/jpeg', 'image/png')
-   * @returns Promise with analysis result or error
-   */
   async analyze(imageData: string, mimeType: string): Promise<VLMAnalyzeResponse> {
     const request: VLMAnalyzeRequest = { imageData, mimeType };
     return ipcRenderer.invoke(IPC_CHANNELS.VLM_ANALYZE, request);
   },
 
-  /**
-   * Get VLM service status
-   * @returns Promise with initialization status and current model
-   */
   async getStatus(): Promise<IPCResult<VLMStatusResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.VLM_STATUS);
   },
@@ -54,4 +51,23 @@ const vlmApi: VLMApi = {
 
 contextBridge.exposeInMainWorld("vlmApi", vlmApi);
 
-// Type declarations are in electron-env.d.ts
+// --------- Expose i18n API to the Renderer process ---------
+const i18nApi: I18nApi = {
+  async changeLanguage(lang: SupportedLanguage): Promise<void> {
+    await ipcRenderer.invoke(IPC_CHANNELS.I18N_CHANGE_LANGUAGE, { language: lang });
+  },
+
+  async getLanguage(): Promise<SupportedLanguage> {
+    return ipcRenderer.invoke(IPC_CHANNELS.I18N_GET_LANGUAGE);
+  },
+
+  /**
+   * Get the system's detected language
+   * @returns System language ('en' or 'zh-CN')
+   */
+  async getSystemLanguage(): Promise<SupportedLanguage> {
+    return ipcRenderer.invoke(IPC_CHANNELS.I18N_GET_SYSTEM_LANGUAGE);
+  },
+};
+
+contextBridge.exposeInMainWorld("i18nApi", i18nApi);

@@ -1,0 +1,45 @@
+{
+  "common": {
+    "buttons": {
+      "save": "Save",
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "close": "Close"
+    },
+    "messages": {
+      "loading": "Loading...",
+      "error": "An error occurred",
+      "success": "Success"
+    }
+  },
+  "nav": {
+    "home": "Home",
+    "settings": "Settings",
+    "about": "About"
+  },
+  "settings": {
+    "title": "Settings",
+    "language": "Language",
+    "theme": "Theme"
+  },
+  "dialogs": {
+    "confirmExit": {
+      "title": "Confirm Exit",
+      "message": "Are you sure you want to exit?"
+    }
+  },
+  "vlmDemo": {
+    "title": "VLM Demo",
+    "description": "Select an image to analyze using AI vision capabilities",
+    "selectImage": "Select Image File",
+    "analyzeImage": "Analyze Image",
+    "analyzing": "Analyzing...",
+    "imagePreview": "Image Preview",
+    "analysisResults": "Analysis Results",
+    "detectedObjects": "Detected Objects",
+    "detectedText": "Detected Text",
+    "confidence": "Confidence",
+    "error": "Error",
+    "invalidImage": "Please select a valid image file (PNG, JPG, JPEG, GIF, WebP)"
+  }
+}

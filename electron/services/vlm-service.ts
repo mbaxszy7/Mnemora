@@ -13,32 +13,15 @@ import { toIPCError } from "@shared/ipc-types";
 import { VLM_PROMPT_TEMPLATE } from "@shared/prompts";
 import { getLogger } from "./logger";
 
-/**
- * VLMService - Singleton class for Vision Language Model operations
- *
- * Provides image analysis capabilities using the AI SDK.
- * Depends on AISDKService for API client access.
- *
- * **Feature: ai-sdk-refactor**
- * **Validates: Requirements 3.1, 3.2, 3.3, 3.4**
- */
 export class VLMService {
   private static instance: VLMService | null = null;
   private aiService: AISDKService;
   private logger = getLogger("VLMService");
 
-  /**
-   * Private constructor to enforce singleton pattern
-   * Initializes with AISDKService dependency
-   */
   private constructor() {
     this.aiService = AISDKService.getInstance();
   }
 
-  /**
-   * Get the singleton instance of VLMService
-   * @returns The singleton VLMService instance
-   */
   static getInstance(): VLMService {
     if (!VLMService.instance) {
       VLMService.instance = new VLMService();
@@ -46,20 +29,10 @@ export class VLMService {
     return VLMService.instance;
   }
 
-  /**
-   * Reset the singleton instance (for testing purposes only)
-   */
   static resetInstance(): void {
     VLMService.instance = null;
   }
 
-  /**
-   * Analyze an image using VLM (Vision Language Model)
-   *
-   * @param imageBuffer - The image data as a Buffer
-   * @param mimeType - The MIME type of the image (e.g., 'image/jpeg', 'image/png')
-   * @returns Promise<VLMAnalyzeResponse> - The analysis result wrapped in IPCResult
-   */
   async analyzeImage(imageBuffer: Buffer, mimeType: string): Promise<VLMAnalyzeResponse> {
     try {
       // Check if AI SDK is initialized
@@ -142,14 +115,6 @@ export class VLMService {
     }
   }
 
-  /**
-   * Analyze an image from base64 string
-   * Convenience method for IPC handlers
-   *
-   * @param imageData - Base64 encoded image data
-   * @param mimeType - The MIME type of the image
-   * @returns Promise<VLMAnalyzeResponse> - The analysis result
-   */
   async analyzeImageFromBase64(imageData: string, mimeType: string): Promise<VLMAnalyzeResponse> {
     try {
       const imageBuffer = Buffer.from(imageData, "base64");

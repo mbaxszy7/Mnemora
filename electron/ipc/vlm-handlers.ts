@@ -5,10 +5,6 @@ import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
 import { IPCHandlerRegistry } from "./handler-registry";
 
-/**
- * Handle VLM analyze request
- * Receives base64 image data and returns analysis result
- */
 async function handleAnalyze(
   _event: IpcMainInvokeEvent,
   request: VLMAnalyzeRequest
@@ -42,10 +38,6 @@ async function handleAnalyze(
   }
 }
 
-/**
- * Handle VLM status request
- * Returns initialization status and current model
- */
 async function handleStatus(): Promise<IPCResult<VLMStatusResponse>> {
   try {
     const aiService = AISDKService.getInstance();
@@ -67,10 +59,6 @@ async function handleStatus(): Promise<IPCResult<VLMStatusResponse>> {
   }
 }
 
-/**
- * Register all VLM IPC handlers using IPCHandlerRegistry
- * Should be called during app initialization
- */
 export function registerVLMHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
 

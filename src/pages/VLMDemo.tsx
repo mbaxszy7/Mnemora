@@ -252,46 +252,6 @@ export default function VLMDemoPage() {
           </CardContent>
         </Card>
       )}
-
-      {/* Developer Tools: Icon Converter */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Sparkles className="h-5 w-5" />
-            Developer Tools
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-muted-foreground mb-4">
-            Windows requires a .png or .ico file for the app icon. Click below to convert the SVG
-            logo to PNG, then move the downloaded <code>logo.png</code> to the <code>public/</code>{" "}
-            folder.
-          </p>
-          <Button
-            variant="outline"
-            onClick={() => {
-              const img = new Image();
-              img.src = "/logo.svg";
-              img.onload = () => {
-                const canvas = document.createElement("canvas");
-                canvas.width = 512;
-                canvas.height = 512;
-                const ctx = canvas.getContext("2d");
-                if (ctx) {
-                  ctx.drawImage(img, 0, 0, 512, 512);
-                  const pngUrl = canvas.toDataURL("image/png");
-                  const a = document.createElement("a");
-                  a.href = pngUrl;
-                  a.download = "logo.png";
-                  a.click();
-                }
-              };
-            }}
-          >
-            Download logo.png
-          </Button>
-        </CardContent>
-      </Card>
     </div>
   );
 }

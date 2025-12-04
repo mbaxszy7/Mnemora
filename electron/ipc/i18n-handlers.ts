@@ -4,10 +4,6 @@ import { IPC_CHANNELS, IPCResult, toIPCError, LanguageChangePayload } from "@sha
 import { SupportedLanguage, isSupportedLanguage } from "@shared/i18n-types";
 import { IPCHandlerRegistry } from "./handler-registry";
 
-/**
- * Handle language change request
- * Receives language code and updates the main process i18n service
- */
 async function handleChangeLanguage(
   _event: IpcMainInvokeEvent,
   payload: LanguageChangePayload
@@ -36,10 +32,6 @@ async function handleChangeLanguage(
   }
 }
 
-/**
- * Handle get current language request
- * Returns the current language setting from main process
- */
 async function handleGetLanguage(): Promise<IPCResult<SupportedLanguage>> {
   try {
     const language = mainI18n.getCurrentLanguage();
@@ -56,10 +48,6 @@ async function handleGetLanguage(): Promise<IPCResult<SupportedLanguage>> {
   }
 }
 
-/**
- * Handle get system language request
- * Returns the detected system language
- */
 async function handleGetSystemLanguage(): Promise<IPCResult<SupportedLanguage>> {
   try {
     const language = mainI18n.detectSystemLanguage();
@@ -76,10 +64,6 @@ async function handleGetSystemLanguage(): Promise<IPCResult<SupportedLanguage>> 
   }
 }
 
-/**
- * Register all i18n IPC handlers using IPCHandlerRegistry
- * Should be called during app initialization
- */
 export function registerI18nHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
 

@@ -2,9 +2,6 @@ import { createOpenAICompatible, type OpenAICompatibleProvider } from "@ai-sdk/o
 import type { LanguageModel } from "ai";
 import { ServiceError, ErrorCode } from "@shared/errors";
 
-/**
- * AI SDK Service Configuration
- */
 export interface AISDKConfig {
   name: string;
   apiKey: string;
@@ -12,12 +9,6 @@ export interface AISDKConfig {
   model: string;
 }
 
-/**
- * AISDKService - Singleton class for managing AI SDK client
- *
- * Provides a centralized, type-safe way to initialize and access the AI SDK client.
- * Uses the singleton pattern to ensure only one instance exists throughout the application.
- */
 export class AISDKService {
   private static instance: AISDKService | null = null;
 
@@ -25,15 +16,8 @@ export class AISDKService {
   private config: AISDKConfig | null = null;
   private _initialized = false;
 
-  /**
-   * Private constructor to enforce singleton pattern
-   */
   private constructor() {}
 
-  /**
-   * Get the singleton instance of AISDKService
-   * @returns The singleton AISDKService instance
-   */
   static getInstance(): AISDKService {
     if (!AISDKService.instance) {
       AISDKService.instance = new AISDKService();
@@ -41,19 +25,10 @@ export class AISDKService {
     return AISDKService.instance;
   }
 
-  /**
-   * Reset the singleton instance (for testing purposes only)
-   */
   static resetInstance(): void {
     AISDKService.instance = null;
   }
 
-  /**
-   * Initialize the AI SDK with the provided configuration
-   * @param config - Configuration object with API key and settings
-   * @throws ServiceError with API_KEY_MISSING if API key is empty
-   * @throws ServiceError with INITIALIZATION_ERROR if initialization fails
-   */
   initialize(config: AISDKConfig): void {
     if (!config.apiKey || config.apiKey.trim() === "") {
       this._initialized = false;
@@ -79,19 +54,10 @@ export class AISDKService {
     }
   }
 
-  /**
-   * Check if the AI SDK is initialized
-   * @returns true if initialized, false otherwise
-   */
   isInitialized(): boolean {
     return this._initialized;
   }
 
-  /**
-   * Get the language model client
-   * @returns The language model instance
-   * @throws ServiceError with NOT_INITIALIZED if not initialized
-   */
   getClient(): LanguageModel {
     if (!this._initialized || !this.client || !this.config) {
       throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK not initialized");
@@ -99,10 +65,6 @@ export class AISDKService {
     return this.client(this.config.model);
   }
 
-  /**
-   * Get the current model name
-   * @returns The model name or default value
-   */
   getModel(): string {
     if (!this.config) {
       throw new ServiceError(ErrorCode.NOT_INITIALIZED, "AI SDK not initialized");

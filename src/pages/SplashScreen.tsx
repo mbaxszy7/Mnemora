@@ -1,12 +1,12 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useViewTransition } from "@/components/core/view-transition";
 
-const slogans = ["Remember everything.", "Memory, amplified.", "Pixels to memory"];
+const slogans = ["Pixels to memory.", "Memory, amplified.", "Remember everything."];
 
 export default function SplashScreen() {
   const [currentSloganIndex, setCurrentSloganIndex] = useState(0);
-  const navigate = useNavigate();
+  const { navigate } = useViewTransition();
 
   // Detect prefers-reduced-motion
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -32,11 +32,12 @@ export default function SplashScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-navigation after 15 seconds
+  // Auto-navigation after 9 seconds with fade transition
+  // Use 'splash-fade' type for full-screen transition from splash to main app
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate("/");
-    }, 15000);
+      navigate("/", { type: "splash-fade", duration: 900 });
+    }, 9000);
 
     return () => clearTimeout(timer);
   }, [navigate]);

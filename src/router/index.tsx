@@ -1,4 +1,5 @@
-import { createHashRouter } from "react-router-dom";
+/* eslint-disable react-refresh/only-export-components */
+import { createHashRouter, Outlet } from "react-router-dom";
 import RootLayout from "@/layouts/RootLayout";
 import {
   HomePage,
@@ -8,37 +9,49 @@ import {
   VLMDemoPage,
   SplashScreen,
 } from "@/pages";
+import { ViewTransitionProvider } from "@/components/core/view-transition";
 
-// Use HashRouter for Electron environment compatibility
-// Start at /splash on initial load
+function AppRoot() {
+  return (
+    <ViewTransitionProvider>
+      <Outlet />
+    </ViewTransitionProvider>
+  );
+}
+
 export const router = createHashRouter([
   {
-    path: "/splash",
-    element: <SplashScreen />,
-  },
-  {
-    path: "/",
-    element: <RootLayout />,
+    element: <AppRoot />,
     children: [
       {
-        index: true,
-        element: <HomePage />,
+        path: "/splash",
+        element: <SplashScreen />,
       },
       {
-        path: "settings",
-        element: <SettingsPage />,
-      },
-      {
-        path: "about",
-        element: <AboutPage />,
-      },
-      {
-        path: "vlm-demo",
-        element: <VLMDemoPage />,
-      },
-      {
-        path: "*",
-        element: <NotFoundPage />,
+        path: "/",
+        element: <RootLayout />,
+        children: [
+          {
+            index: true,
+            element: <HomePage />,
+          },
+          {
+            path: "settings",
+            element: <SettingsPage />,
+          },
+          {
+            path: "about",
+            element: <AboutPage />,
+          },
+          {
+            path: "vlm-demo",
+            element: <VLMDemoPage />,
+          },
+          {
+            path: "*",
+            element: <NotFoundPage />,
+          },
+        ],
       },
     ],
   },

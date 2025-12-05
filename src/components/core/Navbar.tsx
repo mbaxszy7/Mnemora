@@ -1,6 +1,6 @@
-import { NavLink } from "react-router-dom";
 import { Brain, Home, Settings, Info, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { TransitionNavLink } from "@/components/core/view-transition";
 
 const navItems = [
   { to: "/", label: "Home", icon: Home },
@@ -11,7 +11,7 @@ const navItems = [
 
 export function Navbar() {
   return (
-    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+    <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/60">
       <div className="container flex h-14 items-center">
         <div className="flex items-center gap-2 mr-8">
           <Brain className="h-6 w-6 text-primary" />
@@ -19,10 +19,12 @@ export function Navbar() {
         </div>
         <nav className="flex items-center gap-1">
           {navItems.map(({ to, label, icon: Icon }) => (
-            <NavLink
+            <TransitionNavLink
               key={to}
               to={to}
               end={to === "/"}
+              type="fade"
+              duration={160}
               className={({ isActive }) =>
                 cn(
                   "flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-md transition-colors",
@@ -34,7 +36,7 @@ export function Navbar() {
             >
               <Icon className="h-4 w-4" />
               {label}
-            </NavLink>
+            </TransitionNavLink>
           ))}
         </nav>
       </div>

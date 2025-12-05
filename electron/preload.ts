@@ -79,17 +79,6 @@ export interface DatabaseApi {
     set(key: string, value: string): Promise<void>;
     getAll(): Promise<Array<{ key: string; value: string | null }>>;
   };
-  memories: {
-    getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
-    get(id: number): Promise<unknown | undefined>;
-    create(data: unknown): Promise<unknown>;
-    update(id: number, data: unknown): Promise<unknown | undefined>;
-    delete(id: number): Promise<void>;
-  };
-  screenshots: {
-    getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
-    create(data: unknown): Promise<unknown>;
-  };
 }
 
 const databaseApi: DatabaseApi = {
@@ -102,31 +91,6 @@ const databaseApi: DatabaseApi = {
     },
     async getAll(): Promise<Array<{ key: string; value: string | null }>> {
       return ipcRenderer.invoke(IPC_CHANNELS.DB_SETTINGS_GET_ALL);
-    },
-  },
-  memories: {
-    async getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_MEMORIES_GET_ALL, options);
-    },
-    async get(id: number): Promise<unknown | undefined> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_MEMORIES_GET, id);
-    },
-    async create(data: unknown): Promise<unknown> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_MEMORIES_CREATE, data);
-    },
-    async update(id: number, data: unknown): Promise<unknown | undefined> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_MEMORIES_UPDATE, id, data);
-    },
-    async delete(id: number): Promise<void> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_MEMORIES_DELETE, id);
-    },
-  },
-  screenshots: {
-    async getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_SCREENSHOTS_GET_ALL, options);
-    },
-    async create(data: unknown): Promise<unknown> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_SCREENSHOTS_CREATE, data);
     },
   },
 };

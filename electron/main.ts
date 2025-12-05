@@ -78,6 +78,18 @@ function createMainWindow(): BrowserWindow {
     app.dock.setIcon(appIcon);
   }
 
+  // macOS: Hide window instead of closing when user clicks close button
+  // This allows the app to stay in dock and reopen quickly
+  if (process.platform === "darwin") {
+    win.on("close", (event) => {
+      // Only hide if not quitting the app
+      if (!isQuitting) {
+        event.preventDefault();
+        win.hide();
+      }
+    });
+  }
+
   win.webContents.on("did-finish-load", () => {
     win.webContents.send("main-process-message", new Date().toLocaleString());
   });
@@ -96,18 +108,26 @@ function createMainWindow(): BrowserWindow {
 // ============================================================================
 
 async function initI18nService(): Promise<void> {
-  await mainI18n.initialize();
-  logger.info("i18n service initialized");
+  try {
+    await mainI18n.initialize();
+    logger.info("i18n service initialized");
+  } catch (error) {
+    logger.error({ error }, "Failed to initialize i18n service");
+  }
 }
 function initAIService(): void {
-  const aiService = AISDKService.getInstance();
-  aiService.initialize({
-    name: "MOONSHOT",
-    baseURL: "https://api.moonshot.cn/v1",
-    model: "kimi-latest",
-    apiKey: "sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg",
-  });
-  logger.info("AI SDK service initialized");
+  try {
+    const aiService = AISDKService.getInstance();
+    aiService.initialize({
+      name: "MOONSHOT",
+      baseURL: "https://api.moonshot.cn/v1",
+      model: "kimi-latest",
+      apiKey: "sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg",
+    });
+    logger.info("AI SDK service initialized");
+  } catch (error) {
+    logger.warn({ error }, "AI service initialization failed");
+  }
 }
 function initDatabaseService(): void {
   try {
@@ -118,7 +138,6 @@ function initDatabaseService(): void {
     throw error; // Database is critical, rethrow to prevent app start
   }
 }
-
 function registerIPCHandlers(): void {
   // Clean up existing handlers for hot reload (dev mode only)
   if (isDev) {
@@ -135,28 +154,20 @@ function registerIPCHandlers(): void {
 async function initializeApp(): Promise<void> {
   // 1. Register IPC handlers first (before any async operations)
   registerIPCHandlers();
-
   // 2. Initialize database (critical, must succeed)
   initDatabaseService();
-
   // 3. Initialize i18n (required before UI)
-  try {
-    await initI18nService();
-  } catch (error) {
-    logger.error({ error }, "Failed to initialize i18n service");
-  }
-
+  await initI18nService();
   // 4. Initialize AI service (non-critical, can fail gracefully)
-  try {
-    initAIService();
-  } catch (error) {
-    logger.warn({ error }, "AI service initialization failed");
-  }
+  initAIService();
 }
 
 // ============================================================================
 // App Lifecycle
 // ============================================================================
+
+// Flag to track if app is quitting (for macOS window management)
+let isQuitting = false;
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
@@ -166,12 +177,17 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  // Set flag to allow window to actually close
+  isQuitting = true;
   // Close database connection before quitting
   databaseService.close();
 });
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  // macOS: Show existing window or create new one when dock icon is clicked
+  if (mainWindow) {
+    mainWindow.show();
+  } else if (BrowserWindow.getAllWindows().length === 0) {
     mainWindow = createMainWindow();
   }
 });

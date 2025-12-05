@@ -11,24 +11,27 @@
     </filter>
   </defs>
 
-  <!-- Background: Rounded White Rectangle (Squircle) for Taskbar Visibility -->
-  <rect x="0" y="0" width="512" height="512" rx="115" fill="#FFFFFF" />
-  
-  <!-- Thicker "M" Path (Stroke increased to 80) -->
-  <path d="M 100 380 
-           V 200 
-           C 100 100, 220 100, 256 220 
-           C 292 100, 412 100, 412 200 
-           V 380" 
-        stroke="url(#neural_gradient)" 
-        stroke-width="80" 
-        stroke-linecap="round" 
-        stroke-linejoin="round" />
+  <!-- Scaled content group (80% size, centered for macOS icon padding) -->
+  <g transform="translate(51.2, 51.2) scale(0.8)">
+    <!-- Background: Rounded White Rectangle (Squircle) for Taskbar Visibility -->
+    <rect x="0" y="0" width="512" height="512" rx="115" fill="#FFFFFF" />
+    
+    <!-- Thicker "M" Path (Stroke increased to 80) -->
+    <path d="M 100 380 
+             V 200 
+             C 100 100, 220 100, 256 220 
+             C 292 100, 412 100, 412 200 
+             V 380" 
+          stroke="url(#neural_gradient)" 
+          stroke-width="80" 
+          stroke-linecap="round" 
+          stroke-linejoin="round" />
 
-  <!-- The Moment Dot (Radius increased to 36) -->
-  <circle cx="256" cy="150" r="36" fill="#06B6D4" filter="url(#glow)">
-    <animate attributeName="r" values="36;40;36" dur="3s" repeatCount="indefinite" />
-    <animate attributeName="opacity" values="1;0.85;1" dur="3s" repeatCount="indefinite" />
-  </circle>
+    <!-- The Moment Dot (Radius increased to 36) -->
+    <circle cx="256" cy="150" r="36" fill="#06B6D4" filter="url(#glow)">
+      <animate attributeName="r" values="36;40;36" dur="3s" repeatCount="indefinite" />
+      <animate attributeName="opacity" values="1;0.85;1" dur="3s" repeatCount="indefinite" />
+    </circle>
+  </g>
   
 </svg>

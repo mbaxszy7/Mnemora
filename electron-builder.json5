@@ -11,6 +11,7 @@
   mac: {
     target: ["dmg"],
     artifactName: "${productName}-Mac-${version}-Installer.${ext}",
+    icon: "public/logo.png",
   },
   win: {
     target: [

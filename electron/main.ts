@@ -48,6 +48,10 @@ function createMainWindow(): BrowserWindow {
     },
   });
 
+  if (process.platform === "darwin") {
+    app.dock?.setIcon(path.join(process.env.VITE_PUBLIC, "logo.png"));
+  }
+
   win.webContents.on("did-finish-load", () => {
     win.webContents.send("main-process-message", new Date().toLocaleString());
   });

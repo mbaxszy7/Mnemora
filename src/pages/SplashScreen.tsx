@@ -72,11 +72,12 @@ export default function SplashScreen() {
   // Navigate to appropriate page based on LLM configuration status
   useEffect(() => {
     const timer = setTimeout(() => {
-      // Only navigate after config check is complete
-      if (configCheckResult.checked) {
-        const target = getNavigationTarget(configCheckResult.configured);
-        navigate(target, { type: "splash-fade", duration: 900 });
-      }
+      // Navigate unconditionally after timeout
+      // If config check completed, use the result; otherwise default to config page
+      const target = configCheckResult.checked
+        ? getNavigationTarget(configCheckResult.configured)
+        : "/llm-config";
+      navigate(target, { type: "splash-fade", duration: 900 });
     }, 9000);
 
     return () => clearTimeout(timer);

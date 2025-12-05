@@ -27,3 +27,11 @@ release
 
 # Kiro
 .kiro
+
+# Database
+dev.db
+dev.db-journal
+dev.db-wal
+*.db
+*.db-journal
+*.db-wal

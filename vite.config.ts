@@ -1,8 +1,24 @@
 import { defineConfig } from "vite";
 import path from "node:path";
+import fs from "node:fs";
 import electron from "vite-plugin-electron/simple";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+
+// Plugin to copy migrations folder to dist-electron
+function copyMigrationsPlugin() {
+  return {
+    name: "copy-migrations",
+    closeBundle() {
+      const src = path.resolve(__dirname, "electron/database/migrations");
+      const dest = path.resolve(__dirname, "dist-electron/migrations");
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, dest, { recursive: true });
+        console.log("✓ Copied migrations folder to dist-electron/migrations");
+      }
+    },
+  };
+}
 
 // Shared alias configuration for both renderer and electron builds
 const sharedAlias = {
@@ -30,7 +46,12 @@ export default defineConfig({
           build: {
             // Support top-level await in dependencies
             target: "esnext",
+            rollupOptions: {
+              // Externalize native modules - they will be loaded at runtime
+              external: ["better-sqlite3"],
+            },
           },
+          plugins: [copyMigrationsPlugin()],
         },
       },
       preload: {

@@ -3,15 +3,32 @@
   $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   appId: "com.mnemora.app",
   asar: true,
+  // Use asarUnpack for native modules to work correctly
+  asarUnpack: [
+    "node_modules/better-sqlite3/**/*",
+    "node_modules/bindings/**/*",
+    "node_modules/file-uri-to-path/**/*",
+  ],
   productName: "Mnemora",
   directories: {
     output: "release/${version}",
   },
-  files: ["dist", "dist-electron"],
+  files: [
+    "dist",
+    "dist-electron",
+    // Include native module and its dependencies
+    "node_modules/better-sqlite3/**/*",
+    "node_modules/bindings/**/*",
+    "node_modules/file-uri-to-path/**/*",
+    "node_modules/drizzle-orm/**/*",
+  ],
+  // Rebuild native modules for target platform
+  nodeGypRebuild: false,
+  npmRebuild: true,
   mac: {
     target: ["dmg"],
     artifactName: "${productName}-Mac-${version}-Installer.${ext}",
-    icon: "public/logo.png",
+    icon: "public/logo.icns",
   },
   win: {
     target: [

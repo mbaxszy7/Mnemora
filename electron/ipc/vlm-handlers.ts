@@ -62,13 +62,7 @@ async function handleStatus(): Promise<IPCResult<VLMStatusResponse>> {
 export function registerVLMHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
 
-  registry.registerHandler<VLMAnalyzeRequest, VLMAnalyzeResponse>(
-    IPC_CHANNELS.VLM_ANALYZE,
-    handleAnalyze
-  );
+  registry.registerHandler(IPC_CHANNELS.VLM_ANALYZE, handleAnalyze);
 
-  registry.registerHandler<void, IPCResult<VLMStatusResponse>>(
-    IPC_CHANNELS.VLM_STATUS,
-    handleStatus
-  );
+  registry.registerHandler(IPC_CHANNELS.VLM_STATUS, handleStatus);
 }

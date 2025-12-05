@@ -67,18 +67,9 @@ async function handleGetSystemLanguage(): Promise<IPCResult<SupportedLanguage>> 
 export function registerI18nHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
 
-  registry.registerHandler<LanguageChangePayload, IPCResult<void>>(
-    IPC_CHANNELS.I18N_CHANGE_LANGUAGE,
-    handleChangeLanguage
-  );
+  registry.registerHandler(IPC_CHANNELS.I18N_CHANGE_LANGUAGE, handleChangeLanguage);
 
-  registry.registerHandler<void, IPCResult<SupportedLanguage>>(
-    IPC_CHANNELS.I18N_GET_LANGUAGE,
-    handleGetLanguage
-  );
+  registry.registerHandler(IPC_CHANNELS.I18N_GET_LANGUAGE, handleGetLanguage);
 
-  registry.registerHandler<void, IPCResult<SupportedLanguage>>(
-    IPC_CHANNELS.I18N_GET_SYSTEM_LANGUAGE,
-    handleGetSystemLanguage
-  );
+  registry.registerHandler(IPC_CHANNELS.I18N_GET_SYSTEM_LANGUAGE, handleGetSystemLanguage);
 }

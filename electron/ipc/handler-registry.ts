@@ -1,10 +1,8 @@
 import { ipcMain, IpcMainInvokeEvent } from "electron";
 import { IPCChannel } from "@shared/ipc-types";
 
-type IPCHandler<TRequest, TResponse> = (
-  event: IpcMainInvokeEvent,
-  request: TRequest
-) => Promise<TResponse>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type IPCHandler = (event: IpcMainInvokeEvent, ...args: any[]) => Promise<any>;
 
 export class IPCHandlerRegistry {
   private static instance: IPCHandlerRegistry | null = null;
@@ -23,10 +21,7 @@ export class IPCHandlerRegistry {
     IPCHandlerRegistry.instance = null;
   }
 
-  registerHandler<TRequest, TResponse>(
-    channel: IPCChannel,
-    handler: IPCHandler<TRequest, TResponse>
-  ): void {
+  registerHandler(channel: IPCChannel, handler: IPCHandler): void {
     if (this.registeredChannels.has(channel)) {
       console.warn(`[IPC] Handler for ${channel} already registered, skipping`);
       return;

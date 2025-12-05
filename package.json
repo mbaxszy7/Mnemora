@@ -7,12 +7,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder",
+    "dev:rebuild": "pnpm run rebuild:sqlite && vite",
+    "build": "pnpm run rebuild:sqlite && tsc && vite build && electron-builder",
     "lint": "eslint . --max-warnings 0",
     "preview": "vite preview",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
-    "prepare": "husky"
+    "prepare": "husky",
+    "rebuild:sqlite": "./node_modules/.bin/electron-rebuild -f -w better-sqlite3",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "echo 'Migrations run automatically at app startup. Use pnpm db:generate to create new migrations.'",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.76",
@@ -47,12 +52,15 @@
     "@radix-ui/react-tooltip": "^1.2.8",
     "@tanstack/react-query": "^5.62.3",
     "ai": "^5.0.106",
+    "better-sqlite3": "^12.5.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
+    "drizzle-orm": "^0.38.4",
     "embla-carousel-react": "^8.6.0",
     "fast-check": "^4.3.0",
+    "framer-motion": "^12.23.25",
     "i18next": "^25.7.1",
     "i18next-fs-backend": "^2.6.1",
     "input-otp": "^1.4.2",
@@ -78,15 +86,18 @@
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
+    "@electron/rebuild": "^3.7.1",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.1.0",
+    "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.1",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^39.2.4",
+    "drizzle-kit": "^0.30.1",
+    "electron": "^39.2.5",
     "electron-builder": "^25.1.8",
     "eslint": "^9.16.0",
     "eslint-config-prettier": "^10.1.5",
@@ -104,5 +115,10 @@
     "vite-plugin-electron-renderer": "^0.14.6",
     "vitest": "^4.0.15"
   },
-  "main": "dist-electron/main.js"
+  "main": "dist-electron/main.js",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
+  }
 }

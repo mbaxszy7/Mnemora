@@ -28,6 +28,10 @@ export const IPC_CHANNELS = {
   I18N_CHANGE_LANGUAGE: "i18n:change-language",
   I18N_GET_LANGUAGE: "i18n:get-language",
   I18N_GET_SYSTEM_LANGUAGE: "i18n:get-system-language",
+  // Database channels
+  DB_SETTINGS_GET: "db:settings:get",
+  DB_SETTINGS_SET: "db:settings:set",
+  DB_SETTINGS_GET_ALL: "db:settings:getAll",
 } as const;
 
 /**

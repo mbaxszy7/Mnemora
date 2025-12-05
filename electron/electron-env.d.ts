@@ -39,4 +39,22 @@ interface Window {
     getLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
     getSystemLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
   };
+  databaseApi: {
+    settings: {
+      get(key: string): Promise<string | null>;
+      set(key: string, value: string): Promise<void>;
+      getAll(): Promise<Array<{ key: string; value: string | null }>>;
+    };
+    memories: {
+      getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
+      get(id: number): Promise<unknown | undefined>;
+      create(data: unknown): Promise<unknown>;
+      update(id: number, data: unknown): Promise<unknown | undefined>;
+      delete(id: number): Promise<void>;
+    };
+    screenshots: {
+      getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
+      create(data: unknown): Promise<unknown>;
+    };
+  };
 }

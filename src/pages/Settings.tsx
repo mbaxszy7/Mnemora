@@ -10,12 +10,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Save, Languages } from "lucide-react";
+import { Save, Languages, Bot, ChevronRight } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
+import { useViewTransition } from "@/components/core/view-transition";
 import type { SupportedLanguage } from "@shared/i18n-types";
 
 export default function SettingsPage() {
   const { t } = useTranslation();
+  const { navigate } = useViewTransition();
   const {
     currentLanguage,
     changeLanguage,
@@ -72,6 +74,21 @@ export default function SettingsPage() {
             </SelectContent>
           </Select>
         </div>
+
+        {/* LLM Configuration */}
+        <button
+          onClick={() => navigate("/settings/llm-config", { type: "slide-left", duration: 300 })}
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <Bot className="h-4 w-4" />
+              {t("llmConfig.title")}
+            </Label>
+            <p className="text-sm text-muted-foreground">{t("llmConfig.description")}</p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">

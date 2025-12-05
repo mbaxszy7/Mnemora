@@ -21,3 +21,26 @@ export {
   type SupportedImageType,
   MAX_IMAGE_SIZE,
 } from "./vlm-types";
+
+// LLM Configuration Types
+export {
+  type LLMConfigMode,
+  type LLMEndpointConfig,
+  type UnifiedLLMConfig,
+  type SeparateLLMConfig,
+  type LLMConfig,
+  type CapabilityValidationResult,
+  type LLMValidationResult,
+  type LLMConfigCheckResult,
+  LLMValidationErrorCode,
+} from "./llm-config-types";
+
+// LLM Configuration Utilities
+export {
+  isValidUrl,
+  isEndpointConfigComplete,
+  isSeparateConfigComplete,
+  encodeApiKey,
+  decodeApiKey,
+  getValidationErrorKey,
+} from "./llm-config-utils";

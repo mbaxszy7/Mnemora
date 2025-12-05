@@ -2,6 +2,11 @@ import { ipcRenderer, contextBridge } from "electron";
 import { IPC_CHANNELS, IPCResult } from "@shared/ipc-types";
 import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
 import type { SupportedLanguage } from "@shared/i18n-types";
+import type {
+  LLMConfig,
+  LLMConfigCheckResult,
+  LLMValidationResult,
+} from "@shared/llm-config-types";
 
 /**
  * VLM API exposed to renderer process
@@ -72,27 +77,30 @@ const i18nApi: I18nApi = {
 
 contextBridge.exposeInMainWorld("i18nApi", i18nApi);
 
-// --------- Expose Database API to the Renderer process ---------
-export interface DatabaseApi {
-  settings: {
-    get(key: string): Promise<string | null>;
-    set(key: string, value: string): Promise<void>;
-    getAll(): Promise<Array<{ key: string; value: string | null }>>;
-  };
+// --------- Expose LLM Config API to the Renderer process ---------
+export interface LLMConfigApi {
+  check(): Promise<LLMConfigCheckResult>;
+  validate(config: LLMConfig): Promise<LLMValidationResult>;
+  save(config: LLMConfig): Promise<void>;
+  get(): Promise<LLMConfig | null>;
 }
 
-const databaseApi: DatabaseApi = {
-  settings: {
-    async get(key: string): Promise<string | null> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_SETTINGS_GET, key);
-    },
-    async set(key: string, value: string): Promise<void> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_SETTINGS_SET, key, value);
-    },
-    async getAll(): Promise<Array<{ key: string; value: string | null }>> {
-      return ipcRenderer.invoke(IPC_CHANNELS.DB_SETTINGS_GET_ALL);
-    },
+const llmConfigApi: LLMConfigApi = {
+  async check(): Promise<LLMConfigCheckResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_CONFIG_CHECK);
+  },
+
+  async validate(config: LLMConfig): Promise<LLMValidationResult> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_CONFIG_VALIDATE, config);
+  },
+
+  async save(config: LLMConfig): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_CONFIG_SAVE, config);
+  },
+
+  async get(): Promise<LLMConfig | null> {
+    return ipcRenderer.invoke(IPC_CHANNELS.LLM_CONFIG_GET);
   },
 };
 
-contextBridge.exposeInMainWorld("databaseApi", databaseApi);
+contextBridge.exposeInMainWorld("llmConfigApi", llmConfigApi);

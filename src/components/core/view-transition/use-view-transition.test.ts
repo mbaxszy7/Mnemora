@@ -18,8 +18,10 @@ import type { TransitionType, TransitionState, ViewTransitionContextValue } from
 
 // Mock react-router-dom
 const mockNavigate = vi.fn();
+const mockLocation = { pathname: "/current", search: "", hash: "", state: null, key: "default" };
 vi.mock("react-router-dom", () => ({
   useNavigate: () => mockNavigate,
+  useLocation: () => mockLocation,
 }));
 
 // Valid transition types for testing
@@ -82,7 +84,7 @@ describe("useViewTransition Hook", () => {
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),
         fc.boolean(),
-        fc.string({ minLength: 1 }).filter((s) => s.startsWith("/")),
+        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
         async (type: TransitionType, prefersReducedMotion: boolean, path: string) => {
           mockNavigate.mockClear();
           mockStartViewTransition.mockClear();
@@ -126,7 +128,7 @@ describe("useViewTransition Hook", () => {
     await fc.assert(
       fc.asyncProperty(
         fc.boolean(),
-        fc.string({ minLength: 1 }).filter((s) => s.startsWith("/")),
+        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
         async (prefersReducedMotion: boolean, path: string) => {
           mockNavigate.mockClear();
           mockStartViewTransition.mockClear();
@@ -173,7 +175,7 @@ describe("useViewTransition Hook", () => {
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),
         fc.integer({ min: 100, max: 1000 }),
-        fc.string({ minLength: 1 }).filter((s) => s.startsWith("/")),
+        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
         async (type: TransitionType, duration: number, path: string) => {
           mockNavigate.mockClear();
 
@@ -207,6 +209,7 @@ describe("useViewTransition Hook", () => {
               transitionState,
               setTransitionState,
               prefersReducedMotion: false,
+              isPending: false,
             };
 
             return React.createElement(

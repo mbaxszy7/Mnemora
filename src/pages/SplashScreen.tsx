@@ -1,12 +1,28 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useViewTransition } from "@/components/core/view-transition";
 
 const slogans = ["Pixels to memory.", "Memory, amplified.", "Remember everything."];
 
+/**
+ * Determines the navigation target based on LLM configuration check result
+ * @param configured - Whether LLM is configured
+ * @returns Navigation path: '/llm-config' if not configured, '/' if configured
+ */
+export function getNavigationTarget(configured: boolean): string {
+  return configured ? "/" : "/llm-config";
+}
+
 export default function SplashScreen() {
   const [currentSloganIndex, setCurrentSloganIndex] = useState(0);
   const { navigate } = useViewTransition();
+
+  // LLM configuration check state
+  const [configCheckResult, setConfigCheckResult] = useState<{
+    checked: boolean;
+    configured: boolean;
+  }>({ checked: false, configured: false });
+  const configCheckRef = useRef(false);
 
   // Detect prefers-reduced-motion
   const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
@@ -23,6 +39,26 @@ export default function SplashScreen() {
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
+  // Check LLM configuration on mount
+  useEffect(() => {
+    // Prevent duplicate checks in strict mode
+    if (configCheckRef.current) return;
+    configCheckRef.current = true;
+
+    const checkConfig = async () => {
+      try {
+        const result = await window.llmConfigApi.check();
+        setConfigCheckResult({ checked: true, configured: result.configured });
+      } catch (error) {
+        // On error, navigate to config page (treat as not configured)
+        console.error("Failed to check LLM configuration:", error);
+        setConfigCheckResult({ checked: true, configured: false });
+      }
+    };
+
+    checkConfig();
+  }, []);
+
   // Slogan rotation effect
   useEffect(() => {
     const interval = setInterval(() => {
@@ -33,14 +69,18 @@ export default function SplashScreen() {
   }, []);
 
   // Auto-navigation after 9 seconds with fade transition
-  // Use 'splash-fade' type for full-screen transition from splash to main app
+  // Navigate to appropriate page based on LLM configuration status
   useEffect(() => {
     const timer = setTimeout(() => {
-      navigate("/", { type: "splash-fade", duration: 900 });
+      // Only navigate after config check is complete
+      if (configCheckResult.checked) {
+        const target = getNavigationTarget(configCheckResult.configured);
+        navigate(target, { type: "splash-fade", duration: 900 });
+      }
     }, 9000);
 
     return () => clearTimeout(timer);
-  }, [navigate]);
+  }, [navigate, configCheckResult]);
   return (
     <motion.div
       initial={{ opacity: 1 }}

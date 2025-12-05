@@ -3,9 +3,11 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { AISDKService } from "./services/ai-sdk-service";
+import { LLMConfigService } from "./services/llm-config-service";
 import { registerVLMHandlers } from "./ipc/vlm-handlers";
 import { registerI18nHandlers } from "./ipc/i18n-handlers";
-import { registerDatabaseHandlers } from "./ipc/database-handlers";
+
+import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -115,18 +117,24 @@ async function initI18nService(): Promise<void> {
     logger.error({ error }, "Failed to initialize i18n service");
   }
 }
-function initAIService(): void {
+async function initAIService(): Promise<void> {
   try {
+    const llmConfigService = LLMConfigService.getInstance();
+    const config = await llmConfigService.loadConfiguration();
+
+    if (!config) {
+      logger.info("No LLM configuration found in database, AISDKService not initialized");
+      return;
+    }
+
     const aiService = AISDKService.getInstance();
-    aiService.initialize({
-      name: "MOONSHOT",
-      baseURL: "https://api.moonshot.cn/v1",
-      model: "kimi-latest",
-      apiKey: "sk-mvcB7z8Kgln2zzEWf8V7FRVAdX8nIy09BsySNb1S4CnR9Vsg",
-    });
-    logger.info("AI SDK service initialized");
+    aiService.initialize(config);
+    logger.info({ mode: config.mode }, "AISDKService initialized from database configuration");
   } catch (error) {
-    logger.warn({ error }, "AI service initialization failed");
+    logger.warn(
+      { error },
+      "AISDKService initialization failed, user will be prompted to configure"
+    );
   }
 }
 function initDatabaseService(): void {
@@ -147,7 +155,7 @@ function registerIPCHandlers(): void {
 
   registerI18nHandlers();
   registerVLMHandlers();
-  registerDatabaseHandlers();
+  registerLLMConfigHandlers();
   logger.info("IPC handlers registered");
 }
 
@@ -158,8 +166,8 @@ async function initializeApp(): Promise<void> {
   initDatabaseService();
   // 3. Initialize i18n (required before UI)
   await initI18nService();
-  // 4. Initialize AI service (non-critical, can fail gracefully)
-  initAIService();
+  // 4. Initialize AI service from database (non-critical, can fail gracefully)
+  await initAIService();
 }
 
 // ============================================================================

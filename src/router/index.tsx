@@ -4,10 +4,12 @@ import RootLayout from "@/layouts/RootLayout";
 import {
   HomePage,
   SettingsPage,
+  SettingsLLMConfigPage,
   AboutPage,
   NotFoundPage,
   VLMDemoPage,
   SplashScreen,
+  LLMConfigPage,
 } from "@/pages";
 import { ViewTransitionProvider } from "@/components/core/view-transition";
 
@@ -28,6 +30,10 @@ export const router = createHashRouter([
         element: <SplashScreen />,
       },
       {
+        path: "/llm-config",
+        element: <LLMConfigPage />,
+      },
+      {
         path: "/",
         element: <RootLayout />,
         children: [
@@ -38,6 +44,10 @@ export const router = createHashRouter([
           {
             path: "settings",
             element: <SettingsPage />,
+          },
+          {
+            path: "settings/llm-config",
+            element: <SettingsLLMConfigPage />,
           },
           {
             path: "about",

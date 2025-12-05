@@ -192,7 +192,10 @@ describe("Variable Interpolation", () => {
     const variableNameArb = fc
       .string({ minLength: 1, maxLength: 10 })
       .filter((s) => /^[a-zA-Z][a-zA-Z0-9]*$/.test(s));
-    const variableValueArb = fc.string({ minLength: 1, maxLength: 20 });
+    // Filter out values containing {{ or }} to avoid false positives
+    const variableValueArb = fc
+      .string({ minLength: 1, maxLength: 20 })
+      .filter((s) => !s.includes("{{") && !s.includes("}}"));
 
     fc.assert(
       fc.property(

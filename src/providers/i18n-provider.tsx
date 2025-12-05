@@ -1,8 +1,3 @@
-/**
- * I18nProvider Component
- * Wraps the application with i18next provider and handles initialization
- * Requirements: 3.1, 3.2
- */
 import { Suspense, type ReactNode } from "react";
 import { I18nextProvider } from "react-i18next";
 import i18n from "@/i18n";

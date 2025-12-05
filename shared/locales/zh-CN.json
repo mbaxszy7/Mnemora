@@ -41,5 +41,74 @@
     "confidence": "置信度",
     "error": "错误",
     "invalidImage": "请选择有效的图片文件（PNG、JPG、JPEG、GIF、WebP）"
+  },
+  "llmConfig": {
+    "title": "LLM 配置",
+    "description": "配置您的 OpenAI 兼容 API 端点，用于不同的 AI 功能。",
+    "modes": {
+      "unified": "统一模式",
+      "separate": "分离模式"
+    },
+    "warnings": {
+      "unifiedMode": "在统一模式下，您的 LLM 必须支持文本补全、视觉（图片输入）和嵌入功能。"
+    },
+    "sections": {
+      "vlm": "视觉语言模型 (VLM)",
+      "textLlm": "文本语言模型",
+      "embeddingLlm": "嵌入模型"
+    },
+    "fields": {
+      "baseUrl": {
+        "label": "Base URL",
+        "placeholder": "https://api.openai.com/v1",
+        "tooltip": "您的 OpenAI 兼容 API 端点的基础 URL。"
+      },
+      "apiKey": {
+        "label": "API Key",
+        "placeholder": "输入您的 API Key",
+        "tooltip": "用于身份验证的 API Key，将被安全存储。"
+      },
+      "model": {
+        "label": "模型",
+        "placeholder": "gpt-4o",
+        "tooltip": "此端点使用的模型名称。"
+      }
+    },
+    "buttons": {
+      "save": "保存并继续",
+      "cancel": "取消",
+      "validate": "验证",
+      "showApiKey": "显示 API Key",
+      "hideApiKey": "隐藏 API Key"
+    },
+    "validation": {
+      "inProgress": "正在验证配置...",
+      "textCompletion": "文本补全",
+      "vision": "视觉",
+      "embedding": "嵌入",
+      "success": "验证成功",
+      "failed": "验证失败",
+      "checking": "检查中...",
+      "NETWORK_ERROR": "网络错误，请检查您的网络连接。",
+      "NOT_FOUND_404": "API 端点未找到，请检查 Base URL 是否正确。",
+      "UNAUTHORIZED_401": "API Key 无效，请检查您的凭证。",
+      "INVALID_API_KEY": "API Key 格式无效。",
+      "VISION_NOT_SUPPORTED": "该模型不支持图片输入。",
+      "EMBEDDING_NOT_SUPPORTED": "该端点不支持 embedding 功能。",
+      "INVALID_RESPONSE": "API 返回无效响应，请检查配置。",
+      "TIMEOUT": "请求超时，请重试。",
+      "UNKNOWN": "发生未知错误，请重试。"
+    },
+    "errors": {
+      "invalidUrl": "请输入有效的 HTTP 或 HTTPS URL。",
+      "requiredField": "此字段为必填项。",
+      "incompleteConfig": "请填写所有必填字段。",
+      "separateModeIncomplete": "在分离模式下，必须完成所有三个配置（VLM、文本 LLM、嵌入）。"
+    },
+    "messages": {
+      "saveSuccess": "配置保存成功！",
+      "saveFailed": "保存配置失败。",
+      "loadFailed": "加载配置失败。"
+    }
   }
 }

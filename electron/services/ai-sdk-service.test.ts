@@ -1,24 +1,20 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import * as fc from "fast-check";
-import { AISDKService, type AISDKConfig } from "./ai-sdk-service";
-import { ServiceError, ErrorCode } from "@shared/errors";
+import { AISDKService } from "./ai-sdk-service";
+import { ServiceError, ErrorCode } from "../../shared/errors";
+import type { SeparateLLMConfig, UnifiedLLMConfig } from "../../shared/llm-config-types";
 
 describe("AISDKService Singleton Invariant", () => {
   beforeEach(() => {
-    // Reset the singleton before each test to ensure isolation
     AISDKService.resetInstance();
   });
 
   it("Property 1: Multiple getInstance() calls return the same instance", () => {
     fc.assert(
       fc.property(fc.integer({ min: 2, max: 10 }), (numCalls) => {
-        // Reset before this property run
         AISDKService.resetInstance();
-
-        // Get the first instance
         const firstInstance = AISDKService.getInstance();
 
-        // Call getInstance() multiple times and verify all return the same reference
         for (let i = 0; i < numCalls; i++) {
           const instance = AISDKService.getInstance();
           expect(instance).toBe(firstInstance);
@@ -36,7 +32,9 @@ describe("AISDKService Singleton Invariant", () => {
         expect(instance).toBeInstanceOf(AISDKService);
         expect(typeof instance.isInitialized).toBe("function");
         expect(typeof instance.initialize).toBe("function");
-        expect(typeof instance.getClient).toBe("function");
+        expect(typeof instance.getVLMClient).toBe("function");
+        expect(typeof instance.getTextClient).toBe("function");
+        expect(typeof instance.getEmbeddingClient).toBe("function");
       }),
       { numRuns: 100 }
     );
@@ -48,8 +46,6 @@ describe("AISDKService Singleton Invariant", () => {
         const firstInstance = AISDKService.getInstance();
         AISDKService.resetInstance();
         const secondInstance = AISDKService.getInstance();
-
-        // After reset, we should get a different instance
         expect(secondInstance).not.toBe(firstInstance);
       }),
       { numRuns: 100 }
@@ -57,67 +53,40 @@ describe("AISDKService Singleton Invariant", () => {
   });
 });
 
-describe("AISDKService Initialization Behavior", () => {
+describe("AISDKService Initialization", () => {
   beforeEach(() => {
     AISDKService.resetInstance();
   });
 
-  // Generator for empty/whitespace-only API keys
-  const emptyApiKeyArb = fc.oneof(
+  // Generator for empty/whitespace-only strings
+  const emptyStringArb = fc.oneof(
     fc.constant(""),
     fc.constant("   "),
     fc.constant("\t"),
-    fc.constant("\n"),
-    fc.constant("  \t  \n  ")
+    fc.constant("\n")
   );
 
-  // Generator for valid config base (without apiKey)
-  const configBaseArb = fc.record({
-    name: fc.string({ minLength: 1 }),
-    baseURL: fc.webUrl(),
-    model: fc.string({ minLength: 1 }),
-  });
-
-  it("Property 5.1: initialize() throws API_KEY_MISSING for empty apiKey", () => {
+  it("Property 2: isInitialized() returns false before initialization", () => {
     fc.assert(
-      fc.property(emptyApiKeyArb, configBaseArb, (apiKey, configBase) => {
+      fc.property(fc.constant(null), () => {
         AISDKService.resetInstance();
         const service = AISDKService.getInstance();
-
-        const config: AISDKConfig = {
-          ...configBase,
-          apiKey,
-        };
-
-        expect(() => service.initialize(config)).toThrow(ServiceError);
-
-        try {
-          service.initialize(config);
-        } catch (error) {
-          expect(error).toBeInstanceOf(ServiceError);
-          expect((error as ServiceError).code).toBe(ErrorCode.API_KEY_MISSING);
-        }
+        expect(service.isInitialized()).toBe(false);
       }),
       { numRuns: 100 }
     );
   });
 
-  it("Property 5.2: getClient() throws NOT_INITIALIZED before initialization", () => {
+  it("Property 3: getVLMClient() throws NOT_INITIALIZED before initialization", () => {
     fc.assert(
       fc.property(fc.constant(null), () => {
         AISDKService.resetInstance();
         const service = AISDKService.getInstance();
 
-        // Service should not be initialized
-        expect(service.isInitialized()).toBe(false);
-
-        // getClient() should throw NOT_INITIALIZED
-        expect(() => service.getClient()).toThrow(ServiceError);
-
+        expect(() => service.getVLMClient()).toThrow(ServiceError);
         try {
-          service.getClient();
+          service.getVLMClient();
         } catch (error) {
-          expect(error).toBeInstanceOf(ServiceError);
           expect((error as ServiceError).code).toBe(ErrorCode.NOT_INITIALIZED);
         }
       }),
@@ -125,40 +94,163 @@ describe("AISDKService Initialization Behavior", () => {
     );
   });
 
-  it("Property 5.3: isInitialized() returns false before initialization", () => {
+  it("Property 4: getTextClient() throws NOT_INITIALIZED before initialization", () => {
     fc.assert(
       fc.property(fc.constant(null), () => {
         AISDKService.resetInstance();
         const service = AISDKService.getInstance();
-        expect(service.isInitialized()).toBe(false);
+
+        expect(() => service.getTextClient()).toThrow(ServiceError);
+        try {
+          service.getTextClient();
+        } catch (error) {
+          expect((error as ServiceError).code).toBe(ErrorCode.NOT_INITIALIZED);
+        }
       }),
       { numRuns: 100 }
     );
   });
 
-  it("Property 5.4: Failed initialization leaves service in uninitialized state", () => {
+  it("Property 5: getEmbeddingClient() throws NOT_INITIALIZED before initialization", () => {
     fc.assert(
-      fc.property(emptyApiKeyArb, configBaseArb, (apiKey, configBase) => {
+      fc.property(fc.constant(null), () => {
         AISDKService.resetInstance();
         const service = AISDKService.getInstance();
 
-        const config: AISDKConfig = {
-          ...configBase,
-          apiKey,
-        };
-
-        // Attempt to initialize with invalid config
+        expect(() => service.getEmbeddingClient()).toThrow(ServiceError);
         try {
-          service.initialize(config);
-        } catch {
-          // Expected to throw
+          service.getEmbeddingClient();
+        } catch (error) {
+          expect((error as ServiceError).code).toBe(ErrorCode.NOT_INITIALIZED);
         }
+      }),
+      { numRuns: 100 }
+    );
+  });
 
-        // Service should remain uninitialized
-        expect(service.isInitialized()).toBe(false);
+  it("Property 6: initialize() throws API_KEY_MISSING for empty apiKey", () => {
+    fc.assert(
+      fc.property(
+        emptyStringArb,
+        fc.webUrl(),
+        fc.string({ minLength: 1 }),
+        (apiKey, baseUrl, model) => {
+          AISDKService.resetInstance();
+          const service = AISDKService.getInstance();
 
-        // getClient() should still throw NOT_INITIALIZED
-        expect(() => service.getClient()).toThrow(ServiceError);
+          const config: UnifiedLLMConfig = {
+            mode: "unified",
+            config: { baseUrl, apiKey, model },
+          };
+
+          expect(() => service.initialize(config)).toThrow(ServiceError);
+          try {
+            service.initialize(config);
+          } catch (error) {
+            expect((error as ServiceError).code).toBe(ErrorCode.API_KEY_MISSING);
+          }
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+
+  it("Property 7: Failed initialization leaves service in uninitialized state", () => {
+    fc.assert(
+      fc.property(
+        emptyStringArb,
+        fc.webUrl(),
+        fc.string({ minLength: 1 }),
+        (apiKey, baseUrl, model) => {
+          AISDKService.resetInstance();
+          const service = AISDKService.getInstance();
+
+          const config: UnifiedLLMConfig = {
+            mode: "unified",
+            config: { baseUrl, apiKey, model },
+          };
+
+          try {
+            service.initialize(config);
+          } catch {
+            // Expected
+          }
+
+          expect(service.isInitialized()).toBe(false);
+        }
+      ),
+      { numRuns: 100 }
+    );
+  });
+});
+
+/**
+ * Feature: llm-configuration, Property 7: Client type separation
+ * Validates: Requirements 8.4
+ */
+describe("AISDKService Client Type Separation", () => {
+  beforeEach(() => {
+    AISDKService.resetInstance();
+  });
+
+  // Generator for valid endpoint configuration
+  const endpointConfigArb = fc.record({
+    baseUrl: fc.webUrl(),
+    apiKey: fc.string({ minLength: 1 }).filter((s) => s.trim().length > 0),
+    model: fc.string({ minLength: 1 }).filter((s) => s.trim().length > 0),
+  });
+
+  // Generator for SeparateLLMConfig
+  const separateLLMConfigArb = fc
+    .tuple(endpointConfigArb, endpointConfigArb, endpointConfigArb)
+    .map(
+      ([vlm, textLlm, embeddingLlm]): SeparateLLMConfig => ({
+        mode: "separate",
+        vlm,
+        textLlm,
+        embeddingLlm,
+      })
+    );
+
+  // Generator for UnifiedLLMConfig
+  const unifiedLLMConfigArb = endpointConfigArb.map(
+    (config): UnifiedLLMConfig => ({
+      mode: "unified",
+      config,
+    })
+  );
+
+  it("Property 8: Unified mode initializes all clients", () => {
+    fc.assert(
+      fc.property(unifiedLLMConfigArb, (config) => {
+        AISDKService.resetInstance();
+        const service = AISDKService.getInstance();
+
+        service.initialize(config);
+
+        expect(service.isInitialized()).toBe(true);
+        // All client getters should not throw
+        expect(() => service.getVLMClient()).not.toThrow();
+        expect(() => service.getTextClient()).not.toThrow();
+        expect(() => service.getEmbeddingClient()).not.toThrow();
+      }),
+      { numRuns: 100 }
+    );
+  });
+
+  it("Property 9: Separate mode initializes all clients with distinct configs", () => {
+    fc.assert(
+      fc.property(separateLLMConfigArb, (config) => {
+        AISDKService.resetInstance();
+        const service = AISDKService.getInstance();
+
+        service.initialize(config);
+
+        expect(service.isInitialized()).toBe(true);
+        // All client getters should not throw
+        expect(() => service.getVLMClient()).not.toThrow();
+        expect(() => service.getTextClient()).not.toThrow();
+        expect(() => service.getEmbeddingClient()).not.toThrow();
       }),
       { numRuns: 100 }
     );

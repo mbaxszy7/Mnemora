@@ -124,7 +124,7 @@ describe("MainI18nService", () => {
       await service.initialize();
       const result = service.t("common.buttons.save");
 
-      expect(mockT).toHaveBeenCalledWith("common.buttons.save", undefined);
+      expect(mockT).toHaveBeenCalledWith("common.buttons.save");
       expect(result).toBe("Save");
     });
 

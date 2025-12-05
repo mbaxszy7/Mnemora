@@ -41,5 +41,74 @@
     "confidence": "Confidence",
     "error": "Error",
     "invalidImage": "Please select a valid image file (PNG, JPG, JPEG, GIF, WebP)"
+  },
+  "llmConfig": {
+    "title": "LLM Configuration",
+    "description": "Configure your OpenAI-compatible API endpoints for different AI capabilities.",
+    "modes": {
+      "unified": "Unified Mode",
+      "separate": "Separate Mode"
+    },
+    "warnings": {
+      "unifiedMode": "In unified mode, your LLM must support text completion, vision (image input), and embedding capabilities."
+    },
+    "sections": {
+      "vlm": "Vision Language Model (VLM)",
+      "textLlm": "Text Language Model",
+      "embeddingLlm": "Embedding Model"
+    },
+    "fields": {
+      "baseUrl": {
+        "label": "Base URL",
+        "placeholder": "https://api.openai.com/v1",
+        "tooltip": "The base URL of your OpenAI-compatible API endpoint."
+      },
+      "apiKey": {
+        "label": "API Key",
+        "placeholder": "Enter your API key",
+        "tooltip": "Your API key for authentication. This will be securely stored."
+      },
+      "model": {
+        "label": "Model",
+        "placeholder": "gpt-4o",
+        "tooltip": "The model name to use for this endpoint."
+      }
+    },
+    "buttons": {
+      "save": "Save & Continue",
+      "cancel": "Cancel",
+      "validate": "Validate",
+      "showApiKey": "Show API Key",
+      "hideApiKey": "Hide API Key"
+    },
+    "validation": {
+      "inProgress": "Validating configuration...",
+      "textCompletion": "Text Completion",
+      "vision": "Vision",
+      "embedding": "Embedding",
+      "success": "Validation successful",
+      "failed": "Validation failed",
+      "checking": "Checking...",
+      "NETWORK_ERROR": "Network error. Please check your connection.",
+      "NOT_FOUND_404": "API endpoint not found. Please check your Base URL.",
+      "UNAUTHORIZED_401": "Invalid API key. Please check your credentials.",
+      "INVALID_API_KEY": "Invalid API key format.",
+      "VISION_NOT_SUPPORTED": "This model does not support image input prompts.",
+      "EMBEDDING_NOT_SUPPORTED": "This endpoint does not support embedding.",
+      "INVALID_RESPONSE": "Invalid response from API. Please check your configuration.",
+      "TIMEOUT": "Request timed out. Please try again.",
+      "UNKNOWN": "An unknown error occurred. Please try again."
+    },
+    "errors": {
+      "invalidUrl": "Please enter a valid HTTP or HTTPS URL.",
+      "requiredField": "This field is required.",
+      "incompleteConfig": "Please complete all required fields.",
+      "separateModeIncomplete": "All three configurations (VLM, Text LLM, Embedding) must be complete in separate mode."
+    },
+    "messages": {
+      "saveSuccess": "Configuration saved successfully!",
+      "saveFailed": "Failed to save configuration.",
+      "loadFailed": "Failed to load configuration."
+    }
   }
 }

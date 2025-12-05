@@ -57,4 +57,12 @@ interface Window {
       create(data: unknown): Promise<unknown>;
     };
   };
+  llmConfigApi: {
+    check(): Promise<import("../shared/llm-config-types").LLMConfigCheckResult>;
+    validate(
+      config: import("../shared/llm-config-types").LLMConfig
+    ): Promise<import("../shared/llm-config-types").LLMValidationResult>;
+    save(config: import("../shared/llm-config-types").LLMConfig): Promise<void>;
+    get(): Promise<import("../shared/llm-config-types").LLMConfig | null>;
+  };
 }

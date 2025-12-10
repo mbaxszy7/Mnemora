@@ -5,7 +5,7 @@
 
 import { eq } from "drizzle-orm";
 import { generateText, embed } from "ai";
-import { db, llmConfig, type LLMConfigRecord } from "../database";
+import { getDb, llmConfig, type LLMConfigRecord } from "../database";
 import { getLogger } from "./logger";
 import { AISDKService } from "./ai-sdk-service";
 import {
@@ -89,6 +89,7 @@ export class LLMConfigService {
 
     try {
       // Get the single config record (singleton pattern)
+      const db = getDb();
       const record = db.select().from(llmConfig).get();
 
       if (!record) {
@@ -111,6 +112,7 @@ export class LLMConfigService {
     logger.info({ mode: config.mode }, "Saving LLM configuration");
 
     try {
+      const db = getDb();
       // Check if record exists
       const existing = db.select().from(llmConfig).get();
 

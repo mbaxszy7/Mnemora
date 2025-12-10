@@ -152,6 +152,8 @@ class DatabaseService {
 }
 
 export const databaseService = DatabaseService.getInstance();
-export const db = databaseService.getDatabase();
+
+// Helper function to get database instance (lazy initialization)
+export const getDb = (): DrizzleDB => databaseService.getDatabase();
 
 export * from "./schema";

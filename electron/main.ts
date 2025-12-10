@@ -181,6 +181,7 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
     mainWindow = null;
+    IPCHandlerRegistry.getInstance().unregisterAll();
   }
 });
 

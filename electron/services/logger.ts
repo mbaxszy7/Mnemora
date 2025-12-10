@@ -3,7 +3,8 @@ import pino from "pino";
 import path from "node:path";
 import fs from "node:fs";
 import pretty from "pino-pretty";
-import { fileURLToPath } from "node:url";
+// import { fileURLToPath } from "node:url";
+import os from "node:os";
 
 /**
  * Logger Service - Singleton pattern implementation
@@ -43,10 +44,11 @@ class LoggerService {
    * Get logs directory - use project electron/logs folder
    */
   private getLogsDir(): string {
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-    const projectRoot = path.join(__dirname, "..", "..");
-    return path.join(projectRoot, "electron", "logs");
+    const debugLogDir = path.join(os.homedir(), ".mnemora", "logs");
+    // const __filename = fileURLToPath(import.meta.url);
+    // const __dirname = path.dirname(__filename);
+    // const projectRoot = path.join(__dirname, "..", "..");
+    return debugLogDir;
   }
 
   /**

@@ -42,6 +42,41 @@
     "error": "Error",
     "invalidImage": "Please select a valid image file (PNG, JPG, JPEG, GIF, WebP)"
   },
+  "permissions": {
+    "banner": {
+      "title": "Permissions Required",
+      "description": "Mnemora needs screen recording and accessibility permissions to capture and analyze your screen content.",
+      "grantButton": "Grant Permission",
+      "settingsButton": "Open Settings"
+    },
+    "settings": {
+      "title": "Permissions",
+      "screenRecording": {
+        "label": "Screen Recording",
+        "description": "Required for screen capture and analysis",
+        "granted": "Granted",
+        "denied": "Denied",
+        "notDetermined": "Not Determined",
+        "grantButton": "Grant Permission",
+        "openSettings": "Open System Settings"
+      },
+      "accessibility": {
+        "label": "Accessibility",
+        "description": "Required for window enumeration across Spaces",
+        "granted": "Granted",
+        "denied": "Denied",
+        "notDetermined": "Not Determined",
+        "grantButton": "Grant Permission",
+        "openSettings": "Open System Settings"
+      }
+    },
+    "status": {
+      "checking": "Checking permissions...",
+      "granted": "Permission granted",
+      "denied": "Permission denied",
+      "requestFailed": "Failed to request permission"
+    }
+  },
   "llmConfig": {
     "title": "LLM Configuration",
     "description": "Configure your OpenAI-compatible API endpoints for different AI capabilities.",

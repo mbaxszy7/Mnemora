@@ -42,6 +42,41 @@
     "error": "错误",
     "invalidImage": "请选择有效的图片文件（PNG、JPG、JPEG、GIF、WebP）"
   },
+  "permissions": {
+    "banner": {
+      "title": "需要授权权限",
+      "description": "Mnemora 需要屏幕录制和辅助功能权限来捕获和分析您的屏幕内容。",
+      "grantButton": "授予权限",
+      "settingsButton": "打开设置"
+    },
+    "settings": {
+      "title": "权限",
+      "screenRecording": {
+        "label": "屏幕录制",
+        "description": "用于屏幕捕获和分析",
+        "granted": "已授权",
+        "denied": "已拒绝",
+        "notDetermined": "未确定",
+        "grantButton": "授予权限",
+        "openSettings": "打开系统设置"
+      },
+      "accessibility": {
+        "label": "辅助功能",
+        "description": "用于跨空间枚举窗口",
+        "granted": "已授权",
+        "denied": "已拒绝",
+        "notDetermined": "未确定",
+        "grantButton": "授予权限",
+        "openSettings": "打开系统设置"
+      }
+    },
+    "status": {
+      "checking": "正在检查权限...",
+      "granted": "权限已授予",
+      "denied": "权限被拒绝",
+      "requestFailed": "请求权限失败"
+    }
+  },
   "llmConfig": {
     "title": "LLM 配置",
     "description": "配置您的 OpenAI 兼容 API 端点，用于不同的 AI 功能。",

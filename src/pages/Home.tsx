@@ -1,12 +1,85 @@
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Brain, Zap, Eye, ArrowRight } from "lucide-react";
+import { Brain, Zap, Eye, ArrowRight, Pause, Play, Square } from "lucide-react";
+import { PermissionBanner } from "@/components/core/PermissionBanner";
+
+// TEMPORARY: Screen capture control buttons - remove later
+function ScreenCaptureControls() {
+  const [status, setStatus] = useState<string>("idle");
+
+  const refreshState = async () => {
+    const result = await window.screenCaptureApi.getState();
+    if (result.success && result.data) {
+      setStatus(result.data.status);
+    }
+  };
+
+  useEffect(() => {
+    refreshState();
+    const interval = setInterval(refreshState, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleStart = async () => {
+    await window.screenCaptureApi.start();
+    refreshState();
+  };
+
+  const handleStop = async () => {
+    await window.screenCaptureApi.stop();
+    refreshState();
+  };
+
+  const handlePause = async () => {
+    await window.screenCaptureApi.pause();
+    refreshState();
+  };
+
+  const handleResume = async () => {
+    await window.screenCaptureApi.resume();
+    refreshState();
+  };
+
+  return (
+    <div className="p-4 rounded-lg border border-dashed border-yellow-500 bg-yellow-50 dark:bg-yellow-950">
+      <p className="text-sm text-yellow-700 dark:text-yellow-300 mb-3">
+        ⚠️ TEMPORARY: Screen Capture Controls (Status: {status})
+      </p>
+      <div className="flex gap-2 flex-wrap">
+        <Button size="sm" onClick={handleStart} disabled={status === "running"}>
+          <Play className="w-4 h-4 mr-1" /> Start
+        </Button>
+        <Button size="sm" onClick={handlePause} disabled={status !== "running"}>
+          <Pause className="w-4 h-4 mr-1" /> Pause
+        </Button>
+        <Button size="sm" onClick={handleResume} disabled={status !== "paused"}>
+          <Play className="w-4 h-4 mr-1" /> Resume
+        </Button>
+        <Button
+          size="sm"
+          variant="destructive"
+          onClick={handleStop}
+          disabled={status === "idle" || status === "stopped"}
+        >
+          <Square className="w-4 h-4 mr-1" /> Stop
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 export default function HomePage() {
   const navigate = useNavigate();
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
+      {/* Permission Banner */}
+      <PermissionBanner />
+
+      {/* TEMPORARY: Screen Capture Controls */}
+      <ScreenCaptureControls />
+
       {/* Hero */}
       <div className="text-center space-y-4 py-8">
         <div className="flex items-center justify-center gap-3">

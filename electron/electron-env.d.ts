@@ -65,4 +65,24 @@ interface Window {
     save(config: import("../shared/llm-config-types").LLMConfig): Promise<void>;
     get(): Promise<import("../shared/llm-config-types").LLMConfig | null>;
   };
+  permissionApi: {
+    check(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").PermissionCheckResult>
+    >;
+    requestScreenRecording(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
+    requestAccessibility(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
+    openScreenRecordingSettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    openAccessibilitySettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
+  };
+  // TEMPORARY: Screen capture API - remove later
+  screenCaptureApi: {
+    start(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    stop(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    pause(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    resume(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    getState(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").SchedulerStatePayload>
+    >;
+  };
 }

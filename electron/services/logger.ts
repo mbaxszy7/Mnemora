@@ -98,9 +98,17 @@ class LoggerService {
     // Create multiple streams for file and console output
     const streams = [{ stream: filePrettyStream }, { stream: prettyStream }];
 
+    // Use try-catch for app.isPackaged as it may not be available before app is ready
+    let logLevel = "debug";
+    try {
+      logLevel = app.isPackaged ? "info" : "debug";
+    } catch {
+      // Default to debug if app is not ready
+    }
+
     return pino(
       {
-        level: app.isPackaged ? "info" : "debug",
+        level: logLevel,
         base: {
           pid: process.pid,
           app: "mnemora",

@@ -33,6 +33,20 @@ export const IPC_CHANNELS = {
   LLM_CONFIG_VALIDATE: "llm:config:validate",
   LLM_CONFIG_SAVE: "llm:config:save",
   LLM_CONFIG_GET: "llm:config:get",
+  // Screen Capture Scheduler channels
+  SCREEN_CAPTURE_START: "screen-capture:start",
+  SCREEN_CAPTURE_STOP: "screen-capture:stop",
+  SCREEN_CAPTURE_PAUSE: "screen-capture:pause",
+  SCREEN_CAPTURE_RESUME: "screen-capture:resume",
+  SCREEN_CAPTURE_GET_STATE: "screen-capture:get-state",
+  SCREEN_CAPTURE_UPDATE_CONFIG: "screen-capture:update-config",
+  // Permission channels
+  PERMISSION_CHECK: "permission:check",
+  PERMISSION_REQUEST_SCREEN_RECORDING: "permission:request-screen-recording",
+  PERMISSION_REQUEST_ACCESSIBILITY: "permission:request-accessibility",
+  PERMISSION_OPEN_SCREEN_RECORDING_SETTINGS: "permission:open-screen-recording-settings",
+  PERMISSION_OPEN_ACCESSIBILITY_SETTINGS: "permission:open-accessibility-settings",
+  PERMISSION_INIT_SERVICES: "permission:init-services",
 } as const;
 
 /**
@@ -40,6 +54,34 @@ export const IPC_CHANNELS = {
  */
 export interface LanguageChangePayload {
   language: "en" | "zh-CN";
+}
+
+/**
+ * Screen Capture Scheduler IPC Payload Types
+ */
+export interface SchedulerConfigPayload {
+  /** Capture interval in milliseconds */
+  interval?: number;
+  /** Minimum delay between captures */
+  minDelay?: number;
+}
+
+export interface SchedulerStatePayload {
+  status: "idle" | "running" | "paused" | "stopped";
+  lastCaptureTime: number | null;
+  nextCaptureTime: number | null;
+  captureCount: number;
+  errorCount: number;
+}
+
+/**
+ * Permission IPC Payload Types
+ */
+export type PermissionStatus = "granted" | "denied" | "not-determined" | "restricted" | "unknown";
+
+export interface PermissionCheckResult {
+  screenRecording: PermissionStatus;
+  accessibility: PermissionStatus;
 }
 
 export type IPCChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

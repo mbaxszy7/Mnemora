@@ -48,7 +48,7 @@ export default defineConfig({
             target: "esnext",
             rollupOptions: {
               // Externalize native modules - they will be loaded at runtime
-              external: ["better-sqlite3"],
+              external: ["better-sqlite3", "node-screenshots", "sharp"],
             },
           },
           plugins: [copyMigrationsPlugin()],

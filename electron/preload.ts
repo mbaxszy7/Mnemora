@@ -104,3 +104,78 @@ const llmConfigApi: LLMConfigApi = {
 };
 
 contextBridge.exposeInMainWorld("llmConfigApi", llmConfigApi);
+
+// --------- Expose Permission API to the Renderer process ---------
+import type { PermissionCheckResult } from "@shared/ipc-types";
+
+export interface PermissionApi {
+  check(): Promise<IPCResult<PermissionCheckResult>>;
+  requestScreenRecording(): Promise<IPCResult<boolean>>;
+  requestAccessibility(): Promise<IPCResult<boolean>>;
+  openScreenRecordingSettings(): Promise<IPCResult<void>>;
+  openAccessibilitySettings(): Promise<IPCResult<void>>;
+  initServices(): Promise<IPCResult<boolean>>;
+}
+
+const permissionApi: PermissionApi = {
+  async check(): Promise<IPCResult<PermissionCheckResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_CHECK);
+  },
+
+  async requestScreenRecording(): Promise<IPCResult<boolean>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_REQUEST_SCREEN_RECORDING);
+  },
+
+  async requestAccessibility(): Promise<IPCResult<boolean>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_REQUEST_ACCESSIBILITY);
+  },
+
+  async openScreenRecordingSettings(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_OPEN_SCREEN_RECORDING_SETTINGS);
+  },
+
+  async openAccessibilitySettings(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_OPEN_ACCESSIBILITY_SETTINGS);
+  },
+
+  async initServices(): Promise<IPCResult<boolean>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_INIT_SERVICES);
+  },
+};
+
+contextBridge.exposeInMainWorld("permissionApi", permissionApi);
+
+// --------- Expose Screen Capture API to the Renderer process (TEMPORARY) ---------
+import type { SchedulerStatePayload } from "@shared/ipc-types";
+
+export interface ScreenCaptureApi {
+  start(): Promise<IPCResult<void>>;
+  stop(): Promise<IPCResult<void>>;
+  pause(): Promise<IPCResult<void>>;
+  resume(): Promise<IPCResult<void>>;
+  getState(): Promise<IPCResult<SchedulerStatePayload>>;
+}
+
+const screenCaptureApi: ScreenCaptureApi = {
+  async start(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_START);
+  },
+
+  async stop(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_STOP);
+  },
+
+  async pause(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_PAUSE);
+  },
+
+  async resume(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_RESUME);
+  },
+
+  async getState(): Promise<IPCResult<SchedulerStatePayload>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_GET_STATE);
+  },
+};
+
+contextBridge.exposeInMainWorld("screenCaptureApi", screenCaptureApi);

@@ -1,6 +1,6 @@
 import { describe, it } from "vitest";
 import * as fc from "fast-check";
-import { calculateNextDelay, ScreenCaptureScheduler } from "./scheduler";
+import { calculateNextDelay, ScreenCaptureScheduler } from "./capture-scheduler";
 import type {
   CaptureErrorEvent,
   CaptureStartEvent,
@@ -184,11 +184,9 @@ describe("ScreenCaptureScheduler Property Tests", () => {
                 }
                 return {
                   buffer: Buffer.from([]),
-                  width: 100,
-                  height: 100,
                   timestamp: Date.now(),
-                  sources: [],
-                  isComposite: false,
+                  source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+                  screenId: "0",
                 };
               }
             );
@@ -220,11 +218,9 @@ describe("ScreenCaptureScheduler Property Tests", () => {
             }
             return {
               buffer: Buffer.from([]),
-              width: 100,
-              height: 100,
               timestamp: Date.now(),
-              sources: [],
-              isComposite: false,
+              source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+              screenId: "0",
             };
           });
 
@@ -283,11 +279,9 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
 
           const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
             buffer: Buffer.from([]),
-            width: 100,
-            height: 100,
             timestamp: Date.now(),
-            sources: [],
-            isComposite: false,
+            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+            screenId: "0",
           }));
 
           scheduler.on<CaptureStartEvent>("capture:start", (event) => {
@@ -318,45 +312,36 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
 
     it("emits capture:complete event with correct payload after successful capture", async () => {
       await fc.assert(
-        fc.asyncProperty(
-          fc.integer({ min: 50, max: 200 }), // width
-          fc.integer({ min: 50, max: 200 }), // height
-          async (width, height) => {
-            const completeEvents: CaptureCompleteEvent[] = [];
+        fc.asyncProperty(fc.integer({ min: 1, max: 3 }), async (runCount) => {
+          const completeEvents: CaptureCompleteEvent[] = [];
 
-            const scheduler = new ScreenCaptureScheduler(
-              { interval: 15, minDelay: 5 },
-              async () => ({
-                buffer: Buffer.from([]),
-                width,
-                height,
-                timestamp: Date.now(),
-                sources: [],
-                isComposite: false,
-              })
-            );
+          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
+            buffer: Buffer.from([]),
+            timestamp: Date.now(),
+            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+            screenId: "0",
+          }));
 
-            scheduler.on<CaptureCompleteEvent>("capture:complete", (event) => {
-              completeEvents.push(event);
-            });
+          scheduler.on<CaptureCompleteEvent>("capture:complete", (event) => {
+            completeEvents.push(event);
+          });
 
-            scheduler.start();
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            scheduler.stop();
+          scheduler.start();
+          await new Promise((resolve) => setTimeout(resolve, runCount * 30 + 50));
+          scheduler.stop();
 
-            if (completeEvents.length === 0) return false;
+          if (completeEvents.length === 0) return false;
 
-            const event = completeEvents[0];
-            return (
-              event.type === "capture:complete" &&
-              typeof event.captureId === "string" &&
-              typeof event.executionTime === "number" &&
-              event.executionTime >= 0 &&
-              event.result.width === width &&
-              event.result.height === height
-            );
-          }
-        ),
+          const event = completeEvents[0];
+          return (
+            event.type === "capture:complete" &&
+            typeof event.captureId === "string" &&
+            typeof event.executionTime === "number" &&
+            event.executionTime >= 0 &&
+            event.result.screenId === "0" &&
+            event.result.source.type === "screen"
+          );
+        }),
         { numRuns: 20 }
       );
     });
@@ -417,11 +402,9 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
 
           const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
             buffer: Buffer.from([]),
-            width: 100,
-            height: 100,
             timestamp: Date.now(),
-            sources: [],
-            isComposite: false,
+            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+            screenId: "0",
           }));
 
           scheduler.on("capture:start", () => eventOrder.push("start"));

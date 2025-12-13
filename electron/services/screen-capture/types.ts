@@ -40,8 +40,6 @@ export interface CaptureSource {
   type: "screen" | "window";
   displayId?: string;
   appIcon?: NativeImage;
-  /** Physical bounds for multi-monitor stitching */
-  bounds?: { x: number; y: number; width: number; height: number };
   /** Application name (from AppleScript on macOS, e.g., "Google Chrome" for browser windows) */
   appName?: string;
 }
@@ -67,8 +65,6 @@ export interface CaptureOptions {
   format: "jpeg" | "png" | "webp";
   /** Quality for lossy formats (0-100) */
   quality: number;
-  /** Whether to stitch multi-monitor captures */
-  stitchMultiMonitor: boolean;
   /**
    * Filter to capture only specific screens by their display IDs (CGDirectDisplayID as string).
    * If undefined or empty, captures all available screens.
@@ -83,25 +79,12 @@ export interface CaptureOptions {
 export interface CaptureResult {
   /** Image buffer */
   buffer: Buffer;
-  /** Image dimensions */
-  width: number;
-  height: number;
   /** Capture timestamp */
   timestamp: number;
-  /** Source information */
-  sources: CaptureSource[];
-  /** Whether this is a stitched multi-monitor image */
-  isComposite: boolean;
-}
-
-/**
- * Information about a monitor
- */
-export interface MonitorInfo {
-  id: string;
-  name: string;
-  bounds: { x: number; y: number; width: number; height: number };
-  isPrimary: boolean;
+  /** Source information (single screen) */
+  source: CaptureSource;
+  /** Screen ID for multi-screen file naming (CGDirectDisplayID) */
+  screenId: string;
 }
 
 // ============================================================================
@@ -229,7 +212,6 @@ export const DEFAULT_CACHE_INTERVAL = 3000;
 export const DEFAULT_CAPTURE_OPTIONS: CaptureOptions = {
   format: "jpeg",
   quality: 80,
-  stitchMultiMonitor: true,
 };
 
 /**

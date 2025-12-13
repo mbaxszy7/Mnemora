@@ -35,13 +35,25 @@ export async function ensureStorageDir(): Promise<void> {
 
 /**
  * Generate a filename for a capture based on timestamp
+ * @param timestamp - The capture timestamp
+ * @param format - The image format
+ * @param screenId - Optional screen ID for multi-screen captures
+ * @param isMultiScreen - Whether this is part of a multi-screen capture
  */
 export function generateCaptureFilename(
   timestamp: number,
-  format: "jpeg" | "png" | "webp" = "jpeg"
+  format: "jpeg" | "png" | "webp" = "jpeg",
+  screenId?: string,
+  isMultiScreen: boolean = false
 ): string {
   const date = new Date(timestamp);
   const dateStr = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+
+  // Add screen-{id} suffix for multi-screen captures
+  if (isMultiScreen && screenId) {
+    return `capture-${dateStr}-screen-${screenId}.${format}`;
+  }
+
   return `capture-${dateStr}.${format}`;
 }
 
@@ -51,21 +63,28 @@ export function generateCaptureFilename(
  * @param buffer - The image buffer to save
  * @param timestamp - The capture timestamp
  * @param format - The image format
+ * @param screenId - Optional screen ID for multi-screen captures
+ * @param isMultiScreen - Whether this is part of a multi-screen capture
  * @returns The full path to the saved file
  */
 export async function saveCaptureToFile(
   buffer: Buffer,
   timestamp: number,
-  format: "jpeg" | "png" | "webp" = "jpeg"
+  format: "jpeg" | "png" | "webp" = "jpeg",
+  screenId?: string,
+  isMultiScreen: boolean = false
 ): Promise<string> {
   await ensureStorageDir();
 
-  const filename = generateCaptureFilename(timestamp, format);
+  const filename = generateCaptureFilename(timestamp, format, screenId, isMultiScreen);
   const filepath = path.join(getCaptureStorageDir(), filename);
 
   try {
     await fs.writeFile(filepath, buffer);
-    logger.info({ filepath, size: buffer.length }, "Capture saved to file");
+    logger.info(
+      { filepath, size: buffer.length, screenId, isMultiScreen },
+      "Capture saved to file"
+    );
     return filepath;
   } catch (error) {
     logger.error({ error, filepath }, "Failed to save capture to file");

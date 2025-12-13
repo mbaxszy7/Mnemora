@@ -54,11 +54,19 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   private state: SchedulerState;
   private emitter: EventEmitter;
   private timerId: ReturnType<typeof setTimeout> | null = null;
-  private captureTask: CaptureTask | null = null;
+  private captureTask!: CaptureTask;
 
   constructor(config: Partial<SchedulerConfig> = {}, captureTask?: CaptureTask) {
     this.config = { ...DEFAULT_SCHEDULER_CONFIG, ...config };
-    this.captureTask = captureTask ?? null;
+    // Default no-op capture task for testing state machine without actual captures
+    this.captureTask =
+      captureTask ??
+      (async () => ({
+        buffer: Buffer.from([]),
+        timestamp: Date.now(),
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
+      }));
     this.emitter = new EventEmitter();
     this.state = {
       status: "idle",
@@ -186,14 +194,9 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
 
       logger.info({ hasCaptureTask: !!this.captureTask }, "About to execute capture task");
 
-      if (this.captureTask) {
-        logger.info("Calling captureTask()...");
-        result = await this.captureTask();
-        logger.info("captureTask() completed");
-      } else {
-        // No capture task configured - this shouldn't happen in production
-        logger.warn("No capture task configured");
-      }
+      logger.info("Calling captureTask()...");
+      result = await this.captureTask();
+      logger.info("captureTask() completed");
 
       const executionTime = Date.now() - startTime;
       this.state.lastCaptureTime = startTime;

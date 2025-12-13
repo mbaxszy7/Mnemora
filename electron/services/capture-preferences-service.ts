@@ -1,8 +1,8 @@
 import { CapturePreferences, AppInfo } from "../../shared/capture-source-types";
 import { findPopularApp, DEFAULT_APP_ICON } from "../../shared/popular-apps";
 import { getLogger } from "./logger";
-import type { CaptureSource } from "./screen-capture";
-import { windowFilter } from "./screen-capture";
+import type { CaptureSource } from "./screen-capture/types";
+import { windowFilter } from "./screen-capture/window-filter";
 
 /**
  * Result of computing effective capture sources
@@ -123,7 +123,7 @@ export class CapturePreferencesService {
           selectedScreenIds: this.preferences.selectedScreenIds,
           availableScreenIds,
         },
-        "Screen fallback triggered: selected screens unavailable, capturing all screens"
+        "Screen fallback triggered: none of the selected screens are available, capturing all screens"
       );
     }
 
@@ -133,7 +133,7 @@ export class CapturePreferencesService {
           selectedAppNames: this.preferences.selectedAppNames,
           activeAppNames,
         },
-        "App fallback triggered: selected apps not active, capturing all apps"
+        "App fallback triggered: none of the selected apps are active, capturing all apps"
       );
     }
 

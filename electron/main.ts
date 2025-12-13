@@ -15,13 +15,8 @@ import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
-import {
-  getScreenCaptureModule,
-  ScreenCaptureModule,
-  cleanupDevCaptures,
-} from "./services/screen-capture";
+import { ScreenCaptureModule, cleanupDevCaptures } from "./services/screen-capture";
 import { powerMonitorService } from "./services/power-monitor";
-import { permissionService } from "./services/permission-service";
 
 // ============================================================================
 // Environment Setup
@@ -185,53 +180,6 @@ function initPowerMonitor(): void {
   }
 }
 
-/**
- * Initialize the screen capture module
- * Only initializes if all required permissions are granted
- * Returns true if initialized successfully
- */
-function initScreenCaptureModule(): boolean {
-  // Check if we have screen recording permission
-  if (!permissionService.hasScreenRecordingPermission()) {
-    logger.info("Screen recording permission not granted, skipping screen capture initialization");
-    return false;
-  }
-
-  // Check if we have accessibility permission (needed for AppleScript window enumeration)
-  if (!permissionService.hasAccessibilityPermission()) {
-    logger.info("Accessibility permission not granted, skipping screen capture initialization");
-    return false;
-  }
-
-  try {
-    // In dev mode, always reset the module first to handle hot reload properly
-    if (isDev) {
-      logger.info("Dev mode: resetting screen capture module for hot reload");
-      ScreenCaptureModule.resetInstance();
-    }
-
-    // Initialize the module (creates singleton)
-    // Uses DEFAULT_SCHEDULER_CONFIG from types.ts (interval: 6000ms, minDelay: 100ms, autoStart: false)
-    const module = getScreenCaptureModule();
-
-    // Start the scheduler automatically when permissions are granted
-    module.start();
-    logger.info("Screen capture module initialized and started");
-    return true;
-  } catch (error) {
-    logger.error({ error }, "Failed to initialize screen capture module");
-    return false;
-  }
-}
-
-/**
- * Try to initialize screen capture module (called when permissions are granted)
- * This is exported so it can be called from IPC handlers
- */
-export function tryInitScreenCapture(): boolean {
-  return initScreenCaptureModule();
-}
-
 async function initializeApp(): Promise<void> {
   // 0. In dev mode, cleanup old captures (older than 1 day) to keep dev environment clean
   if (isDev) {
@@ -256,7 +204,10 @@ async function initializeApp(): Promise<void> {
   // 5. Initialize power monitor (non-critical)
   initPowerMonitor();
   // 6. Initialize screen capture module (only if permission granted)
-  initScreenCaptureModule();
+  if (isDev) {
+    ScreenCaptureModule.resetInstance();
+  }
+  ScreenCaptureModule.tryInitialize();
 }
 
 // ============================================================================

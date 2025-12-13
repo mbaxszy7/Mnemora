@@ -19,7 +19,7 @@
 import { desktopCapturer, screen } from "electron";
 import { Monitor as NodeMonitor, Image as NodeImage } from "node-screenshots";
 import sharp from "sharp";
-import type { CaptureSource, CaptureOptions, CaptureResult, MonitorInfo } from "./types";
+import type { CaptureSource, CaptureOptions, CaptureResult } from "./types";
 import type { ScreenInfo } from "../../../shared/capture-source-types";
 import { DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
@@ -27,8 +27,7 @@ import { getLogger } from "../logger";
 const logger = getLogger("capture-service");
 
 export interface ICaptureService {
-  captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult>;
-  getMonitorLayout(): MonitorInfo[];
+  captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]>;
   getScreensWithThumbnails(): Promise<ScreenInfo[]>;
   getScreenIdMapping(): Promise<Map<string, string>>;
   mapScreenIdsToDisplayIds(selectedScreenIds: string[], screenInfos: ScreenInfo[]): string[];
@@ -45,42 +44,8 @@ export class CaptureError extends Error {
 }
 
 export class CaptureService implements ICaptureService {
-  getMonitorLayout(): MonitorInfo[] {
-    const displays = screen.getAllDisplays();
-    const primaryDisplay = screen.getPrimaryDisplay();
-
-    const layout = displays.map((display) => ({
-      id: display.id.toString(),
-      name: `Display ${display.id}`,
-      bounds: {
-        x: display.bounds.x,
-        y: display.bounds.y,
-        width: display.bounds.width,
-        height: display.bounds.height,
-      },
-      isPrimary: display.id === primaryDisplay.id,
-    }));
-
-    logger.info(
-      {
-        displayCount: displays.length,
-        primaryDisplayId: primaryDisplay.id,
-        displays: displays.map((d) => ({
-          id: d.id,
-          bounds: d.bounds,
-          scaleFactor: d.scaleFactor,
-          rotation: d.rotation,
-          internal: d.internal,
-        })),
-      },
-      "Monitor layout from Electron screen module"
-    );
-
-    return layout;
-  }
-
-  /** Capture all screens and stitch them together if multiple monitors */
-  async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult> {
+  /** Capture all screens, each screen as a separate image */
+  async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]> {
     const opts = { ...DEFAULT_CAPTURE_OPTIONS, ...options };
     const timestamp = Date.now();
 
@@ -162,33 +127,40 @@ export class CaptureService implements ICaptureService {
       throw new CaptureError("All monitor captures failed", "ALL_CAPTURES_FAILED");
     }
 
-    // If only one monitor or stitching disabled, return single capture
-    if (successfulCaptures.length === 1 || !opts.stitchMultiMonitor) {
-      const capture = successfulCaptures[0];
-      const buffer = await this.convertImage(capture.image, opts);
+    // Convert each capture to CaptureResult
+    const results: CaptureResult[] = await Promise.all(
+      successfulCaptures.map(async (capture) => {
+        const buffer = await this.convertImage(capture.image, opts);
+        const screenId = capture.monitor.id.toString();
 
-      logger.debug(
-        {
-          monitorId: capture.monitor.id,
-          monitorName: capture.monitor.name,
-          width: capture.image.width,
-          height: capture.image.height,
-        },
-        "Single monitor capture completed"
-      );
+        logger.debug(
+          {
+            monitorId: capture.monitor.id,
+            monitorName: capture.monitor.name,
+            width: capture.image.width,
+            height: capture.image.height,
+          },
+          "Monitor capture completed"
+        );
 
-      return {
-        buffer,
-        width: capture.image.width,
-        height: capture.image.height,
-        timestamp,
-        sources: this.monitorsToSources(monitors.slice(0, 1)),
-        isComposite: false,
-      };
-    }
+        return {
+          buffer,
+          timestamp,
+          source: this.monitorToSource(capture.monitor),
+          screenId,
+        };
+      })
+    );
 
-    // Stitch multiple monitors together
-    return this.stitchCaptures(successfulCaptures, monitors, opts, timestamp);
+    logger.info(
+      {
+        capturedScreens: results.length,
+        screenIds: results.map((r) => r.screenId),
+      },
+      "All screen captures completed"
+    );
+
+    return results;
   }
 
   private async captureMonitor(
@@ -206,7 +178,7 @@ export class CaptureService implements ICaptureService {
     };
 
     try {
-      logger.debug({ monitor: monitorInfo }, "Attempting to capture monitor");
+      logger.info({ monitor: monitorInfo }, "Attempting to capture monitor");
       const image = await monitor.captureImage();
       logger.debug(
         {
@@ -232,81 +204,6 @@ export class CaptureService implements ICaptureService {
     }
   }
 
-  private async stitchCaptures(
-    captures: Array<{ monitor: NodeMonitor; image: NodeImage }>,
-    allMonitors: NodeMonitor[],
-    options: CaptureOptions,
-    timestamp: number
-  ): Promise<CaptureResult> {
-    // Calculate the bounding box of all monitors
-    const bounds = this.calculateBoundingBox(captures.map((c) => c.monitor));
-
-    // Create composite image inputs for sharp
-    const compositeInputs = await Promise.all(
-      captures.map(async (capture) => {
-        const pngBuffer = await capture.image.toPng();
-        return {
-          input: pngBuffer,
-          // Position relative to the bounding box origin
-          left: capture.monitor.x - bounds.minX,
-          top: capture.monitor.y - bounds.minY,
-        };
-      })
-    );
-
-    // Create the composite image using sharp
-    const composite = sharp({
-      create: {
-        width: bounds.width,
-        height: bounds.height,
-        channels: 4,
-        background: { r: 0, g: 0, b: 0, alpha: 1 },
-      },
-    }).composite(compositeInputs);
-
-    // Convert to the requested format
-    const buffer = await this.applyFormat(composite, options);
-
-    return {
-      buffer,
-      width: bounds.width,
-      height: bounds.height,
-      timestamp,
-      sources: this.monitorsToSources(allMonitors),
-      isComposite: true,
-    };
-  }
-
-  calculateBoundingBox(monitors: NodeMonitor[]): {
-    minX: number;
-    minY: number;
-    width: number;
-    height: number;
-  } {
-    if (monitors.length === 0) {
-      return { minX: 0, minY: 0, width: 0, height: 0 };
-    }
-
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (const monitor of monitors) {
-      minX = Math.min(minX, monitor.x);
-      minY = Math.min(minY, monitor.y);
-      maxX = Math.max(maxX, monitor.x + monitor.width);
-      maxY = Math.max(maxY, monitor.y + monitor.height);
-    }
-
-    return {
-      minX,
-      minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
-  }
-
   private async convertImage(image: NodeImage, options: CaptureOptions): Promise<Buffer> {
     const pngBuffer = await image.toPng();
     const sharpInstance = sharp(pngBuffer);
@@ -325,19 +222,13 @@ export class CaptureService implements ICaptureService {
     }
   }
 
-  private monitorsToSources(monitors: NodeMonitor[]): CaptureSource[] {
-    return monitors.map((monitor) => ({
+  private monitorToSource(monitor: NodeMonitor): CaptureSource {
+    return {
       id: `screen:${monitor.id}:0`,
       name: monitor.name || `Display ${monitor.id}`,
       type: "screen" as const,
       displayId: monitor.id.toString(),
-      bounds: {
-        x: monitor.x,
-        y: monitor.y,
-        width: monitor.width,
-        height: monitor.height,
-      },
-    }));
+    };
   }
 
   /**

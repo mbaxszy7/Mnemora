@@ -55,11 +55,14 @@ describe("CapturePreferencesService Property Tests", () => {
         (selectedApps, activeApps, availableScreens) => {
           const service = new CapturePreferencesService();
 
+          // Deduplicate activeApps to match getActiveApps behavior
+          const uniqueActiveApps = [...new Set(activeApps)];
+
           // Set preferences with selected apps
           service.setPreferences({ selectedAppNames: selectedApps });
 
           // Calculate expected fallback condition
-          const intersection = selectedApps.filter((app) => activeApps.includes(app));
+          const intersection = selectedApps.filter((app) => uniqueActiveApps.includes(app));
           const expectedFallback = selectedApps.length > 0 && intersection.length === 0;
 
           // Create mock windows from active apps
@@ -73,15 +76,15 @@ describe("CapturePreferencesService Property Tests", () => {
           // 2. AND none of the selected apps are active (intersection.length === 0)
           expect(result.appFallback).toBe(expectedFallback);
 
-          // When fallback, should return all active apps
+          // When fallback, should return all active apps (deduplicated)
           if (expectedFallback) {
-            expect(result.appNames.sort()).toEqual(activeApps.sort());
+            expect(result.appNames.sort()).toEqual(uniqueActiveApps.sort());
           } else if (selectedApps.length > 0) {
             // When not fallback and has selection, should return intersection
             expect(result.appNames.sort()).toEqual(intersection.sort());
           } else {
-            // When no selection, should return all active apps (not a fallback)
-            expect(result.appNames.sort()).toEqual(activeApps.sort());
+            // When no selection, should return all active apps (deduplicated, not a fallback)
+            expect(result.appNames.sort()).toEqual(uniqueActiveApps.sort());
           }
 
           return true;
@@ -162,13 +165,16 @@ describe("CapturePreferencesService Property Tests", () => {
         (initialSelectedApps, appsAfterRefresh, availableScreens) => {
           const service = new CapturePreferencesService();
 
+          // Deduplicate appsAfterRefresh to match getActiveApps behavior
+          const uniqueAppsAfterRefresh = [...new Set(appsAfterRefresh)];
+
           // Set initial preferences with selected apps
           service.setPreferences({ selectedAppNames: initialSelectedApps });
 
           // Simulate the selection retention logic:
           // Apps that were selected AND are still active should remain selected
           const appsStillActive = initialSelectedApps.filter((app) =>
-            appsAfterRefresh.includes(app)
+            uniqueAppsAfterRefresh.includes(app)
           );
 
           // Create mock windows from apps after refresh
@@ -178,12 +184,12 @@ describe("CapturePreferencesService Property Tests", () => {
           const result = service.getEffectiveCaptureSources(availableScreens, windows);
 
           if (initialSelectedApps.length === 0) {
-            // When no apps were initially selected, should return all active apps
-            expect(result.appNames.sort()).toEqual(appsAfterRefresh.sort());
+            // When no apps were initially selected, should return all active apps (deduplicated)
+            expect(result.appNames.sort()).toEqual(uniqueAppsAfterRefresh.sort());
             expect(result.appFallback).toBe(false);
           } else if (appsStillActive.length === 0) {
-            // When no selected apps are still active, should fallback to all
-            expect(result.appNames.sort()).toEqual(appsAfterRefresh.sort());
+            // When no selected apps are still active, should fallback to all (deduplicated)
+            expect(result.appNames.sort()).toEqual(uniqueAppsAfterRefresh.sort());
             expect(result.appFallback).toBe(true);
           } else {
             // When some selected apps are still active, should return intersection
@@ -192,10 +198,10 @@ describe("CapturePreferencesService Property Tests", () => {
 
             // Property: All apps in the effective list should be both:
             // 1. In the original selection
-            // 2. In the current active apps list
+            // 2. In the current active apps list (deduplicated)
             for (const app of result.appNames) {
               expect(initialSelectedApps).toContain(app);
-              expect(appsAfterRefresh).toContain(app);
+              expect(uniqueAppsAfterRefresh).toContain(app);
             }
           }
 
@@ -258,15 +264,18 @@ describe("CapturePreferencesService Property Tests", () => {
       fc.property(screenIdsArb, appNamesArb, (availableScreens, activeApps) => {
         const service = new CapturePreferencesService();
 
+        // Deduplicate activeApps to match getActiveApps behavior
+        const uniqueActiveApps = [...new Set(activeApps)];
+
         // Create mock windows from active apps
         const windows = createMockWindows(activeApps);
 
         // Default state: no selection
         const result = service.getEffectiveCaptureSources(availableScreens, windows);
 
-        // Should return all available sources
+        // Should return all available sources (deduplicated)
         expect(result.screenIds.sort()).toEqual(availableScreens.sort());
-        expect(result.appNames.sort()).toEqual(activeApps.sort());
+        expect(result.appNames.sort()).toEqual(uniqueActiveApps.sort());
 
         // Should NOT be marked as fallback (empty selection is intentional "capture all")
         expect(result.screenFallback).toBe(false);

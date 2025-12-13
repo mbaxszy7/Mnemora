@@ -8,6 +8,7 @@ import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { PermissionCheckResult } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
 import { permissionService } from "../services/permission-service";
+import { ScreenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 // Lazy logger initialization to avoid issues with app not being ready
@@ -107,9 +108,7 @@ export function registerPermissionHandlers(): void {
     async (): Promise<IPCResult<boolean>> => {
       try {
         logger.info("Attempting to initialize services after permission grant");
-        // Dynamic import to avoid circular dependency
-        const { tryInitScreenCapture } = await import("../main");
-        const initialized = tryInitScreenCapture();
+        const initialized = ScreenCaptureModule.tryInitialize();
         return { success: true, data: initialized };
       } catch (error) {
         logger.error({ error }, "Failed to initialize services");

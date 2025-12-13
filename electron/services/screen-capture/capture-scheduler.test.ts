@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { ScreenCaptureScheduler, calculateNextDelay } from "./scheduler";
+import { ScreenCaptureScheduler, calculateNextDelay } from "./capture-scheduler";
 import type { SchedulerStateEvent, CaptureStartEvent } from "./types";
 
 describe("ScreenCaptureScheduler Unit Tests", () => {
@@ -143,11 +143,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
     it("stop() cancels pending timers", () => {
       const captureTask = vi.fn().mockResolvedValue({
         buffer: Buffer.from([]),
-        width: 100,
-        height: 100,
         timestamp: Date.now(),
-        sources: [],
-        isComposite: false,
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
       });
 
       const scheduler = new ScreenCaptureScheduler({ interval: 15000, minDelay: 100 }, captureTask);
@@ -170,11 +168,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
     it("pause() cancels pending timers", () => {
       const captureTask = vi.fn().mockResolvedValue({
         buffer: Buffer.from([]),
-        width: 100,
-        height: 100,
         timestamp: Date.now(),
-        sources: [],
-        isComposite: false,
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
       });
 
       const scheduler = new ScreenCaptureScheduler({ interval: 15000, minDelay: 100 }, captureTask);
@@ -336,11 +332,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
       const captureTask = vi.fn().mockResolvedValue({
         buffer: Buffer.from([]),
-        width: 100,
-        height: 100,
         timestamp: Date.now(),
-        sources: [],
-        isComposite: false,
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
       });
 
       const scheduler = new ScreenCaptureScheduler({ interval: 30, minDelay: 10 }, captureTask);
@@ -365,11 +359,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
         events.push("task");
         return {
           buffer: Buffer.from([]),
-          width: 100,
-          height: 100,
           timestamp: Date.now(),
-          sources: [],
-          isComposite: false,
+          source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+          screenId: "0",
         };
       });
 
@@ -397,11 +389,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
       const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => ({
         buffer: Buffer.from([]),
-        width: 100,
-        height: 100,
         timestamp: Date.now(),
-        sources: [],
-        isComposite: false,
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
       }));
 
       expect(scheduler.getState().captureCount).toBe(0);
@@ -420,11 +410,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
       const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => ({
         buffer: Buffer.from([]),
-        width: 100,
-        height: 100,
         timestamp: Date.now(),
-        sources: [],
-        isComposite: false,
+        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+        screenId: "0",
       }));
 
       expect(scheduler.getState().lastCaptureTime).toBeNull();

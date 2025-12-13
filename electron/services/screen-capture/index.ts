@@ -9,7 +9,7 @@
 export { ScreenCaptureModule, getScreenCaptureModule } from "./screen-capture-module";
 export { windowFilter } from "./window-filter";
 // Storage utilities used by main.ts
-export { cleanupDevCaptures } from "./storage-service";
+export { cleanupDevCaptures } from "./capture-storage";
 
 // Types needed by IPC handlers
 export type { SchedulerConfig, SchedulerState, CaptureSource } from "./types";

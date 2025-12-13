@@ -1,25 +1,29 @@
 /**
  * ScreenCaptureModule - Unified facade for screen capture functionality
  *
- * This module initializes and wires together all screen capture components:
+ * Architecture:
+ * - Uses dependency injection for loose coupling and testability
+ * - Delegates to specialized services for specific functionality
+ * - Provides unified API for screen capture operations
+ *
+ * Services:
  * - CaptureSourceProvider: Provides access to capture sources with caching
- * - WindowFilter: Filters system windows and normalizes app names
  * - CaptureService: Handles actual screen capture with multi-monitor support
  * - ScreenCaptureScheduler: Manages the capture scheduling loop
- *
- * Requirements: All (integration of all components)
+ * - CapturePreferencesService: Manages user preferences for capture sources
  */
 
 import { CaptureSourceProvider } from "./capture-source-provider";
-import { windowFilter } from "./window-filter";
 import { CaptureService } from "./capture-service";
-import { ScreenCaptureScheduler } from "./scheduler";
-import { saveCaptureToFile, cleanupOldCaptures } from "./storage-service";
+import { ScreenCaptureScheduler } from "./capture-scheduler";
+import { windowFilter } from "./window-filter";
+import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
 import type {
   SchedulerConfig,
   SchedulerState,
   CaptureOptions,
   CaptureResult,
+  CaptureSource,
   SchedulerEvent,
   SchedulerEventHandler,
   SchedulerEventPayload,
@@ -27,19 +31,13 @@ import type {
 import { DEFAULT_SCHEDULER_CONFIG, DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
 import { powerMonitorService } from "../power-monitor";
+import { permissionService } from "../permission-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
 
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
- * It initializes all components and wires them together.
- *
- * Uses default configurations from types.ts:
- * - DEFAULT_SCHEDULER_CONFIG: interval=6000ms, minDelay=100ms, autoStart=false
- * - DEFAULT_CAPTURE_OPTIONS: format=jpeg, quality=80, stitchMultiMonitor=true
- * - DEFAULT_CACHE_INTERVAL: 3000ms
  */
 export class ScreenCaptureModule {
-  // Use getter/setter to sync with global variable for hot reload support
   private static instance: ScreenCaptureModule | null = null;
 
   private readonly sourceProvider: CaptureSourceProvider;
@@ -53,64 +51,23 @@ export class ScreenCaptureModule {
   private constructor() {
     this.logger.info("Initializing ScreenCaptureModule");
 
-    // Initialize components with default configurations
     this.sourceProvider = new CaptureSourceProvider({
       immediate: true,
       onError: (error) => this.logger.error({ error }, "Source provider cache error"),
     });
-
     this.captureService = new CaptureService();
     this.preferencesService = new CapturePreferencesService();
-
-    // Create scheduler with capture task using default config
     this.scheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
       this.executeCaptureTask()
     );
 
-    // Setup power monitor callbacks for auto pause/resume
     this.setupPowerMonitorCallbacks();
-
     this.logger.info("ScreenCaptureModule initialized");
   }
 
-  /**
-   * Setup power monitor callbacks to auto pause/resume on system events
-   */
-  private setupPowerMonitorCallbacks(): void {
-    // Pause on system suspend
-    powerMonitorService.registerSuspendCallback(() => {
-      if (this.getState().status === "running") {
-        this.pause();
-        this.logger.info("Screen capture paused on system suspend");
-      }
-    });
-
-    // Resume on system resume
-    powerMonitorService.registerResumeCallback(() => {
-      if (this.getState().status === "paused") {
-        this.resume();
-        this.logger.info("Screen capture resumed on system resume");
-      }
-    });
-
-    // Pause on screen lock
-    powerMonitorService.registerLockScreenCallback(() => {
-      if (this.getState().status === "running") {
-        this.pause();
-        this.logger.info("Screen capture paused on screen lock");
-      }
-    });
-
-    // Resume on screen unlock
-    powerMonitorService.registerUnlockScreenCallback(() => {
-      if (this.getState().status === "paused") {
-        this.resume();
-        this.logger.info("Screen capture resumed on screen unlock");
-      }
-    });
-
-    this.logger.debug("Power monitor callbacks registered");
-  }
+  // ============================================================================
+  // Singleton Management
+  // ============================================================================
 
   /**
    * Get the singleton instance of ScreenCaptureModule
@@ -125,7 +82,7 @@ export class ScreenCaptureModule {
   }
 
   /**
-   * Reset the singleton instance (useful for testing)
+   * Reset the singleton instance (for dev hot reload)
    */
   static resetInstance(): void {
     if (ScreenCaptureModule.instance) {
@@ -135,22 +92,119 @@ export class ScreenCaptureModule {
   }
 
   /**
+   * Try to initialize and start screen capture if permissions are granted
+   * Call this after user grants permissions
+   */
+  static tryInitialize(): boolean {
+    const logger = getLogger("screen-capture-module");
+
+    if (!permissionService.hasScreenRecordingPermission()) {
+      logger.info("Screen recording permission not granted, skipping initialization");
+      return false;
+    }
+
+    if (!permissionService.hasAccessibilityPermission()) {
+      logger.info("Accessibility permission not granted, skipping initialization");
+      return false;
+    }
+
+    try {
+      const module = ScreenCaptureModule.getInstance();
+      module.start();
+      logger.info("Screen capture module initialized and started");
+      return true;
+    } catch (error) {
+      logger.error({ error }, "Failed to initialize screen capture module");
+      return false;
+    }
+  }
+
+  // ============================================================================
+  // System Event Handlers
+  // ============================================================================
+
+  private setupPowerMonitorCallbacks(): void {
+    powerMonitorService.registerSuspendCallback(() => {
+      if (this.getState().status === "running") {
+        this.pause();
+        this.logger.info("Screen capture paused on system suspend");
+      }
+    });
+
+    powerMonitorService.registerResumeCallback(() => {
+      if (this.getState().status === "paused") {
+        this.resume();
+        this.logger.info("Screen capture resumed on system resume");
+      }
+    });
+
+    powerMonitorService.registerLockScreenCallback(() => {
+      if (this.getState().status === "running") {
+        this.pause();
+        this.logger.info("Screen capture paused on screen lock");
+      }
+    });
+
+    powerMonitorService.registerUnlockScreenCallback(() => {
+      if (this.getState().status === "paused") {
+        this.resume();
+        this.logger.info("Screen capture resumed on screen unlock");
+      }
+    });
+
+    this.logger.debug("Power monitor callbacks registered");
+  }
+
+  // ============================================================================
+  // Capture Task Execution
+  // ============================================================================
+
+  /**
    * Execute the capture task - called by the scheduler on each cycle
-   *
-   * This method integrates user preferences for filtering:
-   * - Screens: Filter based on selectedScreenIds (using displayId mapping)
-   * - Apps: Filter based on selectedAppNames (for VLM analysis metadata)
-   *
-   * Fallback behavior:
-   * - If no selected screens are available, capture all screens
-   * - If no selected apps are active, record all apps
-   *
-   * Requirements: 3.1, 3.3
+   * Returns the first CaptureResult for scheduler compatibility
    */
   private async executeCaptureTask(): Promise<CaptureResult> {
     this.logger.debug("Executing capture task");
 
-    // Ensure source provider has data (may not be ready immediately after init)
+    // Ensure source provider has data
+    await this.ensureSourcesAvailable();
+
+    // Get current sources and preferences
+    const screens = this.getScreens();
+    const windows = this.getWindows();
+    const availableScreenIds = screens.map((s: CaptureSource) => s.displayId || s.id);
+
+    // Compute effective capture sources
+    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(
+      availableScreenIds,
+      windows
+    );
+
+    this.logCaptureContext(screens, availableScreenIds, effectiveSources);
+
+    // Perform capture - returns array of results (one per screen)
+    const results = await this.captureService.captureScreens({
+      ...this.captureOptions,
+      screenIds: effectiveSources.screenIds,
+    });
+
+    // Save all captures to disk
+    const isMultiScreen = results.length > 1;
+    await this.saveCapturesToDisk(results, isMultiScreen);
+
+    this.logger.debug(
+      {
+        capturedScreens: results.length,
+        screenIds: results.map((r) => r.screenId),
+      },
+      "Capture task completed"
+    );
+
+    // Return first result for scheduler compatibility
+    return results[0];
+  }
+
+  private async ensureSourcesAvailable(): Promise<void> {
     if (!this.sourceProvider.getSources().length) {
       this.logger.debug("Source provider cache empty, triggering refresh");
       try {
@@ -159,25 +213,20 @@ export class ScreenCaptureModule {
         this.logger.warn({ error }, "Source provider refresh failed, continuing with empty cache");
       }
     }
+  }
 
-    // Get screens and windows from cache
-    const screens = this.getScreens();
-    const windows = this.getWindows();
-
-    // Get available screen IDs (using displayId from CaptureSource)
-    // Note: CaptureSourceProvider returns CaptureSource with displayId field
-    const availableScreenIds = screens.map((s) => s.displayId || s.id);
-
-    // Get current preferences
+  private logCaptureContext(
+    screens: CaptureSource[],
+    availableScreenIds: string[],
+    effectiveSources: {
+      screenIds: string[];
+      appNames: string[];
+      screenFallback: boolean;
+      appFallback: boolean;
+    }
+  ): void {
     const preferences = this.preferencesService.getPreferences();
 
-    // Compute effective capture sources based on preferences and availability
-    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(
-      availableScreenIds,
-      windows
-    );
-
-    // Log detailed preference information for debugging
     this.logger.info(
       {
         preferences: {
@@ -189,17 +238,11 @@ export class ScreenCaptureModule {
           screenCount: screens.length,
           screenIds: availableScreenIds,
         },
-        effective: {
-          screenIds: effectiveSources.screenIds,
-          appNames: effectiveSources.appNames,
-          screenFallback: effectiveSources.screenFallback,
-          appFallback: effectiveSources.appFallback,
-        },
+        effective: effectiveSources,
       },
       "Capture task - preferences and effective sources"
     );
 
-    // Log fallback mode warnings
     if (effectiveSources.screenFallback) {
       this.logger.warn(
         {
@@ -218,66 +261,32 @@ export class ScreenCaptureModule {
         "App fallback mode: selected apps not active, recording all apps"
       );
     }
+  }
 
-    // Capture screens with effective screen IDs filter
-    // effectiveSources.screenIds contains the CGDirectDisplayID strings to capture
-    // effectiveSources.appNames is metadata for VLM analysis - it indicates
-    // which apps the user is interested in, but doesn't affect the actual capture
-    const result = await this.captureService.captureScreens({
-      ...this.captureOptions,
-      screenIds: effectiveSources.screenIds,
-    });
-
-    // Attach effective app names to result for VLM analysis
-    // This metadata indicates which apps were active and selected during capture
-    const captureMetadata = {
-      effectiveApps: effectiveSources.appNames,
-      appFallback: effectiveSources.appFallback,
-      effectiveScreens: effectiveSources.screenIds,
-      screenFallback: effectiveSources.screenFallback,
-    };
-
-    this.logger.debug({ captureMetadata }, "Capture metadata for VLM analysis");
-
-    // Save capture to disk
-    try {
-      const filepath = await saveCaptureToFile(
-        result.buffer,
-        result.timestamp,
-        this.captureOptions.format
-      );
-      this.logger.debug({ filepath }, "Capture saved to disk");
-    } catch (error) {
-      this.logger.error({ error }, "Failed to save capture to disk");
+  private async saveCapturesToDisk(
+    results: CaptureResult[],
+    isMultiScreen: boolean
+  ): Promise<void> {
+    for (const result of results) {
+      try {
+        const filepath = await saveCaptureToFile(
+          result.buffer,
+          result.timestamp,
+          this.captureOptions.format,
+          result.screenId,
+          isMultiScreen
+        );
+        this.logger.debug({ filepath, screenId: result.screenId }, "Capture saved to disk");
+      } catch (error) {
+        this.logger.error({ error, screenId: result.screenId }, "Failed to save capture to disk");
+      }
     }
-
-    this.logger.debug(
-      {
-        width: result.width,
-        height: result.height,
-        isComposite: result.isComposite,
-        sourceCount: result.sources.length,
-      },
-      "Capture task completed"
-    );
-
-    return result;
-  }
-
-  /**
-   * Cleanup old captures to manage disk space
-   */
-  async cleanupOldCaptures(maxAge?: number, maxCount?: number): Promise<number> {
-    return cleanupOldCaptures(maxAge, maxCount);
   }
 
   // ============================================================================
-  // Scheduler Control Methods
+  // Public API: Scheduler Control
   // ============================================================================
 
-  /**
-   * Start the capture scheduler
-   */
   start(): void {
     if (this.disposed) {
       this.logger.warn("Cannot start disposed module");
@@ -287,25 +296,16 @@ export class ScreenCaptureModule {
     this.scheduler.start();
   }
 
-  /**
-   * Stop the capture scheduler
-   */
   stop(): void {
     this.logger.info("Stopping scheduler");
     this.scheduler.stop();
   }
 
-  /**
-   * Pause the capture scheduler
-   */
   pause(): void {
     this.logger.info("Pausing scheduler");
     this.scheduler.pause();
   }
 
-  /**
-   * Resume the capture scheduler
-   */
   resume(): void {
     if (this.disposed) {
       this.logger.warn("Cannot resume disposed module");
@@ -315,28 +315,19 @@ export class ScreenCaptureModule {
     this.scheduler.resume();
   }
 
-  /**
-   * Get the current scheduler state
-   */
   getState(): SchedulerState {
     return this.scheduler.getState();
   }
 
-  /**
-   * Update scheduler configuration at runtime
-   */
   updateConfig(config: Partial<SchedulerConfig>): void {
     this.logger.info({ config }, "Updating scheduler config");
     this.scheduler.updateConfig(config);
   }
 
   // ============================================================================
-  // Event Subscription Methods
+  // Public API: Event Subscription
   // ============================================================================
 
-  /**
-   * Subscribe to scheduler events
-   */
   on<T extends SchedulerEventPayload>(
     event: SchedulerEvent,
     handler: SchedulerEventHandler<T>
@@ -344,9 +335,6 @@ export class ScreenCaptureModule {
     this.scheduler.on(event, handler);
   }
 
-  /**
-   * Unsubscribe from scheduler events
-   */
   off<T extends SchedulerEventPayload>(
     event: SchedulerEvent,
     handler: SchedulerEventHandler<T>
@@ -355,83 +343,54 @@ export class ScreenCaptureModule {
   }
 
   // ============================================================================
-  // Source Provider Methods
+  // Public API: Source Access
   // ============================================================================
 
-  /**
-   * Get available capture sources (screens and windows)
-   */
-  getSources() {
+  getSources(): CaptureSource[] {
     return this.sourceProvider.getSources();
   }
 
-  /**
-   * Get available screens only
-   */
-  getScreens() {
+  getScreens(): CaptureSource[] {
     return this.sourceProvider.getScreens();
   }
 
-  /**
-   * Get available windows (filtered)
-   */
-  getWindows() {
+  getWindows(): CaptureSource[] {
     const windows = this.sourceProvider.getWindows();
     return windowFilter.filterSystemWindows(windows);
   }
 
-  /**
-   * Force refresh the source cache
-   */
   async refreshSources(): Promise<void> {
     await this.sourceProvider.refresh();
   }
 
   // ============================================================================
-  // Capture Service Methods
+  // Public API: Capture Operations
   // ============================================================================
 
-  /**
-   * Get monitor layout information
-   */
-  getMonitorLayout() {
-    return this.captureService.getMonitorLayout();
-  }
-
-  /**
-   * Capture all screens (manual capture, outside of scheduler)
-   */
-  async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult> {
+  async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]> {
     return this.captureService.captureScreens({ ...this.captureOptions, ...options });
   }
 
-  /**
-   * Get the capture service instance
-   * Allows external access to capture service for IPC handlers
-   */
+  async cleanupOldCaptures(maxAge?: number, maxCount?: number): Promise<number> {
+    return cleanupOldCaptures(maxAge, maxCount);
+  }
+
+  // ============================================================================
+  // Public API: Service Access (for IPC handlers)
+  // ============================================================================
+
   getCaptureService(): CaptureService {
     return this.captureService;
   }
 
-  // ============================================================================
-  // Preferences Methods
-  // ============================================================================
-
-  /**
-   * Get the preferences service instance
-   * Allows external access to preferences for IPC handlers
-   */
   getPreferencesService(): CapturePreferencesService {
     return this.preferencesService;
   }
 
   // ============================================================================
-  // Lifecycle Methods
+  // Public API: Lifecycle
   // ============================================================================
 
-  /**
-   * Dispose all resources and cleanup
-   */
   dispose(): void {
     if (this.disposed) {
       return;
@@ -440,18 +399,12 @@ export class ScreenCaptureModule {
     this.logger.info("Disposing ScreenCaptureModule");
     this.disposed = true;
 
-    // Stop scheduler first
     this.scheduler.stop();
-
-    // Dispose source provider (stops cache refresh)
     this.sourceProvider.dispose();
 
     this.logger.info("ScreenCaptureModule disposed");
   }
 
-  /**
-   * Check if the module has been disposed
-   */
   isDisposed(): boolean {
     return this.disposed;
   }

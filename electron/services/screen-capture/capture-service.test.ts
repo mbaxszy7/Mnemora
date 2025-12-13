@@ -91,130 +91,84 @@ describe("CaptureService", () => {
     vi.restoreAllMocks();
   });
 
-  describe("getMonitorLayout", () => {
-    it("should return monitor layout information", () => {
-      const layout = captureService.getMonitorLayout();
-
-      expect(layout).toHaveLength(2);
-      expect(layout[0]).toEqual({
-        id: "1",
-        name: "Display 1",
-        bounds: { x: 0, y: 0, width: 1920, height: 1080 },
-        isPrimary: true,
-      });
-      expect(layout[1]).toEqual({
-        id: "2",
-        name: "Display 2",
-        bounds: { x: 1920, y: 0, width: 1920, height: 1080 },
-        isPrimary: false,
-      });
-    });
-
-    it("should identify primary display correctly", () => {
-      const layout = captureService.getMonitorLayout();
-
-      const primaryDisplays = layout.filter((m) => m.isPrimary);
-      expect(primaryDisplays).toHaveLength(1);
-      expect(primaryDisplays[0].id).toBe("1");
-    });
-  });
-
   describe("captureScreens", () => {
-    it("should capture all screens", async () => {
-      const result = await captureService.captureScreens();
+    it("should capture all screens and return array", async () => {
+      const results = await captureService.captureScreens();
 
-      expect(result).toBeDefined();
-      expect(result.buffer).toBeInstanceOf(Buffer);
-      expect(result.timestamp).toBeLessThanOrEqual(Date.now());
+      expect(results).toBeDefined();
+      expect(Array.isArray(results)).toBe(true);
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].buffer).toBeInstanceOf(Buffer);
+      expect(results[0].timestamp).toBeLessThanOrEqual(Date.now());
     });
 
-    it("should handle single monitor without stitching", async () => {
-      const result = await captureService.captureScreens();
+    it("should return one result per monitor", async () => {
+      const results = await captureService.captureScreens();
 
-      // With mocked single monitor, isComposite should be false
-      expect(result.isComposite).toBe(false);
-    });
-
-    it("should respect stitchMultiMonitor option", async () => {
-      const result = await captureService.captureScreens({
-        stitchMultiMonitor: false,
-      });
-
-      expect(result.isComposite).toBe(false);
+      // With mocked single monitor, should return one result
+      expect(results.length).toBe(1);
+      expect(results[0].screenId).toBeDefined();
+      expect(results[0].source).toBeDefined();
+      expect(results[0].source.type).toBe("screen");
     });
   });
 
-  describe("calculateBoundingBox", () => {
-    it("should calculate correct bounding box for single monitor", () => {
-      const monitors = [{ x: 0, y: 0, width: 1920, height: 1080 }];
-
-      const result = captureService.calculateBoundingBox(monitors as never);
-
-      expect(result).toEqual({
-        minX: 0,
-        minY: 0,
-        width: 1920,
-        height: 1080,
-      });
-    });
-
-    it("should calculate correct bounding box for side-by-side monitors", () => {
-      const monitors = [
-        { x: 0, y: 0, width: 1920, height: 1080 },
-        { x: 1920, y: 0, width: 1920, height: 1080 },
+  describe("mapScreenIdsToDisplayIds", () => {
+    it("should map screen IDs to display IDs correctly", () => {
+      const screenInfos = [
+        {
+          id: "screen:0:0",
+          displayId: "1",
+          name: "Display 1",
+          thumbnail: "",
+          width: 1920,
+          height: 1080,
+          isPrimary: true,
+        },
+        {
+          id: "screen:1:0",
+          displayId: "2",
+          name: "Display 2",
+          thumbnail: "",
+          width: 1920,
+          height: 1080,
+          isPrimary: false,
+        },
       ];
 
-      const result = captureService.calculateBoundingBox(monitors as never);
+      const result = captureService.mapScreenIdsToDisplayIds(
+        ["screen:0:0", "screen:1:0"],
+        screenInfos
+      );
 
-      expect(result).toEqual({
-        minX: 0,
-        minY: 0,
-        width: 3840,
-        height: 1080,
-      });
+      expect(result).toEqual(["1", "2"]);
     });
 
-    it("should calculate correct bounding box for stacked monitors", () => {
-      const monitors = [
-        { x: 0, y: 0, width: 1920, height: 1080 },
-        { x: 0, y: 1080, width: 1920, height: 1080 },
+    it("should handle missing screen IDs gracefully", () => {
+      const screenInfos = [
+        {
+          id: "screen:0:0",
+          displayId: "1",
+          name: "Display 1",
+          thumbnail: "",
+          width: 1920,
+          height: 1080,
+          isPrimary: true,
+        },
       ];
 
-      const result = captureService.calculateBoundingBox(monitors as never);
+      const result = captureService.mapScreenIdsToDisplayIds(
+        ["screen:0:0", "screen:99:0"],
+        screenInfos
+      );
 
-      expect(result).toEqual({
-        minX: 0,
-        minY: 0,
-        width: 1920,
-        height: 2160,
-      });
+      expect(result).toEqual(["1"]);
     });
 
-    it("should handle monitors with negative coordinates", () => {
-      const monitors = [
-        { x: -1920, y: 0, width: 1920, height: 1080 },
-        { x: 0, y: 0, width: 1920, height: 1080 },
-      ];
+    it("should return empty array when no matches", () => {
+      const result = captureService.mapScreenIdsToDisplayIds(["nonexistent"], []);
 
-      const result = captureService.calculateBoundingBox(monitors as never);
-
-      expect(result).toEqual({
-        minX: -1920,
-        minY: 0,
-        width: 3840,
-        height: 1080,
-      });
-    });
-
-    it("should return zero dimensions for empty monitor list", () => {
-      const result = captureService.calculateBoundingBox([]);
-
-      expect(result).toEqual({
-        minX: 0,
-        minY: 0,
-        width: 0,
-        height: 0,
-      });
+      expect(result).toEqual([]);
     });
   });
 

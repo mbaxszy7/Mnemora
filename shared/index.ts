@@ -53,8 +53,7 @@ export {
   type GetScreensResponse,
   type GetAppsResponse,
   type SetPreferencesRequest,
-  type GetPreferencesResponse,
-  type SetPreferencesResponse,
+  type PreferencesResponse,
 } from "./capture-source-types";
 
 // Popular Apps

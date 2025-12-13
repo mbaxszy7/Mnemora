@@ -194,34 +194,6 @@ export function extractAppNameFromTitle(windowTitle: string): string {
   return firstPart;
 }
 
-/**
- * Check if an app name matches any of the apps with visible windows
- * Uses fuzzy matching to handle name variations
- */
-export function isAppVisible(appName: string, appsWithWindows: string[]): boolean {
-  if (appsWithWindows.length === 0) {
-    // If we couldn't detect, assume visible
-    return true;
-  }
-
-  const appNameLower = appName.toLowerCase();
-
-  return appsWithWindows.some((activeApp) => {
-    const activeAppLower = activeApp.toLowerCase();
-
-    // Direct match
-    if (activeAppLower.includes(appNameLower) || appNameLower.includes(activeAppLower)) {
-      return true;
-    }
-
-    // Check aliases from config
-    const appAliases = APP_ALIAS_MAP[appNameLower] || [];
-    return appAliases.some(
-      (alias) => activeAppLower.includes(alias) || alias.includes(activeAppLower)
-    );
-  });
-}
-
 /** Merge Electron and AppleScript sources, removing duplicates */
 export function mergeSources(
   electronSources: CaptureSource[],

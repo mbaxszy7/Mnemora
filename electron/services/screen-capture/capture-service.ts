@@ -1,11 +1,26 @@
 /**
  * CaptureService - Screen capture with multi-monitor support using node-screenshots + sharp
+ *
+ * ⚠️ IMPORTANT: Screen ID Mapping
+ * ================================
+ * This service uses node-screenshots for actual screen capture.
+ * node-screenshots uses Monitor.id which is the CGDirectDisplayID (numeric).
+ *
+ * When integrating with user preferences, note that user-selected screen IDs
+ * are in desktopCapturer format ("screen:INDEX:0"). These need to be mapped
+ * to CGDirectDisplayID for filtering using mapScreenIdsToDisplayIds().
+ *
+ * ID Systems:
+ * - desktopCapturer: "screen:0:0", "screen:1:0" (INDEX-based, for thumbnails)
+ * - node-screenshots: numeric ID (CGDirectDisplayID, for actual capture)
+ * - Electron screen API: numeric ID (same as CGDirectDisplayID)
  */
 
-import { screen } from "electron";
+import { desktopCapturer, screen } from "electron";
 import { Monitor as NodeMonitor, Image as NodeImage } from "node-screenshots";
 import sharp from "sharp";
 import type { CaptureSource, CaptureOptions, CaptureResult, MonitorInfo } from "./types";
+import type { ScreenInfo } from "../../../shared/capture-source-types";
 import { DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
 
@@ -14,6 +29,9 @@ const logger = getLogger("capture-service");
 export interface ICaptureService {
   captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult>;
   getMonitorLayout(): MonitorInfo[];
+  getScreensWithThumbnails(): Promise<ScreenInfo[]>;
+  getScreenIdMapping(): Promise<Map<string, string>>;
+  mapScreenIdsToDisplayIds(selectedScreenIds: string[], screenInfos: ScreenInfo[]): string[];
 }
 
 export class CaptureError extends Error {
@@ -66,13 +84,13 @@ export class CaptureService implements ICaptureService {
     const opts = { ...DEFAULT_CAPTURE_OPTIONS, ...options };
     const timestamp = Date.now();
 
-    const monitors = NodeMonitor.all();
+    const allMonitors = NodeMonitor.all();
 
     // Log all available monitors with their IDs and properties
     logger.info(
       {
-        monitorCount: monitors.length,
-        monitors: monitors.map((m) => ({
+        monitorCount: allMonitors.length,
+        monitors: allMonitors.map((m) => ({
           id: m.id,
           name: m.name,
           x: m.x,
@@ -88,12 +106,39 @@ export class CaptureService implements ICaptureService {
       "Available monitors for capture"
     );
 
-    if (monitors.length === 0) {
+    if (allMonitors.length === 0) {
       logger.error("No monitors available for capture");
       throw new CaptureError("No monitors available for capture", "NO_MONITORS");
     }
 
-    // Capture all monitors in parallel
+    // Filter monitors by screenIds if provided
+    // screenIds are CGDirectDisplayID as strings (e.g., "1", "2")
+    let monitors = allMonitors;
+    if (opts.screenIds && opts.screenIds.length > 0) {
+      monitors = allMonitors.filter((m) => opts.screenIds!.includes(m.id.toString()));
+      logger.info(
+        {
+          requestedScreenIds: opts.screenIds,
+          filteredMonitorCount: monitors.length,
+          filteredMonitorIds: monitors.map((m) => m.id),
+        },
+        "Filtered monitors by screenIds"
+      );
+
+      // If no monitors match the filter, fall back to all monitors
+      if (monitors.length === 0) {
+        logger.warn(
+          {
+            requestedScreenIds: opts.screenIds,
+            availableMonitorIds: allMonitors.map((m) => m.id.toString()),
+          },
+          "No monitors match screenIds filter, falling back to all monitors"
+        );
+        monitors = allMonitors;
+      }
+    }
+
+    // Capture selected monitors in parallel
     const capturePromises = monitors.map((monitor) => this.captureMonitor(monitor));
     const captures = await Promise.all(capturePromises);
 
@@ -293,5 +338,117 @@ export class CaptureService implements ICaptureService {
         height: monitor.height,
       },
     }));
+  }
+
+  /**
+   * Get screens with thumbnails and display information
+   * Merges data from desktopCapturer and screen.getAllDisplays()
+   *
+   * ⚠️ Why not reuse CaptureSourceProvider?
+   * CaptureSourceProvider uses thumbnailSize: { width: 1, height: 1 } for performance
+   * (it only needs metadata, not actual thumbnails). For the settings UI, we need
+   * larger thumbnails (320x180) for visual display, so we call desktopCapturer directly.
+   */
+  async getScreensWithThumbnails(): Promise<ScreenInfo[]> {
+    const sources = await desktopCapturer.getSources({
+      types: ["screen"],
+      thumbnailSize: { width: 320, height: 180 },
+    });
+
+    const displays = screen.getAllDisplays();
+    const primaryDisplay = screen.getPrimaryDisplay();
+
+    logger.debug(
+      {
+        sourceCount: sources.length,
+        displayCount: displays.length,
+        primaryDisplayId: primaryDisplay.id,
+      },
+      "Retrieved screen sources and displays"
+    );
+
+    const screens: ScreenInfo[] = sources.map((source, index) => {
+      const displayIdFromSource = source.display_id;
+      let matchedDisplay = displays.find((d) => d.id.toString() === displayIdFromSource);
+
+      if (!matchedDisplay && index < displays.length) {
+        matchedDisplay = displays[index];
+      }
+
+      const display = matchedDisplay || displays[0];
+      const isPrimary = display ? display.id === primaryDisplay.id : false;
+      const actualDisplayId = display?.id.toString() || "";
+
+      return {
+        id: source.id,
+        name: source.name,
+        thumbnail: source.thumbnail.toDataURL(),
+        width: display?.bounds.width || 0,
+        height: display?.bounds.height || 0,
+        isPrimary,
+        displayId: actualDisplayId,
+      };
+    });
+
+    const hasPrimary = screens.some((s) => s.isPrimary);
+    if (!hasPrimary && screens.length > 0) {
+      screens[0].isPrimary = true;
+    }
+
+    logger.info(
+      {
+        screenCount: screens.length,
+        primaryScreen: screens.find((s) => s.isPrimary)?.name,
+      },
+      "Screens retrieved with thumbnails"
+    );
+
+    return screens;
+  }
+
+  /**
+   * Get the current screen list with displayId mapping
+   * This is useful for mapping desktopCapturer IDs to node-screenshots IDs
+   */
+  async getScreenIdMapping(): Promise<Map<string, string>> {
+    const screens = await this.getScreensWithThumbnails();
+    const mapping = new Map<string, string>();
+
+    for (const s of screens) {
+      if (s.displayId) {
+        mapping.set(s.id, s.displayId);
+      }
+    }
+
+    return mapping;
+  }
+
+  /**
+   * Map desktopCapturer screen IDs to displayIds (CGDirectDisplayID)
+   *
+   * This function is used when filtering screens for capture based on user preferences.
+   * User preferences store desktopCapturer IDs (for thumbnail association), but
+   * CaptureService needs displayIds (CGDirectDisplayID) for node-screenshots filtering.
+   *
+   * @param selectedScreenIds - Array of desktopCapturer IDs (e.g., ["screen:0:0", "screen:1:0"])
+   * @param screenInfos - Array of ScreenInfo objects with both id and displayId
+   * @returns Array of displayIds (CGDirectDisplayID) for use with node-screenshots
+   */
+  mapScreenIdsToDisplayIds(selectedScreenIds: string[], screenInfos: ScreenInfo[]): string[] {
+    const displayIds: string[] = [];
+
+    for (const screenId of selectedScreenIds) {
+      const screenInfo = screenInfos.find((s) => s.id === screenId);
+      if (screenInfo && screenInfo.displayId) {
+        displayIds.push(screenInfo.displayId);
+      } else {
+        logger.warn(
+          { screenId },
+          "Could not find displayId for selected screen - screen may no longer be available"
+        );
+      }
+    }
+
+    return displayIds;
   }
 }

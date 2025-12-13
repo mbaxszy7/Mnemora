@@ -10,6 +10,7 @@ import { registerI18nHandlers } from "./ipc/i18n-handlers";
 import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
 import { registerPermissionHandlers } from "./ipc/permission-handlers";
+import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -167,6 +168,7 @@ function registerIPCHandlers(): void {
   registerLLMConfigHandlers();
   registerScreenCaptureHandlers();
   registerPermissionHandlers();
+  registerCaptureSourceSettingsHandlers();
   logger.info("IPC handlers registered");
 }
 
@@ -209,13 +211,8 @@ function initScreenCaptureModule(): boolean {
     }
 
     // Initialize the module (creates singleton)
-    const module = getScreenCaptureModule({
-      scheduler: {
-        interval: 6000, // 6 seconds default
-        minDelay: 100,
-        autoStart: false, // Don't start automatically
-      },
-    });
+    // Uses DEFAULT_SCHEDULER_CONFIG from types.ts (interval: 6000ms, minDelay: 100ms, autoStart: false)
+    const module = getScreenCaptureModule();
 
     // Start the scheduler automatically when permissions are granted
     module.start();

@@ -2,8 +2,9 @@
  * WindowFilter - Filters system windows and normalizes app names
  */
 
-import type { CaptureSource, WindowFilterConfig } from "./types";
+import type { CaptureSource } from "./types";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
+import { extractAppNameFromTitle } from "./macos-window-helper";
 
 export interface IWindowFilter {
   filterSystemWindows(sources: CaptureSource[]): CaptureSource[];
@@ -12,27 +13,23 @@ export interface IWindowFilter {
   getDisplayAppName(source: { name: string; appName?: string }): string;
 }
 
-export class WindowFilter implements IWindowFilter {
-  private readonly config: WindowFilterConfig;
+class WindowFilter implements IWindowFilter {
   private readonly aliasToCanonical: Map<string, string>;
   private readonly systemWindowsLower: Set<string>;
 
-  constructor(config: Partial<WindowFilterConfig> = {}) {
-    this.config = {
-      systemWindows: config.systemWindows ?? DEFAULT_WINDOW_FILTER_CONFIG.systemWindows,
-      appAliases: config.appAliases ?? DEFAULT_WINDOW_FILTER_CONFIG.appAliases,
-    };
-
+  constructor() {
     // Build reverse lookup map: alias -> canonical name
     this.aliasToCanonical = new Map();
-    for (const [canonical, aliases] of Object.entries(this.config.appAliases)) {
+    for (const [canonical, aliases] of Object.entries(DEFAULT_WINDOW_FILTER_CONFIG.appAliases)) {
       for (const alias of aliases) {
         this.aliasToCanonical.set(alias.toLowerCase(), canonical);
       }
     }
 
     // Pre-compute lowercase set for efficient matching
-    this.systemWindowsLower = new Set(this.config.systemWindows.map((w) => w.toLowerCase()));
+    this.systemWindowsLower = new Set(
+      DEFAULT_WINDOW_FILTER_CONFIG.systemWindows.map((w) => w.toLowerCase())
+    );
   }
 
   normalizeAppName(name: string): string {
@@ -42,12 +39,25 @@ export class WindowFilter implements IWindowFilter {
 
   /**
    * Get display-friendly app name from a capture source.
-   * Prefers appName field (from AppleScript on macOS) over window name.
+   * Priority:
+   * 1. appName field (from AppleScript on macOS) - most accurate
+   * 2. Extract from window title using common patterns (e.g., "file.ts - VS Code" -> "VS Code")
+   * 3. Fall back to full window name
    */
   getDisplayAppName(source: { name: string; appName?: string }): string {
+    // Prefer appName from AppleScript (most accurate)
     if (source.appName) {
       return source.appName;
     }
+
+    // Try to extract app name from window title
+    // This handles patterns like "Document - AppName" or "AppName - Subtitle"
+    const extracted = extractAppNameFromTitle(source.name);
+    if (extracted && extracted !== source.name) {
+      return extracted;
+    }
+
+    // Fall back to full window name
     return source.name;
   }
 
@@ -111,3 +121,6 @@ export class WindowFilter implements IWindowFilter {
     });
   }
 }
+
+// Export singleton instance
+export const windowFilter = new WindowFilter();

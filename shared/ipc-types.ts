@@ -47,6 +47,11 @@ export const IPC_CHANNELS = {
   PERMISSION_OPEN_SCREEN_RECORDING_SETTINGS: "permission:open-screen-recording-settings",
   PERMISSION_OPEN_ACCESSIBILITY_SETTINGS: "permission:open-accessibility-settings",
   PERMISSION_INIT_SERVICES: "permission:init-services",
+  // Capture Source Settings channels
+  CAPTURE_SOURCES_GET_SCREENS: "capture-sources:get-screens",
+  CAPTURE_SOURCES_GET_APPS: "capture-sources:get-apps",
+  CAPTURE_SOURCES_GET_PREFERENCES: "capture-sources:get-preferences",
+  CAPTURE_SOURCES_SET_PREFERENCES: "capture-sources:set-preferences",
 } as const;
 
 /**

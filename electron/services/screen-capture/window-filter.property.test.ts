@@ -7,7 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import * as fc from "fast-check";
-import { WindowFilter } from "./window-filter";
+import { windowFilter } from "./window-filter";
 import type { CaptureSource } from "./types";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
 
@@ -53,8 +53,6 @@ describe("WindowFilter Property Tests", () => {
           maxLength: 5,
         }),
         (regularWindows, systemWindowNames) => {
-          const filter = new WindowFilter();
-
           // Create system window sources
           const systemWindows: CaptureSource[] = systemWindowNames.map((name, i) => ({
             id: `system-${i}`,
@@ -66,7 +64,7 @@ describe("WindowFilter Property Tests", () => {
           const allSources = [...regularWindows, ...systemWindows];
 
           // Apply filter
-          const filtered = filter.filterSystemWindows(allSources);
+          const filtered = windowFilter.filterSystemWindows(allSources);
 
           // Property: No system windows should remain in the filtered result
           const systemWindowsLower = new Set(
@@ -116,13 +114,11 @@ describe("WindowFilter Property Tests", () => {
         // Optionally add case variation
         fc.boolean(),
         ({ alias, canonical }, useUpperCase) => {
-          const filter = new WindowFilter();
-
           // Apply case variation
           const testAlias = useUpperCase ? alias.toUpperCase() : alias.toLowerCase();
 
           // Normalize the alias
-          const normalized = filter.normalizeAppName(testAlias);
+          const normalized = windowFilter.normalizeAppName(testAlias);
 
           // Property: The normalized name should equal the canonical name
           expect(normalized).toBe(canonical);
@@ -151,10 +147,8 @@ describe("WindowFilter Property Tests", () => {
         // Generate random strings that are not aliases
         fc.string({ minLength: 1, maxLength: 30 }).filter((s) => !allAliases.has(s.toLowerCase())),
         (nonAliasName) => {
-          const filter = new WindowFilter();
-
           // Normalize the non-alias name
-          const normalized = filter.normalizeAppName(nonAliasName);
+          const normalized = windowFilter.normalizeAppName(nonAliasName);
 
           // Property: Non-alias names should be returned unchanged
           expect(normalized).toBe(nonAliasName);
@@ -177,10 +171,8 @@ describe("WindowFilter Property Tests", () => {
         // Generate windows (some may be system windows)
         fc.array(windowSourceArb, { minLength: 0, maxLength: 10 }),
         (screens, windows) => {
-          const filter = new WindowFilter();
-
           const allSources = [...screens, ...windows];
-          const filtered = filter.filterSystemWindows(allSources);
+          const filtered = windowFilter.filterSystemWindows(allSources);
 
           // Property: All screens should be preserved
           const filteredIds = new Set(filtered.map((s) => s.id));

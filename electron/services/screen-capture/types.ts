@@ -69,6 +69,12 @@ export interface CaptureOptions {
   quality: number;
   /** Whether to stitch multi-monitor captures */
   stitchMultiMonitor: boolean;
+  /**
+   * Filter to capture only specific screens by their display IDs (CGDirectDisplayID as string).
+   * If undefined or empty, captures all available screens.
+   * These IDs should match the numeric display IDs from node-screenshots Monitor.id.
+   */
+  screenIds?: string[];
 }
 
 /**

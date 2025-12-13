@@ -44,3 +44,25 @@ export {
   decodeApiKey,
   getValidationErrorKey,
 } from "./llm-config-utils";
+
+// Capture Source Types
+export {
+  type ScreenInfo,
+  type AppInfo,
+  type CapturePreferences,
+  type GetScreensResponse,
+  type GetAppsResponse,
+  type SetPreferencesRequest,
+  type GetPreferencesResponse,
+  type SetPreferencesResponse,
+} from "./capture-source-types";
+
+// Popular Apps
+export {
+  type PopularAppConfig,
+  POPULAR_APPS,
+  DEFAULT_APP_ICON,
+  findPopularApp,
+  getAppIcon,
+  isPopularApp,
+} from "./popular-apps";

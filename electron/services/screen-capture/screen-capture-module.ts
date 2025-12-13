@@ -11,7 +11,7 @@
  */
 
 import { CaptureSourceProvider } from "./capture-source-provider";
-import { WindowFilter } from "./window-filter";
+import { windowFilter } from "./window-filter";
 import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./scheduler";
 import { saveCaptureToFile, cleanupOldCaptures } from "./storage-service";
@@ -23,79 +23,48 @@ import type {
   SchedulerEvent,
   SchedulerEventHandler,
   SchedulerEventPayload,
-  WindowFilterConfig,
 } from "./types";
 import { DEFAULT_SCHEDULER_CONFIG, DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
 import { powerMonitorService } from "../power-monitor";
-
-// Use global to persist instance across hot reloads
-// This ensures we can properly clean up the old instance when the module is reloaded
-declare global {
-  var __screenCaptureModuleInstance: ScreenCaptureModule | null;
-}
-
-// Clean up existing instance on hot reload
-if (globalThis.__screenCaptureModuleInstance) {
-  const logger = getLogger("screen-capture-module");
-  logger.info("Hot reload detected, disposing old ScreenCaptureModule instance");
-  globalThis.__screenCaptureModuleInstance.dispose();
-  globalThis.__screenCaptureModuleInstance = null;
-}
-
-/**
- * Configuration options for ScreenCaptureModule
- */
-export interface ScreenCaptureModuleOptions {
-  /** Scheduler configuration */
-  scheduler?: Partial<SchedulerConfig>;
-  /** Capture options */
-  capture?: Partial<CaptureOptions>;
-  /** Window filter configuration */
-  filter?: Partial<WindowFilterConfig>;
-  /** Cache refresh interval in milliseconds */
-  cacheInterval?: number;
-}
+import { CapturePreferencesService } from "../capture-preferences-service";
 
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
  * It initializes all components and wires them together.
+ *
+ * Uses default configurations from types.ts:
+ * - DEFAULT_SCHEDULER_CONFIG: interval=6000ms, minDelay=100ms, autoStart=false
+ * - DEFAULT_CAPTURE_OPTIONS: format=jpeg, quality=80, stitchMultiMonitor=true
+ * - DEFAULT_CACHE_INTERVAL: 3000ms
  */
 export class ScreenCaptureModule {
   // Use getter/setter to sync with global variable for hot reload support
-  private static get instance(): ScreenCaptureModule | null {
-    return globalThis.__screenCaptureModuleInstance ?? null;
-  }
-  private static set instance(value: ScreenCaptureModule | null) {
-    globalThis.__screenCaptureModuleInstance = value;
-  }
+  private static instance: ScreenCaptureModule | null = null;
 
   private readonly sourceProvider: CaptureSourceProvider;
-  private readonly windowFilter: WindowFilter;
   private readonly captureService: CaptureService;
   private readonly scheduler: ScreenCaptureScheduler;
-  private readonly captureOptions: CaptureOptions;
+  private readonly preferencesService: CapturePreferencesService;
+  private readonly captureOptions = DEFAULT_CAPTURE_OPTIONS;
   private readonly logger = getLogger("screen-capture-module");
   private disposed = false;
 
-  private constructor(options: ScreenCaptureModuleOptions = {}) {
+  private constructor() {
     this.logger.info("Initializing ScreenCaptureModule");
 
-    // Initialize components
+    // Initialize components with default configurations
     this.sourceProvider = new CaptureSourceProvider({
-      cacheInterval: options.cacheInterval,
       immediate: true,
       onError: (error) => this.logger.error({ error }, "Source provider cache error"),
     });
 
-    this.windowFilter = new WindowFilter(options.filter);
     this.captureService = new CaptureService();
-    this.captureOptions = { ...DEFAULT_CAPTURE_OPTIONS, ...options.capture };
+    this.preferencesService = new CapturePreferencesService();
 
-    // Create scheduler with capture task
-    this.scheduler = new ScreenCaptureScheduler(
-      { ...DEFAULT_SCHEDULER_CONFIG, ...options.scheduler },
-      () => this.executeCaptureTask()
+    // Create scheduler with capture task using default config
+    this.scheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
+      this.executeCaptureTask()
     );
 
     // Setup power monitor callbacks for auto pause/resume
@@ -146,11 +115,11 @@ export class ScreenCaptureModule {
   /**
    * Get the singleton instance of ScreenCaptureModule
    */
-  static getInstance(options?: ScreenCaptureModuleOptions): ScreenCaptureModule {
+  static getInstance(): ScreenCaptureModule {
     const logger = getLogger("screen-capture-module");
     if (!ScreenCaptureModule.instance) {
       logger.info("Creating new ScreenCaptureModule instance");
-      ScreenCaptureModule.instance = new ScreenCaptureModule(options);
+      ScreenCaptureModule.instance = new ScreenCaptureModule();
     }
     return ScreenCaptureModule.instance;
   }
@@ -167,6 +136,16 @@ export class ScreenCaptureModule {
 
   /**
    * Execute the capture task - called by the scheduler on each cycle
+   *
+   * This method integrates user preferences for filtering:
+   * - Screens: Filter based on selectedScreenIds (using displayId mapping)
+   * - Apps: Filter based on selectedAppNames (for VLM analysis metadata)
+   *
+   * Fallback behavior:
+   * - If no selected screens are available, capture all screens
+   * - If no selected apps are active, record all apps
+   *
+   * Requirements: 3.1, 3.3
    */
   private async executeCaptureTask(): Promise<CaptureResult> {
     this.logger.debug("Executing capture task");
@@ -181,23 +160,84 @@ export class ScreenCaptureModule {
       }
     }
 
-    // Get current window list from cache (already filtered by windowFilter)
-    const windows = this.getWindows();
+    // Get screens and windows from cache
     const screens = this.getScreens();
+    const windows = this.getWindows();
 
-    // Log window information with each capture
-    const appNames = [...new Set(windows.map((w) => this.windowFilter.getDisplayAppName(w)))];
-    this.logger.info(
-      {
-        screenCount: screens.length,
-        windowCount: windows.length,
-        activeApps: appNames,
-      },
-      "Current window list at capture time"
+    // Get available screen IDs (using displayId from CaptureSource)
+    // Note: CaptureSourceProvider returns CaptureSource with displayId field
+    const availableScreenIds = screens.map((s) => s.displayId || s.id);
+
+    // Get current preferences
+    const preferences = this.preferencesService.getPreferences();
+
+    // Compute effective capture sources based on preferences and availability
+    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(
+      availableScreenIds,
+      windows
     );
 
-    // Capture all screens (stitched if multiple monitors)
-    const result = await this.captureService.captureScreens(this.captureOptions);
+    // Log detailed preference information for debugging
+    this.logger.info(
+      {
+        preferences: {
+          selectedScreenIds: preferences.selectedScreenIds,
+          selectedAppNames: preferences.selectedAppNames,
+          rememberSelection: preferences.rememberSelection,
+        },
+        available: {
+          screenCount: screens.length,
+          screenIds: availableScreenIds,
+        },
+        effective: {
+          screenIds: effectiveSources.screenIds,
+          appNames: effectiveSources.appNames,
+          screenFallback: effectiveSources.screenFallback,
+          appFallback: effectiveSources.appFallback,
+        },
+      },
+      "Capture task - preferences and effective sources"
+    );
+
+    // Log fallback mode warnings
+    if (effectiveSources.screenFallback) {
+      this.logger.warn(
+        {
+          selectedScreenIds: preferences.selectedScreenIds,
+          availableScreenIds,
+        },
+        "Screen fallback mode: selected screens unavailable, capturing all screens"
+      );
+    }
+
+    if (effectiveSources.appFallback) {
+      this.logger.warn(
+        {
+          selectedAppNames: preferences.selectedAppNames,
+        },
+        "App fallback mode: selected apps not active, recording all apps"
+      );
+    }
+
+    // Capture screens with effective screen IDs filter
+    // effectiveSources.screenIds contains the CGDirectDisplayID strings to capture
+    // effectiveSources.appNames is metadata for VLM analysis - it indicates
+    // which apps the user is interested in, but doesn't affect the actual capture
+    const result = await this.captureService.captureScreens({
+      ...this.captureOptions,
+      screenIds: effectiveSources.screenIds,
+    });
+
+    // Attach effective app names to result for VLM analysis
+    // This metadata indicates which apps were active and selected during capture
+    const captureMetadata = {
+      effectiveApps: effectiveSources.appNames,
+      appFallback: effectiveSources.appFallback,
+      effectiveScreens: effectiveSources.screenIds,
+      screenFallback: effectiveSources.screenFallback,
+    };
+
+    this.logger.debug({ captureMetadata }, "Capture metadata for VLM analysis");
 
     // Save capture to disk
     try {
@@ -337,7 +377,7 @@ export class ScreenCaptureModule {
    */
   getWindows() {
     const windows = this.sourceProvider.getWindows();
-    return this.windowFilter.filterSystemWindows(windows);
+    return windowFilter.filterSystemWindows(windows);
   }
 
   /**
@@ -363,6 +403,26 @@ export class ScreenCaptureModule {
    */
   async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult> {
     return this.captureService.captureScreens({ ...this.captureOptions, ...options });
+  }
+
+  /**
+   * Get the capture service instance
+   * Allows external access to capture service for IPC handlers
+   */
+  getCaptureService(): CaptureService {
+    return this.captureService;
+  }
+
+  // ============================================================================
+  // Preferences Methods
+  // ============================================================================
+
+  /**
+   * Get the preferences service instance
+   * Allows external access to preferences for IPC handlers
+   */
+  getPreferencesService(): CapturePreferencesService {
+    return this.preferencesService;
   }
 
   // ============================================================================
@@ -398,6 +458,6 @@ export class ScreenCaptureModule {
 }
 
 // Export singleton getter for convenience
-export function getScreenCaptureModule(options?: ScreenCaptureModuleOptions): ScreenCaptureModule {
-  return ScreenCaptureModule.getInstance(options);
+export function getScreenCaptureModule(): ScreenCaptureModule {
+  return ScreenCaptureModule.getInstance();
 }

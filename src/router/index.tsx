@@ -5,6 +5,7 @@ import {
   HomePage,
   SettingsPage,
   SettingsLLMConfigPage,
+  CaptureSourceSettingsPage,
   AboutPage,
   NotFoundPage,
   VLMDemoPage,
@@ -48,6 +49,10 @@ export const router = createHashRouter([
           {
             path: "settings/llm-config",
             element: <SettingsLLMConfigPage />,
+          },
+          {
+            path: "settings/capture-sources",
+            element: <CaptureSourceSettingsPage />,
           },
           {
             path: "about",

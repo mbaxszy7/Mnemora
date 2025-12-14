@@ -22,7 +22,7 @@ export function isMacOS(): boolean {
  * Get list of app names that have visible windows across all Spaces
  * This is much simpler and more reliable than getting detailed window info
  */
-export async function getAppsWithWindows(): Promise<string[]> {
+async function getAppsWithWindows(): Promise<string[]> {
   if (!isMacOS()) {
     return [];
   }
@@ -111,6 +111,17 @@ function buildAliasMap(appAliases: Record<string, string[]>): Record<string, str
 // Pre-build the alias map from config
 const APP_ALIAS_MAP = buildAliasMap(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
 
+function checkAppNameFromAlias(appName: string): string | undefined {
+  const appLower = appName.toLowerCase().trim();
+  const aliases = APP_ALIAS_MAP[appLower] || [];
+  for (const alias of aliases) {
+    if (appLower === alias) {
+      return appName;
+    }
+  }
+  return undefined;
+}
+
 /**
  * Try to find the app name for a window by matching against the list of apps with windows
  * Uses fuzzy matching to handle cases where window title contains app name
@@ -129,15 +140,15 @@ export function findAppNameForWindow(
   for (const appName of appsWithWindows) {
     const appLower = appName.toLowerCase();
     if (titleLower.includes(appLower) || appLower.includes(titleLower)) {
+      logger.info({ appName, windowTitle, appLower }, "Found app name by contains");
       return appName;
     }
 
     // Check aliases
-    const aliases = APP_ALIAS_MAP[appLower] || [];
-    for (const alias of aliases) {
-      if (titleLower.includes(alias)) {
-        return appName;
-      }
+    const aliasResult = checkAppNameFromAlias(titleLower);
+    if (aliasResult) {
+      logger.info({ appName, windowTitle }, "Found app name by alias");
+      return appName;
     }
   }
 
@@ -151,19 +162,19 @@ export function findAppNameForWindow(
  * - "AppName - Subtitle" (e.g., "Mnemora - Your Second Brain")
  * - "Document — AppName" (em dash variant)
  */
-export function extractAppNameFromTitle(windowTitle: string): string {
-  if (!windowTitle) {
-    return windowTitle;
+export function extractAppNameFromTitle(windowName: CaptureSource["name"]): string {
+  if (!windowName) {
+    return windowName;
   }
 
   // Try splitting by " - " or " — "
-  let parts = windowTitle.split(" - ");
+  let parts = windowName.split(" - ");
   if (parts.length === 1) {
-    parts = windowTitle.split(" — ");
+    parts = windowName.split(" — ");
   }
 
   if (parts.length <= 1) {
-    return windowTitle;
+    return checkAppNameFromAlias(windowName) || "";
   }
 
   // For window titles with separators, we need to determine which part is the app name
@@ -184,11 +195,11 @@ export function extractAppNameFromTitle(windowTitle: string): string {
     return lastPart;
   }
 
-  // Check if last part is a known app name pattern (short, no special chars)
-  // This handles "Document - VS Code" style
-  if (lastPart.length < 25 && !/[_.]/.test(lastPart)) {
-    return lastPart;
-  }
+  // // Check if last part is a known app name pattern (short, no special chars)
+  // // This handles "Document - VS Code" style
+  // if (lastPart.length < 25 && !/[_.]/.test(lastPart)) {
+  //   return lastPart;
+  // }
 
   // Default to first part for "AppName - Subtitle" format
   return firstPart;
@@ -257,31 +268,25 @@ export function createVirtualSourcesForApps(
 export async function getHybridWindowSources(
   electronSources: CaptureSource[]
 ): Promise<CaptureSource[]> {
+  const sourceFromElectron = electronSources.map((source) => {
+    return {
+      ...source,
+      appName: source.appName ?? extractAppNameFromTitle(source.name),
+    };
+  });
+
   if (!isMacOS()) {
-    return electronSources;
+    return sourceFromElectron;
   }
 
   try {
     // Get list of apps with windows (fast, reliable)
     const appsWithWindows = await getAppsWithWindows();
 
-    // Enrich electron sources with app names by matching window titles against app list
-    const enrichedSources = electronSources.map((source) => {
-      if (source.type !== "window") {
-        return source;
-      }
-
-      // Try to find the app name for this window
-      const appName = findAppNameForWindow(source.name, appsWithWindows);
-      if (appName) {
-        return { ...source, appName };
-      }
-
-      return source;
-    });
-
     // Create virtual sources for apps on other Spaces
-    const existingNames = new Set(enrichedSources.map((s) => s.name));
+    const existingNames = new Set(
+      sourceFromElectron.map((s) => s.appName).filter((appName) => !!appName)
+    );
     const virtualSources = createVirtualSourcesForApps(appsWithWindows, existingNames);
 
     // For virtual sources, the name IS the app name
@@ -290,11 +295,11 @@ export async function getHybridWindowSources(
       appName: source.name,
     }));
 
-    const mergedSources = mergeSources(enrichedSources, enrichedVirtualSources);
+    const mergedSources = mergeSources(sourceFromElectron, enrichedVirtualSources);
 
     return mergedSources;
   } catch (error) {
     logger.error({ error }, "Failed to get hybrid window sources");
-    return electronSources;
+    return sourceFromElectron;
   }
 }

@@ -77,6 +77,35 @@
       "requestFailed": "Failed to request permission"
     }
   },
+  "captureSourceSettings": {
+    "title": "Capture Source Settings",
+    "screens": {
+      "title": "Screens",
+      "selectAll": "Select All",
+      "deselectAll": "Deselect All",
+      "allScreensHint": "All screens will be captured",
+      "primary": "Primary",
+      "resolution": "Resolution"
+    },
+    "apps": {
+      "title": "Applications",
+      "selectAll": "Select All",
+      "deselectAll": "Deselect All",
+      "allAppsHint": "All applications will be captured",
+      "searchPlaceholder": "Search applications...",
+      "noResults": "No applications found",
+      "windowCount": "{{count}} window",
+      "windowCount_plural": "{{count}} windows"
+    },
+    "fallback": {
+      "notification": "Selected apps are not running. Capturing all sources."
+    },
+    "errors": {
+      "loadScreensFailed": "Failed to load screens",
+      "loadAppsFailed": "Failed to load applications",
+      "retry": "Retry"
+    }
+  },
   "llmConfig": {
     "title": "LLM Configuration",
     "description": "Configure your OpenAI-compatible API endpoints for different AI capabilities.",

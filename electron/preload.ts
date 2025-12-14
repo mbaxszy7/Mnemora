@@ -7,6 +7,12 @@ import type {
   LLMConfigCheckResult,
   LLMValidationResult,
 } from "@shared/llm-config-types";
+import type {
+  GetScreensResponse,
+  GetAppsResponse,
+  CapturePreferences,
+  PreferencesResponse,
+} from "@shared/capture-source-types";
 
 /**
  * VLM API exposed to renderer process
@@ -179,3 +185,33 @@ const screenCaptureApi: ScreenCaptureApi = {
 };
 
 contextBridge.exposeInMainWorld("screenCaptureApi", screenCaptureApi);
+
+// --------- Expose Capture Source Settings API to the Renderer process ---------
+export interface CaptureSourceApi {
+  getScreens(): Promise<IPCResult<GetScreensResponse>>;
+  getApps(): Promise<IPCResult<GetAppsResponse>>;
+  getPreferences(): Promise<IPCResult<PreferencesResponse>>;
+  setPreferences(preferences: Partial<CapturePreferences>): Promise<IPCResult<PreferencesResponse>>;
+}
+
+const captureSourceApi: CaptureSourceApi = {
+  async getScreens(): Promise<IPCResult<GetScreensResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_GET_SCREENS);
+  },
+
+  async getApps(): Promise<IPCResult<GetAppsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_GET_APPS);
+  },
+
+  async getPreferences(): Promise<IPCResult<PreferencesResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_GET_PREFERENCES);
+  },
+
+  async setPreferences(
+    preferences: Partial<CapturePreferences>
+  ): Promise<IPCResult<PreferencesResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_SET_PREFERENCES, { preferences });
+  },
+};
+
+contextBridge.exposeInMainWorld("captureSourceApi", captureSourceApi);

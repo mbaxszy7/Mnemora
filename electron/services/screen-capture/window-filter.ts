@@ -4,13 +4,11 @@
 
 import type { CaptureSource } from "./types";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
-import { extractAppNameFromTitle } from "./macos-window-helper";
 
 export interface IWindowFilter {
   filterSystemWindows(sources: CaptureSource[]): CaptureSource[];
   normalizeAppName(name: string): string;
   shouldExclude(source: CaptureSource): boolean;
-  getDisplayAppName(source: { name: string; appName?: string }): string;
 }
 
 class WindowFilter implements IWindowFilter {
@@ -37,30 +35,6 @@ class WindowFilter implements IWindowFilter {
     return this.aliasToCanonical.get(lowerName) ?? name;
   }
 
-  /**
-   * Get display-friendly app name from a capture source.
-   * Priority:
-   * 1. appName field (from AppleScript on macOS) - most accurate
-   * 2. Extract from window title using common patterns (e.g., "file.ts - VS Code" -> "VS Code")
-   * 3. Fall back to full window name
-   */
-  getDisplayAppName(source: { name: string; appName?: string }): string {
-    // Prefer appName from AppleScript (most accurate)
-    if (source.appName) {
-      return source.appName;
-    }
-
-    // Try to extract app name from window title
-    // This handles patterns like "Document - AppName" or "AppName - Subtitle"
-    const extracted = extractAppNameFromTitle(source.name);
-    if (extracted && extracted !== source.name) {
-      return extracted;
-    }
-
-    // Fall back to full window name
-    return source.name;
-  }
-
   private isSystemWindow(source: CaptureSource): boolean {
     // Check window name - exact match
     const normalizedName = this.normalizeAppName(source.name).toLowerCase();
@@ -82,11 +56,16 @@ class WindowFilter implements IWindowFilter {
       }
     }
 
-    // Check if window name ends with a system window name (e.g., "file.ts — Mnemora")
+    // Check if window name starts or ends with a system window name
+    // e.g., "file.ts — Mnemora" or "Mnemora - Your Second Brain"
     const nameLower = source.name.toLowerCase();
     for (const sysWindow of this.systemWindowsLower) {
       // Check if window name ends with " - SystemWindow" or " — SystemWindow"
       if (nameLower.endsWith(` - ${sysWindow}`) || nameLower.endsWith(` — ${sysWindow}`)) {
+        return true;
+      }
+      // Check if window name starts with "SystemWindow - " or "SystemWindow — "
+      if (nameLower.startsWith(`${sysWindow} - `) || nameLower.startsWith(`${sysWindow} — `)) {
         return true;
       }
     }
@@ -94,22 +73,20 @@ class WindowFilter implements IWindowFilter {
     return false;
   }
 
-  private isMinimized(source: CaptureSource): boolean {
-    if (source.type !== "window") {
-      return false;
-    }
-    if (!source.bounds) {
-      return false;
-    }
-    return source.bounds.width <= 0 || source.bounds.height <= 0;
-  }
-
   shouldExclude(source: CaptureSource): boolean {
     // Only filter windows, not screens
     if (source.type !== "window") {
       return false;
     }
-    return this.isSystemWindow(source) || this.isMinimized(source);
+
+    // Check for minimized/invalid windows (zero or negative dimensions)
+    if (source.bounds) {
+      if (source.bounds.width <= 0 || source.bounds.height <= 0) {
+        return true;
+      }
+    }
+
+    return this.isSystemWindow(source);
   }
 
   filterSystemWindows(sources: CaptureSource[]): CaptureSource[] {

@@ -85,4 +85,28 @@ interface Window {
       import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").SchedulerStatePayload>
     >;
   };
+  captureSourceApi: {
+    getScreens(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/capture-source-types").GetScreensResponse
+      >
+    >;
+    getApps(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/capture-source-types").GetAppsResponse
+      >
+    >;
+    getPreferences(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/capture-source-types").PreferencesResponse
+      >
+    >;
+    setPreferences(
+      preferences: Partial<import("../shared/capture-source-types").CapturePreferences>
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/capture-source-types").PreferencesResponse
+      >
+    >;
+  };
 }

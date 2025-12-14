@@ -10,10 +10,30 @@ import * as fc from "fast-check";
 import {
   POPULAR_APPS,
   findPopularApp,
-  DEFAULT_APP_ICON,
+  isPopularApp,
   type PopularAppConfig,
 } from "../../shared/popular-apps";
 import { CapturePreferencesService } from "../services/capture-preferences-service";
+
+/**
+ * Convert SVG string to data URL (for testing icon matching)
+ */
+function svgToDataUrl(svg: string): string {
+  const normalized = svg.replace(/\r?\n|\r/g, "").trim();
+  const encoded = encodeURIComponent(normalized).replace(/'/g, "%27").replace(/"/g, "%22");
+  return `data:image/svg+xml,${encoded}`;
+}
+
+/**
+ * Get icon data URL for an app name (mirrors frontend logic)
+ */
+function getAppIcon(appName: string): string | null {
+  const popularApp = findPopularApp(appName);
+  if (popularApp?.config.simpleIcon?.svg) {
+    return svgToDataUrl(popularApp.config.simpleIcon.svg);
+  }
+  return null;
+}
 
 // Get all popular app names and aliases for testing
 const popularAppNames = Object.keys(POPULAR_APPS);
@@ -35,11 +55,9 @@ const nonPopularAppNameArb = fc.string({ minLength: 1, maxLength: 50 }).filter((
   return findPopularApp(trimmed) === null;
 });
 
-// Generator for AppInfo objects
+// Generator for AppInfo objects (without icon/isPopular - computed on frontend)
 const appInfoArb = fc.record({
   name: fc.string({ minLength: 1, maxLength: 50 }).filter((s) => s.trim().length > 0),
-  icon: fc.oneof(fc.constant(null), fc.string({ minLength: 1, maxLength: 20 })),
-  isPopular: fc.boolean(),
   windowCount: fc.integer({ min: 1, max: 100 }),
 });
 
@@ -54,23 +72,23 @@ describe("Capture Source Settings Handlers Property Tests", () => {
    * For any application name, if the app is in the popular apps list (including alias matching),
    * it should return the predefined icon; otherwise return the default icon.
    */
-  describe("Property 2: App icon matching correctness", () => {
+  describe("Property 2: App icon matching correctness (using shared utilities)", () => {
     it("Popular app primary names should return their predefined icon", () => {
-      const service = new CapturePreferencesService();
-
       fc.assert(
         fc.property(popularAppNameArb, (appName) => {
-          const result = service.matchAppIcon(appName);
+          const icon = getAppIcon(appName);
+          const popular = isPopularApp(appName);
 
           // Should be marked as popular
-          expect(result.isPopular).toBe(true);
+          expect(popular).toBe(true);
 
-          // Should return the predefined icon (not the default)
-          expect(result.icon).not.toBe(DEFAULT_APP_ICON);
-
-          // Should match the icon defined in POPULAR_APPS
-          const expectedIcon = POPULAR_APPS[appName].icon;
-          expect(result.icon).toBe(expectedIcon);
+          const simpleIcon = POPULAR_APPS[appName].simpleIcon;
+          if (simpleIcon) {
+            expect(icon).not.toBeNull();
+            expect(icon?.startsWith("data:image/svg+xml,")).toBe(true);
+          } else {
+            expect(icon).toBeNull();
+          }
 
           return true;
         }),
@@ -79,25 +97,23 @@ describe("Capture Source Settings Handlers Property Tests", () => {
     });
 
     it("Popular app aliases should return their predefined icon", () => {
-      const service = new CapturePreferencesService();
-
       fc.assert(
         fc.property(popularAppAliasArb, (alias) => {
-          const result = service.matchAppIcon(alias);
+          const icon = getAppIcon(alias);
+          const popular = isPopularApp(alias);
 
           // Should be marked as popular
-          expect(result.isPopular).toBe(true);
-
-          // Should return the predefined icon (not the default)
-          expect(result.icon).not.toBe(DEFAULT_APP_ICON);
+          expect(popular).toBe(true);
 
           // Find the primary app name for this alias
           const popularApp = findPopularApp(alias);
           expect(popularApp).not.toBeNull();
 
-          // Should match the icon defined for the primary app
-          if (popularApp) {
-            expect(result.icon).toBe(popularApp.config.icon);
+          if (popularApp?.config.simpleIcon) {
+            expect(icon).not.toBeNull();
+            expect(icon?.startsWith("data:image/svg+xml,")).toBe(true);
+          } else {
+            expect(icon).toBeNull();
           }
 
           return true;
@@ -107,17 +123,16 @@ describe("Capture Source Settings Handlers Property Tests", () => {
     });
 
     it("Non-popular app names should return the default icon", () => {
-      const service = new CapturePreferencesService();
-
       fc.assert(
         fc.property(nonPopularAppNameArb, (appName) => {
-          const result = service.matchAppIcon(appName);
+          const icon = getAppIcon(appName);
+          const popular = isPopularApp(appName);
 
           // Should NOT be marked as popular
-          expect(result.isPopular).toBe(false);
+          expect(popular).toBe(false);
 
-          // Should return the default icon
-          expect(result.icon).toBe(DEFAULT_APP_ICON);
+          // Should return no icon (UI uses fallback icon)
+          expect(icon).toBeNull();
 
           return true;
         }),
@@ -126,18 +141,18 @@ describe("Capture Source Settings Handlers Property Tests", () => {
     });
 
     it("Icon matching is consistent - same input always produces same output", () => {
-      const service = new CapturePreferencesService();
-
       fc.assert(
         fc.property(
           fc.string({ minLength: 1, maxLength: 50 }).filter((s) => s.trim().length > 0),
           (appName) => {
-            const result1 = service.matchAppIcon(appName);
-            const result2 = service.matchAppIcon(appName);
+            const icon1 = getAppIcon(appName);
+            const icon2 = getAppIcon(appName);
+            const popular1 = isPopularApp(appName);
+            const popular2 = isPopularApp(appName);
 
             // Same input should always produce same output
-            expect(result1.icon).toBe(result2.icon);
-            expect(result1.isPopular).toBe(result2.isPopular);
+            expect(icon1).toBe(icon2);
+            expect(popular1).toBe(popular2);
 
             return true;
           }
@@ -163,11 +178,12 @@ describe("Capture Source Settings Handlers Property Tests", () => {
           const sorted = service.sortApps(apps);
 
           // Find the index of the last popular app and first non-popular app
+          // Use isPopularApp from shared utilities since AppInfo no longer has isPopular
           let lastPopularIndex = -1;
           let firstNonPopularIndex = sorted.length;
 
           for (let i = 0; i < sorted.length; i++) {
-            if (sorted[i].isPopular) {
+            if (isPopularApp(sorted[i].name)) {
               lastPopularIndex = i;
             } else if (firstNonPopularIndex === sorted.length) {
               firstNonPopularIndex = i;
@@ -215,8 +231,9 @@ describe("Capture Source Settings Handlers Property Tests", () => {
           const sorted = service.sortApps(apps);
 
           // Check that within each group (popular/non-popular), apps are sorted alphabetically
-          const popularApps = sorted.filter((a) => a.isPopular);
-          const nonPopularApps = sorted.filter((a) => !a.isPopular);
+          // Use isPopularApp from shared utilities
+          const popularApps = sorted.filter((a) => isPopularApp(a.name));
+          const nonPopularApps = sorted.filter((a) => !isPopularApp(a.name));
 
           // Popular apps should be alphabetically sorted
           for (let i = 1; i < popularApps.length; i++) {
@@ -253,7 +270,7 @@ describe("Capture Source Settings Handlers Property Tests", () => {
           expect(apps.length).toBe(originalCopy.length);
           for (let i = 0; i < apps.length; i++) {
             expect(apps[i].name).toBe(originalCopy[i].name);
-            expect(apps[i].isPopular).toBe(originalCopy[i].isPopular);
+            expect(apps[i].windowCount).toBe(originalCopy[i].windowCount);
           }
 
           return true;
@@ -274,7 +291,7 @@ describe("Capture Source Settings Handlers Property Tests", () => {
           expect(sorted2.length).toBe(sorted1.length);
           for (let i = 0; i < sorted1.length; i++) {
             expect(sorted2[i].name).toBe(sorted1[i].name);
-            expect(sorted2[i].isPopular).toBe(sorted1[i].isPopular);
+            expect(sorted2[i].windowCount).toBe(sorted1[i].windowCount);
           }
 
           return true;

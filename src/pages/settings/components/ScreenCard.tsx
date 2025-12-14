@@ -1,0 +1,87 @@
+import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { ScreenInfo } from "@shared/capture-source-types";
+import { useTranslation } from "react-i18next";
+
+export interface ScreenCardProps {
+  screen: ScreenInfo;
+  isSelected: boolean;
+  onToggle: (screenId: string) => void;
+}
+
+/**
+ * ScreenCard component displays a screen with thumbnail, name, resolution,
+ * and primary display indicator. Supports selection interaction.
+ *
+ * Requirements: 1.2, 1.3, 6.3, 7.1, 7.2
+ */
+export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
+  const { t } = useTranslation();
+
+  const handleClick = () => {
+    onToggle(screen.id);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onToggle(screen.id);
+    }
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        "relative rounded-lg border-2 overflow-hidden cursor-pointer transition-all",
+        "hover:border-primary/50 hover:shadow-md",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+        isSelected ? "border-primary bg-primary/5" : "border-border"
+      )}
+    >
+      {/* Thumbnail */}
+      <div className="aspect-video bg-muted relative">
+        {screen.thumbnail ? (
+          <img src={screen.thumbnail} alt={screen.name} className="w-full h-full object-cover" />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+            <span className="text-sm">{t("common.messages.loading")}</span>
+          </div>
+        )}
+
+        {/* Selection checkbox overlay */}
+        <div className="absolute top-2 right-2">
+          <Checkbox
+            checked={isSelected}
+            className="bg-background/80 backdrop-blur-sm"
+            onClick={(e) => e.stopPropagation()}
+            onCheckedChange={() => onToggle(screen.id)}
+          />
+        </div>
+
+        {/* Primary badge */}
+        {screen.isPrimary && (
+          <div className="absolute top-2 left-2">
+            <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm text-xs">
+              Primary
+            </Badge>
+          </div>
+        )}
+      </div>
+
+      {/* Info section */}
+      <div className="p-3 space-y-1">
+        <div className="font-medium text-sm truncate" title={screen.name}>
+          {screen.name}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {screen.width} × {screen.height}
+        </div>
+      </div>
+    </div>
+  );
+}

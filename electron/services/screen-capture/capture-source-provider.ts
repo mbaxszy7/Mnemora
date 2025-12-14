@@ -8,7 +8,7 @@ import { desktopCapturer, type SourcesOptions } from "electron";
 import { AutoRefreshCache, type IAutoRefreshCache } from "./auto-refresh-cache";
 import type { CaptureSource, CaptureSourceFilter } from "./types";
 import { DEFAULT_CACHE_INTERVAL } from "./types";
-import { isMacOS, getHybridWindowSources } from "./macos-window-helper";
+import { getHybridWindowSources } from "./macos-window-helper";
 import { getLogger } from "../logger";
 
 const logger = getLogger("capture-source-provider");
@@ -45,9 +45,6 @@ export class CaptureSourceProvider implements ICaptureSourceProvider {
 
   /** Fetch capture sources, merging with AppleScript on macOS for cross-Space support */
   private async fetchSources(): Promise<CaptureSource[]> {
-    logger.debug("Fetching capture sources");
-
-    // Use minimal thumbnail size for metadata-only fetching
     const options: SourcesOptions = {
       types: ["screen", "window"],
       thumbnailSize: { width: 1, height: 1 },
@@ -55,7 +52,6 @@ export class CaptureSourceProvider implements ICaptureSourceProvider {
     };
 
     const sources = await desktopCapturer.getSources(options);
-    logger.debug({ electronSourceCount: sources.length }, "Got sources from desktopCapturer");
 
     const electronSources = sources.map((source) => ({
       id: source.id,
@@ -67,21 +63,15 @@ export class CaptureSourceProvider implements ICaptureSourceProvider {
 
     // On macOS, merge with AppleScript results to capture windows across all Spaces
     // Requirement 8.1, 8.2: Use hybrid approach for macOS compatibility
-    if (isMacOS()) {
-      logger.debug("macOS detected, merging with AppleScript sources");
-      const merged = await getHybridWindowSources(electronSources);
-      logger.info(
-        {
-          electronCount: electronSources.length,
-          mergedCount: merged.length,
-        },
-        "Fetched and merged capture sources"
-      );
-      return merged;
-    }
 
-    logger.info({ sourceCount: electronSources.length }, "Fetched capture sources");
-    return electronSources;
+    const merged = await getHybridWindowSources(electronSources);
+    logger.info(
+      {
+        merged,
+      },
+      "Fetched and merged capture sources"
+    );
+    return merged;
   }
 
   getSources(filter?: CaptureSourceFilter): CaptureSource[] {

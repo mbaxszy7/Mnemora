@@ -20,6 +20,7 @@ import {
   CheckCircle,
   XCircle,
   Settings,
+  Monitor,
 } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
 import { useViewTransition } from "@/components/core/view-transition";
@@ -262,6 +263,28 @@ export default function SettingsPage() {
               {t("llmConfig.title")}
             </Label>
             <p className="text-sm text-muted-foreground">{t("llmConfig.description")}</p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
+
+        {/* Capture Source Settings */}
+        <button
+          onClick={() =>
+            navigate("/settings/capture-sources", { type: "slide-left", duration: 300 })
+          }
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <Monitor className="h-4 w-4" />
+              {t("captureSourceSettings.title", "Capture Source Settings")}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                "captureSourceSettings.description",
+                "Configure which screens and applications to capture"
+              )}
+            </p>
           </div>
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>

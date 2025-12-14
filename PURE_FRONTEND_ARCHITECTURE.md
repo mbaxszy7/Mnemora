@@ -25,7 +25,6 @@
 **目标**：实现低功耗、无人值守的屏幕监控。
 
 1.  **主进程调度**：
-
     - 在 Electron **主进程**中创建一个定时器（默认每 15 秒，可配置）。
     - **不要**在渲染进程做这件事，以避免页面阻塞和性能问题。
     - **调度机制**（参考 `ScheduleNextTask`）：
@@ -34,22 +33,19 @@
       - 错误容错：即使某次截图任务失败，循环也会继续（catch 后仍调度下一次）。
 
 2.  **动态窗口追踪**（参考 `AutoRefreshCache`）：
-
     - 用户的屏幕环境是动态的（窗口打开/关闭、最小化、切换虚拟桌面、插拔显示器）。
     - 使用一个**高频缓存**（如每 3 秒刷新一次）来追踪当前可见的窗口和屏幕列表。
     - **为什么刷新频率更高？** 确保截图任务（15 秒）执行时，拿到的窗口列表是最新的，避免截取已关闭窗口或遗漏新窗口。
     - 实现方式：
       ```typescript
       const configCache = new AutoRefreshCache({
-        fetchFn: async () =>
-          desktopCapturer.getSources({ types: ["window", "screen"] }),
+        fetchFn: async () => desktopCapturer.getSources({ types: ["window", "screen"] }),
         interval: 3000, // 3 秒刷新
         immediate: true,
       });
       ```
 
 3.  **获取截图**：
-
     - 使用 `desktopCapturer.getSources` 获取屏幕源。
     - 或者使用 `screenshot-desktop` 库直接获取 Buffer（通常比 `desktopCapturer` 更快用于全屏截图）。
 
@@ -66,7 +62,6 @@
 **目标**：将像素转化为结构化文本。
 
 1.  **批处理策略**：
-
     - 维护一个内存数组 `pendingScreenshots = []`。
     - 当数组长度达到 `BATCH_SIZE` (如 5-10) 或距离上次处理超过 `TIMEOUT` (如 30 秒)，触发处理函数。
 
@@ -80,7 +75,6 @@
 **目标**：将碎片化的瞬间整合成连续的事件。
 
 1.  **合并逻辑 (Node.js 实现)**：
-
     - 获取 VLM 返回的一批 `ParsedItem`。
     - 按 `context_type` 分组。
     - 从本地数据库中查出**最近一条未完结**的记录（Cache）。
@@ -96,7 +90,6 @@
 **目标**：构建可检索的个人知识库。
 
 1.  **双写策略**：
-
     - **SQLite (better-sqlite3)**: 存储完整的 JSON 对象、时间戳、应用名称。用于时间轴展示 (`SELECT * FROM activities WHERE time > ?`).
     - **Vector DB (Voyager)**: 存储 `embedding(title + summary)`。用于语义搜索 ("我上周处理的那个报错")。
 
@@ -108,7 +101,6 @@
 **目标**：ActivityMonitor 实现。
 
 1.  **RAG (检索增强生成) 循环**：
-
     - 设置一个 `ActivityMonitor` 定时任务（如每 15-30 分钟）。
     - **Retrieve**: `db.prepare('SELECT * FROM activities WHERE time > ?').all(last_15_min)`。
     - **Generate**: 发送给 LLM，使用 `generation.realtime_activity_monitor` 提示词。
@@ -150,7 +142,6 @@
 ### 4.2 实现逻辑建议
 
 1.  **自动监控循环 (Auto Loop)**：
-
     - **推荐**使用 `NativeCaptureHelper` (封装 `node-screenshots`)。
     - 它比 `desktopCapturer` 更适合高频全屏截图，且比 `screenshot-desktop` 维护更积极（Rust 核心）。
     - 代码示例：
@@ -162,7 +153,6 @@
       ```
 
 2.  **窗口元数据获取**：
-
     - 使用 `desktopCapturer.getSources({ types: ['window'], thumbnailSize: {width: 1, height: 1} })`。
     - 注意设置 `thumbnailSize` 为极小值，因为我们只需要窗口列表（标题、ID、图标），不需要真正的截图内容，这样可以极大提升性能。
 
@@ -226,8 +216,7 @@ const hasWindowsOnAnySpace = activeAppsOnAllSpaces.some((activeApp) => {
     // 处理应用名不一致的情况
     (appNameLower === "msteams" && activeApp.includes("teams")) ||
     (appNameLower === "microsoft teams" && activeApp.includes("teams")) ||
-    (appNameLower === "wechat" &&
-      (activeApp.includes("wechat") || activeApp.includes("weixin"))) ||
+    (appNameLower === "wechat" && (activeApp.includes("wechat") || activeApp.includes("weixin"))) ||
     (appNameLower === "google chrome" && activeApp.includes("chrome")) ||
     (appNameLower === "visual studio code" &&
       (activeApp.includes("code") || activeApp.includes("visual studio")))
@@ -854,10 +843,7 @@ ActivityMonitor 定时（每 15 分钟）从向量数据库检索最近的上下
     "Efficient workflow: documentation → implementation → debugging",
     "Quick problem resolution (5 minutes for TypeError)"
   ],
-  "potential_todos": [
-    "Add error handling for edge cases",
-    "Write unit tests for data validation"
-  ],
+  "potential_todos": ["Add error handling for edge cases", "Write unit tests for data validation"],
   "tips": ["Consider using pandas.DataFrame.info() for debugging data types"]
 }
 ```
@@ -968,11 +954,11 @@ insert.run(
 
 React Query 的 `refetchOnWindowFocus: true` 适用于 Web 应用，但在 Electron 中效果有限：
 
-| 场景 | `refetchOnWindowFocus` 行为 | 问题 |
-|:-----|:---------------------------|:-----|
-| 用户切换到其他应用再切回 | ✅ 触发 refetch | 正常工作 |
-| 主进程后台更新数据（用户未离开） | ❌ 不触发 | **数据不同步** |
-| 用户在应用内切换页面 | ❌ 不触发 | 可能看到旧数据 |
+| 场景                             | `refetchOnWindowFocus` 行为 | 问题           |
+| :------------------------------- | :-------------------------- | :------------- |
+| 用户切换到其他应用再切回         | ✅ 触发 refetch             | 正常工作       |
+| 主进程后台更新数据（用户未离开） | ❌ 不触发                   | **数据不同步** |
+| 用户在应用内切换页面             | ❌ 不触发                   | 可能看到旧数据 |
 
 **结论**：对于本地数据，主进程知道数据何时变化，应该**主动推送**通知渲染进程刷新。
 
@@ -1005,21 +991,21 @@ React Query 的 `refetchOnWindowFocus: true` 适用于 Web 应用，但在 Elect
 // shared/ipc-channels.ts
 export const IPC_CHANNELS = {
   // 数据变更通知
-  DATA_CHANGED: 'data:changed',
-  
+  DATA_CHANGED: "data:changed",
+
   // 细粒度通知（可选）
-  ACTIVITY_CREATED: 'activity:created',
-  ACTIVITY_UPDATED: 'activity:updated',
-  ACTIVITY_DELETED: 'activity:deleted',
-  TODO_CHANGED: 'todo:changed',
-  SETTINGS_CHANGED: 'settings:changed',
+  ACTIVITY_CREATED: "activity:created",
+  ACTIVITY_UPDATED: "activity:updated",
+  ACTIVITY_DELETED: "activity:deleted",
+  TODO_CHANGED: "todo:changed",
+  SETTINGS_CHANGED: "settings:changed",
 } as const;
 
 // 通知载荷类型
 export interface DataChangedPayload {
-  type: 'activity' | 'todo' | 'settings' | 'context';
-  action: 'create' | 'update' | 'delete' | 'batch';
-  ids?: string[];  // 受影响的记录 ID
+  type: "activity" | "todo" | "settings" | "context";
+  action: "create" | "update" | "delete" | "batch";
+  ids?: string[]; // 受影响的记录 ID
 }
 ```
 
@@ -1027,15 +1013,15 @@ export interface DataChangedPayload {
 
 ```typescript
 // electron/services/activity-service.ts
-import { BrowserWindow } from 'electron';
-import { IPC_CHANNELS, DataChangedPayload } from '../../shared/ipc-channels';
+import { BrowserWindow } from "electron";
+import { IPC_CHANNELS, DataChangedPayload } from "../../shared/ipc-channels";
 
 class ActivityService {
   private db: Database;
 
   // 通知所有渲染进程
   private notifyRenderers(payload: DataChangedPayload) {
-    BrowserWindow.getAllWindows().forEach(win => {
+    BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) {
         win.webContents.send(IPC_CHANNELS.DATA_CHANGED, payload);
       }
@@ -1043,16 +1029,20 @@ class ActivityService {
   }
 
   async createActivity(data: ActivityInput): Promise<Activity> {
-    const result = this.db.prepare(`
+    const result = this.db
+      .prepare(
+        `
       INSERT INTO activity (title, content, start_time, end_time)
       VALUES (?, ?, ?, ?)
-    `).run(data.title, data.content, data.startTime, data.endTime);
+    `
+      )
+      .run(data.title, data.content, data.startTime, data.endTime);
 
     // 数据写入后，通知渲染进程
     this.notifyRenderers({
-      type: 'activity',
-      action: 'create',
-      ids: [String(result.lastInsertRowid)]
+      type: "activity",
+      action: "create",
+      ids: [String(result.lastInsertRowid)],
     });
 
     return this.getActivityById(result.lastInsertRowid);
@@ -1060,23 +1050,23 @@ class ActivityService {
 
   async updateActivity(id: string, data: Partial<ActivityInput>): Promise<Activity> {
     // ... 更新逻辑
-    
+
     this.notifyRenderers({
-      type: 'activity',
-      action: 'update',
-      ids: [id]
+      type: "activity",
+      action: "update",
+      ids: [id],
     });
 
     return this.getActivityById(id);
   }
 
   async deleteActivity(id: string): Promise<void> {
-    this.db.prepare('DELETE FROM activity WHERE id = ?').run(id);
-    
+    this.db.prepare("DELETE FROM activity WHERE id = ?").run(id);
+
     this.notifyRenderers({
-      type: 'activity',
-      action: 'delete',
-      ids: [id]
+      type: "activity",
+      action: "delete",
+      ids: [id],
     });
   }
 
@@ -1096,12 +1086,12 @@ class ActivityService {
     });
 
     const ids = insertMany(activities);
-    
+
     // 批量操作只发一次通知
     this.notifyRenderers({
-      type: 'activity',
-      action: 'batch',
-      ids
+      type: "activity",
+      action: "batch",
+      ids,
     });
   }
 }
@@ -1111,20 +1101,20 @@ class ActivityService {
 
 ```typescript
 // electron/preload.ts
-import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS, DataChangedPayload } from '../shared/ipc-channels';
+import { contextBridge, ipcRenderer } from "electron";
+import { IPC_CHANNELS, DataChangedPayload } from "../shared/ipc-channels";
 
 // 类型安全的回调
 type DataChangedCallback = (payload: DataChangedPayload) => void;
 
-contextBridge.exposeInMainWorld('electronAPI', {
+contextBridge.exposeInMainWorld("electronAPI", {
   // 订阅数据变更
   onDataChanged: (callback: DataChangedCallback) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: DataChangedPayload) => {
       callback(payload);
     };
     ipcRenderer.on(IPC_CHANNELS.DATA_CHANGED, handler);
-    
+
     // 返回取消订阅函数
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.DATA_CHANGED, handler);
@@ -1132,11 +1122,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // 主动请求数据（用于初始加载）
-  getActivities: (params: { startTime?: string; endTime?: string }) => 
-    ipcRenderer.invoke('activity:getAll', params),
-  
-  getActivityById: (id: string) => 
-    ipcRenderer.invoke('activity:getById', id),
+  getActivities: (params: { startTime?: string; endTime?: string }) =>
+    ipcRenderer.invoke("activity:getAll", params),
+
+  getActivityById: (id: string) => ipcRenderer.invoke("activity:getById", id),
 });
 
 // 类型声明（供渲染进程使用）
@@ -1155,9 +1144,9 @@ declare global {
 
 ```typescript
 // src/hooks/useIPCSync.ts
-import { useQueryClient } from '@tanstack/react-query';
-import { useEffect } from 'react';
-import type { DataChangedPayload } from '../../shared/ipc-channels';
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import type { DataChangedPayload } from "../../shared/ipc-channels";
 
 /**
  * 监听主进程数据变更，自动使相关 Query 失效
@@ -1167,34 +1156,34 @@ export function useIPCSync() {
 
   useEffect(() => {
     const unsubscribe = window.electronAPI.onDataChanged((payload: DataChangedPayload) => {
-      console.log('[IPC Sync] Data changed:', payload);
+      console.log("[IPC Sync] Data changed:", payload);
 
       // 根据变更类型，使对应的 Query 失效
       switch (payload.type) {
-        case 'activity':
+        case "activity":
           // 使活动列表失效（触发 refetch）
-          queryClient.invalidateQueries({ queryKey: ['activities'] });
-          
+          queryClient.invalidateQueries({ queryKey: ["activities"] });
+
           // 如果是更新/删除，也使具体记录失效
-          if (payload.ids?.length && payload.action !== 'create') {
-            payload.ids.forEach(id => {
-              queryClient.invalidateQueries({ queryKey: ['activity', id] });
+          if (payload.ids?.length && payload.action !== "create") {
+            payload.ids.forEach((id) => {
+              queryClient.invalidateQueries({ queryKey: ["activity", id] });
             });
           }
           break;
 
-        case 'todo':
-          queryClient.invalidateQueries({ queryKey: ['todos'] });
+        case "todo":
+          queryClient.invalidateQueries({ queryKey: ["todos"] });
           break;
 
-        case 'settings':
-          queryClient.invalidateQueries({ queryKey: ['settings'] });
+        case "settings":
+          queryClient.invalidateQueries({ queryKey: ["settings"] });
           break;
 
-        case 'context':
+        case "context":
           // ProcessedContext 变更，可能影响多个查询
-          queryClient.invalidateQueries({ queryKey: ['contexts'] });
-          queryClient.invalidateQueries({ queryKey: ['search'] });
+          queryClient.invalidateQueries({ queryKey: ["contexts"] });
+          queryClient.invalidateQueries({ queryKey: ["search"] });
           break;
       }
     });
@@ -1266,24 +1255,23 @@ export function ActivitiesPage() {
 
 ```typescript
 // src/hooks/useCreateActivity.ts
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 export function useCreateActivity() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: ActivityInput) => 
-      window.electronAPI.createActivity(data),
-    
+    mutationFn: (data: ActivityInput) => window.electronAPI.createActivity(data),
+
     // 乐观更新：立即在 UI 显示
     onMutate: async (newActivity) => {
-      await queryClient.cancelQueries({ queryKey: ['activities'] });
-      
-      const previousActivities = queryClient.getQueryData(['activities']);
-      
-      queryClient.setQueryData(['activities'], (old: Activity[] = []) => [
-        { ...newActivity, id: 'temp-' + Date.now() },  // 临时 ID
-        ...old
+      await queryClient.cancelQueries({ queryKey: ["activities"] });
+
+      const previousActivities = queryClient.getQueryData(["activities"]);
+
+      queryClient.setQueryData(["activities"], (old: Activity[] = []) => [
+        { ...newActivity, id: "temp-" + Date.now() }, // 临时 ID
+        ...old,
       ]);
 
       return { previousActivities };
@@ -1291,7 +1279,7 @@ export function useCreateActivity() {
 
     // 出错时回滚
     onError: (err, newActivity, context) => {
-      queryClient.setQueryData(['activities'], context?.previousActivities);
+      queryClient.setQueryData(["activities"], context?.previousActivities);
     },
 
     // 注意：不需要 onSuccess 中 invalidate
@@ -1302,12 +1290,12 @@ export function useCreateActivity() {
 
 ### 7.5 与其他方案对比
 
-| 方案 | 实时性 | 复杂度 | 适用场景 |
-|:----|:------|:------|:--------|
-| **IPC 推送（推荐）** | ⭐⭐⭐ 即时 | 中等 | 本地数据，主进程知道变更时机 |
-| `refetchOnWindowFocus` | ⭐ 延迟 | 低 | Web 应用，远程 API |
-| `refetchInterval` 轮询 | ⭐⭐ 定时 | 低 | 数据变更频率可预测 |
-| `staleTime: 0` | ⭐⭐ 组件挂载时 | 低 | 每次访问都需要最新数据 |
+| 方案                   | 实时性          | 复杂度 | 配置特点              | 适用场景                                                  |
+| :--------------------- | :-------------- | :----- | :-------------------- | :-------------------------------------------------------- |
+| **IPC 推送（推荐）**   | ⭐⭐⭐ 即时     | 中等   | `staleTime: Infinity` | 本地数据，主进程知道变更时机                              |
+| `refetchOnWindowFocus` | ⭐ 延迟         | 低     | `default`             | Web 应用，远程 API                                        |
+| `refetchInterval` 轮询 | ⭐⭐ 定时       | 低     | `refetchInterval: ms` | 数据变更频率可预测                                        |
+| **每次挂载刷新**       | ⭐⭐ 组件挂载时 | 低     | `staleTime: 0`        | 页面级高频数据（如屏幕/应用列表），仅在特定页面需要时获取 |
 
 ### 7.6 最佳实践
 

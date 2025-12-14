@@ -52,28 +52,23 @@ export interface ScreenInfo {
 
 /**
  * Application information for selection
+ * Note: icon and isPopular are computed on the frontend using findPopularApp
  */
 export interface AppInfo {
   /** Application name */
   name: string;
-  /** Base64 encoded icon or null for default icon */
-  icon: string | null;
-  /** Whether this app is in the popular apps list */
-  isPopular: boolean;
   /** Number of windows this app currently has open */
   windowCount: number;
 }
 
 /**
- * User preferences for capture sources
+ * User preferences for capture sources (session-level only)
  */
 export interface CapturePreferences {
   /** Selected screen IDs (empty array means all screens) */
   selectedScreenIds: string[];
   /** Selected application names (empty array means all apps) */
   selectedAppNames: string[];
-  /** Whether to remember the selection across sessions */
-  rememberSelection: boolean;
 }
 
 /**

@@ -3,14 +3,41 @@
  *
  * This module defines the list of popular applications with their icons and aliases
  * for the capture source settings feature.
+ *
+ * Icon sources:
+ * - Simple Icons (https://simpleicons.org/) - CC0 licensed icon collection
+ * - Note: While Simple Icons repo is CC0, individual brand icons may have their own
+ *   trademark/usage guidelines. Check each brand's guidelines when using.
  */
+
+import {
+  siFirefoxbrowser,
+  siFigma,
+  siGooglechrome,
+  siNotion,
+  siSlack,
+  siSafari,
+  siSpotify,
+  siWechat,
+  siXcode,
+  siZoom,
+  SimpleIcon,
+  siWindsurf,
+  siPostman,
+  siClaude,
+  siDiscord,
+  siIterm2,
+  siGnometerminal,
+  siVscodium,
+  siGithub,
+} from "simple-icons";
 
 /**
  * Popular application configuration
  */
 export interface PopularAppConfig {
-  /** Icon filename (relative to public/app-icons/) */
-  icon: string;
+  /** Simple Icons icon object for rendering as data URL */
+  simpleIcon?: SimpleIcon;
   /** Alternative names/aliases for this application */
   aliases: string[];
 }
@@ -18,90 +45,102 @@ export interface PopularAppConfig {
 /**
  * Popular applications with their icons and aliases
  * Key is the primary application name, value contains icon path and aliases
+ *
+ * Apps with simpleIcon: Icons are rendered from Simple Icons library as data URLs
+ * Apps without simpleIcon: Fall back to default app icon (AppWindow from Lucide)
+ *
+ * Apps without Simple Icons coverage (as of simple-icons v14):
+ * - Microsoft Teams: Not available in Simple Icons
+ * - Finder: macOS-specific, not in Simple Icons
+ * - Cursor: Not available in Simple Icons
+ * - Kiro: Custom/internal app
  */
 export const POPULAR_APPS: Record<string, PopularAppConfig> = {
+  "GitHub Desktop": {
+    simpleIcon: siGithub,
+    aliases: ["GitHub Desktop", "github", "GitHub"],
+  },
   "Google Chrome": {
-    icon: "chrome.svg",
+    simpleIcon: siGooglechrome,
     aliases: ["Chrome", "chrome", "Google Chrome"],
   },
   "Visual Studio Code": {
-    icon: "vscode.svg",
+    simpleIcon: siVscodium, // Using VSCodium icon as closest match
     aliases: ["Code", "VSCode", "code", "Visual Studio Code - Insiders"],
   },
   Slack: {
-    icon: "slack.svg",
+    simpleIcon: siSlack,
     aliases: ["slack", "Slack"],
   },
   "Microsoft Teams": {
-    icon: "teams.svg",
     aliases: ["Teams", "msteams", "Microsoft Teams"],
   },
   Figma: {
-    icon: "figma.svg",
+    simpleIcon: siFigma,
     aliases: ["figma", "Figma"],
   },
+  Discord: {
+    simpleIcon: siDiscord,
+    aliases: ["discord", "Discord"],
+  },
   Notion: {
-    icon: "notion.svg",
+    simpleIcon: siNotion,
     aliases: ["notion", "Notion"],
   },
   Safari: {
-    icon: "safari.svg",
+    simpleIcon: siSafari,
     aliases: ["safari", "Safari"],
   },
   Firefox: {
-    icon: "firefox.svg",
+    simpleIcon: siFirefoxbrowser,
     aliases: ["firefox", "Firefox", "Mozilla Firefox"],
   },
   Terminal: {
-    icon: "terminal.svg",
-    aliases: ["terminal", "Terminal", "iTerm", "iTerm2", "iTerm 2"],
+    simpleIcon: siGnometerminal, // Using GNOME Terminal icon as generic terminal icon
+    aliases: ["terminal", "Terminal"],
+  },
+  iTerm2: {
+    simpleIcon: siIterm2,
+    aliases: ["iTerm", "iTerm2", "iTerm 2", "iterm", "iterm2"],
   },
   Finder: {
-    icon: "finder.svg",
     aliases: ["finder", "Finder"],
   },
   WeChat: {
-    icon: "wechat.svg",
+    simpleIcon: siWechat,
     aliases: ["wechat", "WeChat", "微信"],
   },
   Zoom: {
-    icon: "zoom.svg",
+    simpleIcon: siZoom,
     aliases: ["zoom.us", "Zoom", "zoom"],
   },
   Xcode: {
-    icon: "xcode.svg",
+    simpleIcon: siXcode,
     aliases: ["Xcode", "xcode"],
   },
   Spotify: {
-    icon: "spotify.svg",
+    simpleIcon: siSpotify,
     aliases: ["Spotify", "spotify"],
   },
   Postman: {
-    icon: "postman.svg",
+    simpleIcon: siPostman,
     aliases: ["Postman", "postman"],
   },
   Cursor: {
-    icon: "cursor.svg",
     aliases: ["Cursor", "cursor"],
   },
   Windsurf: {
-    icon: "windsurf.svg",
+    simpleIcon: siWindsurf,
     aliases: ["Windsurf", "windsurf"],
   },
   "Claude Code": {
-    icon: "claude-code.svg",
+    simpleIcon: siClaude,
     aliases: ["Claude Code", "claude-code", "claude code"],
   },
   Kiro: {
-    icon: "kiro.svg",
     aliases: ["Kiro", "kiro"],
   },
 };
-
-/**
- * Default icon for applications not in the popular list
- */
-export const DEFAULT_APP_ICON = "default-app.svg";
 
 /**
  * Check if an application name matches any popular app (including aliases)
@@ -125,16 +164,6 @@ export function findPopularApp(appName: string): { name: string; config: Popular
   }
 
   return null;
-}
-
-/**
- * Get the icon path for an application
- * @param appName - The application name
- * @returns The icon path relative to public/app-icons/
- */
-export function getAppIcon(appName: string): string {
-  const popularApp = findPopularApp(appName);
-  return popularApp ? popularApp.config.icon : DEFAULT_APP_ICON;
 }
 
 /**

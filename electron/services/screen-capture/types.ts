@@ -1,3 +1,4 @@
+import { POPULAR_APPS } from "@shared/popular-apps";
 import type { NativeImage } from "electron";
 
 // ============================================================================
@@ -42,6 +43,8 @@ export interface CaptureSource {
   appIcon?: NativeImage;
   /** Application name (from AppleScript on macOS, e.g., "Google Chrome" for browser windows) */
   appName?: string;
+  /** Window bounds (used to detect minimized windows with zero/negative dimensions) */
+  bounds?: { x: number; y: number; width: number; height: number };
 }
 
 /**
@@ -214,6 +217,14 @@ export const DEFAULT_CAPTURE_OPTIONS: CaptureOptions = {
   quality: 80,
 };
 
+const POPULAR_APPS_ALIAS = Object.keys(POPULAR_APPS).reduce(
+  (acc, key) => {
+    acc[key] = POPULAR_APPS[key].aliases;
+    return acc;
+  },
+  {} as Record<string, string[]>
+);
+
 /**
  * Default window filter configuration
  */
@@ -229,10 +240,7 @@ export const DEFAULT_WINDOW_FILTER_CONFIG: WindowFilterConfig = {
     "Electron", // Exclude self (process name in dev mode)
   ],
   appAliases: {
-    "Microsoft Teams": ["msteams", "teams"],
-    WeChat: ["wechat", "weixin"],
-    "Google Chrome": ["chrome"],
-    "Visual Studio Code": ["code", "vscode"],
+    ...POPULAR_APPS_ALIAS,
     "Microsoft PowerPoint": ["powerpoint"],
     "Microsoft Word": ["word"],
     "Microsoft Excel": ["excel"],

@@ -77,6 +77,35 @@
       "requestFailed": "请求权限失败"
     }
   },
+  "captureSourceSettings": {
+    "title": "捕获源设置",
+    "screens": {
+      "title": "屏幕",
+      "selectAll": "全选",
+      "deselectAll": "全不选",
+      "allScreensHint": "将捕获所有屏幕",
+      "primary": "主显示器",
+      "resolution": "分辨率"
+    },
+    "apps": {
+      "title": "应用程序",
+      "selectAll": "全选",
+      "deselectAll": "全不选",
+      "allAppsHint": "将捕获所有应用程序",
+      "searchPlaceholder": "搜索应用程序...",
+      "noResults": "未找到应用程序",
+      "windowCount": "{{count}} 个窗口",
+      "windowCount_plural": "{{count}} 个窗口"
+    },
+    "fallback": {
+      "notification": "选中的应用未运行，将捕获所有源。"
+    },
+    "errors": {
+      "loadScreensFailed": "加载屏幕失败",
+      "loadAppsFailed": "加载应用程序失败",
+      "retry": "重试"
+    }
+  },
   "llmConfig": {
     "title": "LLM 配置",
     "description": "配置您的 OpenAI 兼容 API 端点，用于不同的 AI 功能。",

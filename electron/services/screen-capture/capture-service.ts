@@ -51,26 +51,6 @@ export class CaptureService implements ICaptureService {
 
     const allMonitors = NodeMonitor.all();
 
-    // Log all available monitors with their IDs and properties
-    logger.info(
-      {
-        monitorCount: allMonitors.length,
-        monitors: allMonitors.map((m) => ({
-          id: m.id,
-          name: m.name,
-          x: m.x,
-          y: m.y,
-          width: m.width,
-          height: m.height,
-          scaleFactor: m.scaleFactor,
-          isPrimary: m.isPrimary,
-          // Check if this might be a virtual display (unusual dimensions or position)
-          isVirtual: m.width === 0 || m.height === 0 || m.name?.toLowerCase().includes("virtual"),
-        })),
-      },
-      "Available monitors for capture"
-    );
-
     if (allMonitors.length === 0) {
       logger.error("No monitors available for capture");
       throw new CaptureError("No monitors available for capture", "NO_MONITORS");
@@ -81,24 +61,9 @@ export class CaptureService implements ICaptureService {
     let monitors = allMonitors;
     if (opts.screenIds && opts.screenIds.length > 0) {
       monitors = allMonitors.filter((m) => opts.screenIds!.includes(m.id.toString()));
-      logger.info(
-        {
-          requestedScreenIds: opts.screenIds,
-          filteredMonitorCount: monitors.length,
-          filteredMonitorIds: monitors.map((m) => m.id),
-        },
-        "Filtered monitors by screenIds"
-      );
 
       // If no monitors match the filter, fall back to all monitors
       if (monitors.length === 0) {
-        logger.warn(
-          {
-            requestedScreenIds: opts.screenIds,
-            availableMonitorIds: allMonitors.map((m) => m.id.toString()),
-          },
-          "No monitors match screenIds filter, falling back to all monitors"
-        );
         monitors = allMonitors;
       }
     }
@@ -228,6 +193,12 @@ export class CaptureService implements ICaptureService {
       name: monitor.name || `Display ${monitor.id}`,
       type: "screen" as const,
       displayId: monitor.id.toString(),
+      bounds: {
+        x: monitor.x,
+        y: monitor.y,
+        width: monitor.width,
+        height: monitor.height,
+      },
     };
   }
 

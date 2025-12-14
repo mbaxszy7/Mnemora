@@ -172,7 +172,7 @@ export class ScreenCaptureModule {
     // Get current sources and preferences
     const screens = this.getScreens();
     const windows = this.getWindows();
-    const availableScreenIds = screens.map((s: CaptureSource) => s.displayId || s.id);
+    const availableScreenIds = screens.map((s: CaptureSource) => s.id);
 
     // Compute effective capture sources
     const effectiveSources = this.preferencesService.getEffectiveCaptureSources(
@@ -180,12 +180,20 @@ export class ScreenCaptureModule {
       windows
     );
 
-    this.logCaptureContext(screens, availableScreenIds, effectiveSources);
+    // this.logCaptureContext(screens, availableScreenIds, effectiveSources);
+    // todo:
+    this.logger.info(
+      { effectiveAppsFallback: effectiveSources.appFallback },
+      "Effective capture sources"
+    );
 
     // Perform capture - returns array of results (one per screen)
     const results = await this.captureService.captureScreens({
       ...this.captureOptions,
-      screenIds: effectiveSources.screenIds,
+      screenIds: effectiveSources.screenIds.map((id) => {
+        const screen = screens.find((s) => s.id === id);
+        return screen?.displayId ?? id;
+      }),
     });
 
     // Save all captures to disk
@@ -232,7 +240,6 @@ export class ScreenCaptureModule {
         preferences: {
           selectedScreenIds: preferences.selectedScreenIds,
           selectedAppNames: preferences.selectedAppNames,
-          rememberSelection: preferences.rememberSelection,
         },
         available: {
           screenCount: screens.length,

@@ -1,8 +1,7 @@
 import { CapturePreferences, AppInfo } from "../../shared/capture-source-types";
-import { findPopularApp, DEFAULT_APP_ICON } from "../../shared/popular-apps";
+import { isPopularApp } from "../../shared/popular-apps";
 import { getLogger } from "./logger";
 import type { CaptureSource } from "./screen-capture/types";
-import { windowFilter } from "./screen-capture/window-filter";
 
 /**
  * Result of computing effective capture sources
@@ -31,7 +30,6 @@ export class CapturePreferencesService {
     this.preferences = {
       selectedScreenIds: [],
       selectedAppNames: [],
-      rememberSelection: false,
     };
 
     this.logger.info("CapturePreferencesService initialized with default preferences");
@@ -46,7 +44,6 @@ export class CapturePreferencesService {
     return {
       selectedScreenIds: [...this.preferences.selectedScreenIds],
       selectedAppNames: [...this.preferences.selectedAppNames],
-      rememberSelection: this.preferences.rememberSelection,
     };
   }
 
@@ -65,7 +62,6 @@ export class CapturePreferencesService {
       selectedAppNames: prefs.selectedAppNames
         ? [...prefs.selectedAppNames]
         : this.preferences.selectedAppNames,
-      rememberSelection: prefs.rememberSelection ?? this.preferences.rememberSelection,
     };
 
     this.logger.info(
@@ -205,7 +201,6 @@ export class CapturePreferencesService {
     this.preferences = {
       selectedScreenIds: [],
       selectedAppNames: [],
-      rememberSelection: false,
     };
 
     this.logger.info(
@@ -218,65 +213,42 @@ export class CapturePreferencesService {
   }
 
   /**
-   * Match an app name to a popular app and get its icon
-   * Returns the icon path and whether it's a popular app
-   *
-   * Requirements: 2.2, 2.5
-   */
-  matchAppIcon(appName: string): { icon: string; isPopular: boolean } {
-    const popularApp = findPopularApp(appName);
-    if (popularApp) {
-      return {
-        icon: popularApp.config.icon,
-        isPopular: true,
-      };
-    }
-    return {
-      icon: DEFAULT_APP_ICON,
-      isPopular: false,
-    };
-  }
-
-  /**
    * Sort apps with popular apps first, then alphabetically
+   * Uses isPopularApp from shared/popular-apps to determine popularity
    *
    * Requirements: 8.1
    */
   sortApps(apps: AppInfo[]): AppInfo[] {
     return [...apps].sort((a, b) => {
       // Popular apps come first
-      if (a.isPopular && !b.isPopular) return -1;
-      if (!a.isPopular && b.isPopular) return 1;
+      const aPopular = isPopularApp(a.name);
+      const bPopular = isPopularApp(b.name);
+      if (aPopular && !bPopular) return -1;
+      if (!aPopular && bPopular) return 1;
       // Then sort alphabetically by name
       return a.name.localeCompare(b.name);
     });
   }
 
   /**
-   * Get active applications with icons
-   * Groups windows by app name and matches with popular apps
+   * Get active applications
+   * Groups windows by app name. Icon matching is done on frontend using findPopularApp.
    *
-   * Requirements: 2.1, 2.2, 2.5, 8.1
+   * Requirements: 2.1, 8.1
    */
   getActiveApps(windows: CaptureSource[]): AppInfo[] {
     try {
       // Group windows by app name and count
       const appWindowCounts = new Map<string, number>();
       for (const window of windows) {
-        const appName = windowFilter.getDisplayAppName(window);
-        appWindowCounts.set(appName, (appWindowCounts.get(appName) || 0) + 1);
+        if (!window.appName) continue;
+        appWindowCounts.set(window.appName, (appWindowCounts.get(window.appName) || 0) + 1);
       }
 
-      // Convert to AppInfo array
+      // Convert to AppInfo array (icon/isPopular computed on frontend)
       const apps: AppInfo[] = [];
       for (const [name, windowCount] of appWindowCounts) {
-        const { icon, isPopular } = this.matchAppIcon(name);
-        apps.push({
-          name,
-          icon,
-          isPopular,
-          windowCount,
-        });
+        apps.push({ name, windowCount });
       }
 
       // Sort with popular apps first
@@ -284,9 +256,8 @@ export class CapturePreferencesService {
 
       this.logger.info(
         {
-          totalApps: sortedApps.length,
-          popularApps: sortedApps.filter((a) => a.isPopular).length,
-          totalWindows: windows.length,
+          sortedApps,
+          totalWindows: windows,
         },
         "Active apps retrieved"
       );

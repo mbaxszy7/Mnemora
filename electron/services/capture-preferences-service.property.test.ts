@@ -217,41 +217,34 @@ describe("CapturePreferencesService Property Tests", () => {
    */
   it("Preferences round-trip consistency with deep copy", () => {
     fc.assert(
-      fc.property(
-        screenIdsArb,
-        appNamesArb,
-        fc.boolean(),
-        (screenIds, appNames, rememberSelection) => {
-          const service = new CapturePreferencesService();
+      fc.property(screenIdsArb, appNamesArb, (screenIds, appNames) => {
+        const service = new CapturePreferencesService();
 
-          const originalPrefs = {
-            selectedScreenIds: screenIds,
-            selectedAppNames: appNames,
-            rememberSelection,
-          };
+        const originalPrefs = {
+          selectedScreenIds: screenIds,
+          selectedAppNames: appNames,
+        };
 
-          // Set preferences
-          service.setPreferences(originalPrefs);
+        // Set preferences
+        service.setPreferences(originalPrefs);
 
-          // Get preferences back
-          const retrievedPrefs = service.getPreferences();
+        // Get preferences back
+        const retrievedPrefs = service.getPreferences();
 
-          // Should match what we set
-          expect(retrievedPrefs.selectedScreenIds.sort()).toEqual(screenIds.sort());
-          expect(retrievedPrefs.selectedAppNames.sort()).toEqual(appNames.sort());
-          expect(retrievedPrefs.rememberSelection).toBe(rememberSelection);
+        // Should match what we set
+        expect(retrievedPrefs.selectedScreenIds.sort()).toEqual(screenIds.sort());
+        expect(retrievedPrefs.selectedAppNames.sort()).toEqual(appNames.sort());
 
-          // Verify deep copy - mutating retrieved prefs should not affect internal state
-          retrievedPrefs.selectedScreenIds.push("mutated-screen");
-          retrievedPrefs.selectedAppNames.push("mutated-app");
+        // Verify deep copy - mutating retrieved prefs should not affect internal state
+        retrievedPrefs.selectedScreenIds.push("mutated-screen");
+        retrievedPrefs.selectedAppNames.push("mutated-app");
 
-          const secondRetrieval = service.getPreferences();
-          expect(secondRetrieval.selectedScreenIds).not.toContain("mutated-screen");
-          expect(secondRetrieval.selectedAppNames).not.toContain("mutated-app");
+        const secondRetrieval = service.getPreferences();
+        expect(secondRetrieval.selectedScreenIds).not.toContain("mutated-screen");
+        expect(secondRetrieval.selectedAppNames).not.toContain("mutated-app");
 
-          return true;
-        }
-      ),
+        return true;
+      }),
       { numRuns: 100 }
     );
   });

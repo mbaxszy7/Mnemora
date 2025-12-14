@@ -1,19 +1,5 @@
 /**
  * CaptureService - Screen capture with multi-monitor support using node-screenshots + sharp
- *
- * ⚠️ IMPORTANT: Screen ID Mapping
- * ================================
- * This service uses node-screenshots for actual screen capture.
- * node-screenshots uses Monitor.id which is the CGDirectDisplayID (numeric).
- *
- * When integrating with user preferences, note that user-selected screen IDs
- * are in desktopCapturer format ("screen:INDEX:0"). These need to be mapped
- * to CGDirectDisplayID for filtering using mapScreenIdsToDisplayIds().
- *
- * ID Systems:
- * - desktopCapturer: "screen:0:0", "screen:1:0" (INDEX-based, for thumbnails)
- * - node-screenshots: numeric ID (CGDirectDisplayID, for actual capture)
- * - Electron screen API: numeric ID (same as CGDirectDisplayID)
  */
 
 import { desktopCapturer, screen } from "electron";
@@ -28,6 +14,10 @@ const logger = getLogger("capture-service");
 
 export interface ICaptureService {
   captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]>;
+  captureWindowsByApp(
+    appNames: string[],
+    options?: Partial<CaptureOptions>
+  ): Promise<CaptureResult[]>;
   getScreensWithThumbnails(): Promise<ScreenInfo[]>;
   getScreenIdMapping(): Promise<Map<string, string>>;
   mapScreenIdsToDisplayIds(selectedScreenIds: string[], screenInfos: ScreenInfo[]): string[];
@@ -312,5 +302,122 @@ export class CaptureService implements ICaptureService {
     }
 
     return displayIds;
+  }
+
+  /**
+   * Capture windows belonging to specific apps using desktopCapturer
+   *
+   * This method captures windows instead of screens, filtered by app name.
+   * Uses Electron's desktopCapturer which provides window thumbnails.
+   *
+   * @param appNames - Array of app names to capture (e.g., ["Google Chrome", "Notion"])
+   * @param options - Capture options (format, quality)
+   * @returns Array of CaptureResult, one per captured window
+   */
+  async captureWindowsByApp(
+    appNames: string[],
+    options?: Partial<CaptureOptions>
+  ): Promise<CaptureResult[]> {
+    const opts = { ...DEFAULT_CAPTURE_OPTIONS, ...options };
+    const timestamp = Date.now();
+
+    logger.info({ appNames }, "Capturing windows by app names");
+
+    // Get all window sources with high resolution thumbnails
+    const sources = await desktopCapturer.getSources({
+      types: ["window"],
+      thumbnailSize: { width: 1920, height: 1080 },
+      fetchWindowIcons: false,
+    });
+
+    logger.info(
+      {
+        totalSources: sources.length,
+        sourceNames: sources.map((s) => s.name),
+      },
+      "Retrieved window sources"
+    );
+
+    // Filter windows by app name (case-insensitive partial match)
+    const targetSources = sources.filter((source) => {
+      const sourceName = source.name.toLowerCase();
+      return appNames.some((appName) => {
+        const appLower = appName.toLowerCase();
+        // Match if source name contains app name or vice versa
+        return sourceName.includes(appLower) || appLower.includes(sourceName.split(" ")[0]);
+      });
+    });
+
+    logger.info(
+      {
+        matchedCount: targetSources.length,
+        matchedNames: targetSources.map((s) => s.name),
+      },
+      "Filtered windows by app names"
+    );
+
+    if (targetSources.length === 0) {
+      logger.warn({ appNames }, "No windows found for specified apps");
+      return [];
+    }
+
+    // Convert each window to CaptureResult
+    const results: CaptureResult[] = [];
+
+    for (const source of targetSources) {
+      try {
+        const thumbnail = source.thumbnail;
+
+        // Skip empty thumbnails (minimized windows)
+        if (thumbnail.isEmpty()) {
+          logger.debug({ sourceName: source.name }, "Skipping empty thumbnail");
+          continue;
+        }
+
+        // Convert NativeImage to PNG buffer, then apply format with sharp
+        const pngBuffer = thumbnail.toPNG();
+        const sharpInstance = sharp(pngBuffer);
+        const buffer = await this.applyFormat(sharpInstance, opts);
+
+        results.push({
+          buffer,
+          timestamp,
+          source: {
+            id: source.id,
+            name: source.name,
+            type: "window",
+            appName: source.name.split(" - ")[0], // Extract app name from window title
+          },
+          screenId: source.id,
+        });
+
+        logger.debug(
+          {
+            sourceId: source.id,
+            sourceName: source.name,
+            bufferSize: buffer.length,
+          },
+          "Window capture completed"
+        );
+      } catch (error) {
+        logger.warn(
+          {
+            sourceName: source.name,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Failed to capture window"
+        );
+      }
+    }
+
+    logger.info(
+      {
+        capturedWindows: results.length,
+        windowIds: results.map((r) => r.screenId),
+      },
+      "All window captures completed"
+    );
+
+    return results;
   }
 }

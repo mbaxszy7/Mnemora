@@ -180,36 +180,72 @@ export class ScreenCaptureModule {
       windows
     );
 
-    // this.logCaptureContext(screens, availableScreenIds, effectiveSources);
-    // todo:
     this.logger.info(
-      { effectiveAppsFallback: effectiveSources.appFallback },
+      {
+        effectiveScreenIds: effectiveSources.screenIds,
+        effectiveAppNames: effectiveSources.appNames,
+        screenFallback: effectiveSources.screenFallback,
+        appFallback: effectiveSources.appFallback,
+      },
       "Effective capture sources"
     );
 
-    // Perform capture - returns array of results (one per screen)
-    const results = await this.captureService.captureScreens({
-      ...this.captureOptions,
-      screenIds: effectiveSources.screenIds.map((id) => {
-        const screen = screens.find((s) => s.id === id);
-        return screen?.displayId ?? id;
-      }),
-    });
+    let results: CaptureResult[];
+
+    // Determine capture mode based on user preferences
+    const hasSelectedApps = effectiveSources.appNames.length > 0 && !effectiveSources.appFallback;
+
+    if (hasSelectedApps) {
+      // Window capture mode: user selected specific apps
+      this.logger.info(
+        { appNames: effectiveSources.appNames },
+        "Using window capture mode for selected apps"
+      );
+      results = await this.captureService.captureWindowsByApp(
+        effectiveSources.appNames,
+        this.captureOptions
+      );
+
+      // If no windows found, fall back to screen capture
+      if (results.length === 0) {
+        this.logger.warn("No windows found for selected apps, falling back to screen capture");
+        results = await this.captureScreensWithDisplayIds(screens, effectiveSources.screenIds);
+      }
+    } else {
+      // Screen capture mode: default or fallback
+      results = await this.captureScreensWithDisplayIds(screens, effectiveSources.screenIds);
+    }
 
     // Save all captures to disk
-    const isMultiScreen = results.length > 1;
-    await this.saveCapturesToDisk(results, isMultiScreen);
+    const isMultiCapture = results.length > 1;
+    await this.saveCapturesToDisk(results, isMultiCapture);
 
     this.logger.debug(
       {
-        capturedScreens: results.length,
-        screenIds: results.map((r) => r.screenId),
+        capturedCount: results.length,
+        captureIds: results.map((r) => r.screenId),
       },
       "Capture task completed"
     );
 
     // Return first result for scheduler compatibility
     return results[0];
+  }
+
+  /**
+   * Helper to capture screens with displayId conversion
+   */
+  private async captureScreensWithDisplayIds(
+    screens: CaptureSource[],
+    screenIds: string[]
+  ): Promise<CaptureResult[]> {
+    return this.captureService.captureScreens({
+      ...this.captureOptions,
+      screenIds: screenIds.map((id) => {
+        const screen = screens.find((s) => s.id === id);
+        return screen?.displayId ?? id;
+      }),
+    });
   }
 
   private async ensureSourcesAvailable(): Promise<void> {
@@ -220,53 +256,6 @@ export class ScreenCaptureModule {
       } catch (error) {
         this.logger.warn({ error }, "Source provider refresh failed, continuing with empty cache");
       }
-    }
-  }
-
-  private logCaptureContext(
-    screens: CaptureSource[],
-    availableScreenIds: string[],
-    effectiveSources: {
-      screenIds: string[];
-      appNames: string[];
-      screenFallback: boolean;
-      appFallback: boolean;
-    }
-  ): void {
-    const preferences = this.preferencesService.getPreferences();
-
-    this.logger.info(
-      {
-        preferences: {
-          selectedScreenIds: preferences.selectedScreenIds,
-          selectedAppNames: preferences.selectedAppNames,
-        },
-        available: {
-          screenCount: screens.length,
-          screenIds: availableScreenIds,
-        },
-        effective: effectiveSources,
-      },
-      "Capture task - preferences and effective sources"
-    );
-
-    if (effectiveSources.screenFallback) {
-      this.logger.warn(
-        {
-          selectedScreenIds: preferences.selectedScreenIds,
-          availableScreenIds,
-        },
-        "Screen fallback mode: selected screens unavailable, capturing all screens"
-      );
-    }
-
-    if (effectiveSources.appFallback) {
-      this.logger.warn(
-        {
-          selectedAppNames: preferences.selectedAppNames,
-        },
-        "App fallback mode: selected apps not active, recording all apps"
-      );
     }
   }
 

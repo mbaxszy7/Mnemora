@@ -120,7 +120,6 @@ export interface PermissionApi {
   requestAccessibility(): Promise<IPCResult<boolean>>;
   openScreenRecordingSettings(): Promise<IPCResult<void>>;
   openAccessibilitySettings(): Promise<IPCResult<void>>;
-  initServices(): Promise<IPCResult<boolean>>;
 }
 
 const permissionApi: PermissionApi = {
@@ -142,10 +141,6 @@ const permissionApi: PermissionApi = {
 
   async openAccessibilitySettings(): Promise<IPCResult<void>> {
     return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_OPEN_ACCESSIBILITY_SETTINGS);
-  },
-
-  async initServices(): Promise<IPCResult<boolean>> {
-    return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_INIT_SERVICES);
   },
 };
 
@@ -188,6 +183,7 @@ contextBridge.exposeInMainWorld("screenCaptureApi", screenCaptureApi);
 
 // --------- Expose Capture Source Settings API to the Renderer process ---------
 export interface CaptureSourceApi {
+  initServices(): Promise<IPCResult<boolean>>;
   getScreens(): Promise<IPCResult<GetScreensResponse>>;
   getApps(): Promise<IPCResult<GetAppsResponse>>;
   getPreferences(): Promise<IPCResult<PreferencesResponse>>;
@@ -195,6 +191,10 @@ export interface CaptureSourceApi {
 }
 
 const captureSourceApi: CaptureSourceApi = {
+  async initServices(): Promise<IPCResult<boolean>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_INIT_SERVICES);
+  },
+
   async getScreens(): Promise<IPCResult<GetScreensResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.CAPTURE_SOURCES_GET_SCREENS);
   },

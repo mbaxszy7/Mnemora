@@ -8,7 +8,10 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import * as crypto from "crypto";
 import { getLogger } from "../logger";
+import { CaptureSource } from "./types";
+import { formatAppName } from "@shared/popular-apps";
 
 const logger = getLogger("capture-storage");
 
@@ -43,48 +46,36 @@ export async function ensureStorageDir(): Promise<void> {
 export function generateCaptureFilename(
   timestamp: number,
   format: "jpeg" | "png" | "webp" = "jpeg",
-  screenId?: string,
-  isMultiScreen: boolean = false
+  source: CaptureSource
 ): string {
   const date = new Date(timestamp);
   const dateStr = date.toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
   // Add screen-{id} suffix for multi-screen captures
-  if (isMultiScreen && screenId) {
-    return `capture-${dateStr}-screen-${screenId}.${format}`;
+  if (source.type === "window") {
+    // Create a short hash of the original window name to prevent conflicts
+    // when multiple windows have the same cleaned app name (e.g. multiple Chrome windows)
+    const nameHash = crypto.createHash("md5").update(source.name).digest("hex").slice(0, 6);
+    return `capture-${dateStr}-window-${formatAppName(source.name)}-${nameHash}.${format}`;
   }
 
-  return `capture-${dateStr}.${format}`;
+  return `capture-${dateStr}-screen-${source.displayId}.${format}`;
 }
 
-/**
- * Save a capture buffer to disk
- *
- * @param buffer - The image buffer to save
- * @param timestamp - The capture timestamp
- * @param format - The image format
- * @param screenId - Optional screen ID for multi-screen captures
- * @param isMultiScreen - Whether this is part of a multi-screen capture
- * @returns The full path to the saved file
- */
 export async function saveCaptureToFile(
+  source: CaptureSource,
   buffer: Buffer,
   timestamp: number,
-  format: "jpeg" | "png" | "webp" = "jpeg",
-  screenId?: string,
-  isMultiScreen: boolean = false
+  format: "jpeg" | "png" | "webp" = "jpeg"
 ): Promise<string> {
   await ensureStorageDir();
 
-  const filename = generateCaptureFilename(timestamp, format, screenId, isMultiScreen);
+  const filename = generateCaptureFilename(timestamp, format, source);
   const filepath = path.join(getCaptureStorageDir(), filename);
 
   try {
     await fs.writeFile(filepath, buffer);
-    logger.info(
-      { filepath, size: buffer.length, screenId, isMultiScreen },
-      "Capture saved to file"
-    );
+    logger.info({ source, filepath }, "Capture saved to file");
     return filepath;
   } catch (error) {
     logger.error({ error, filepath }, "Failed to save capture to file");

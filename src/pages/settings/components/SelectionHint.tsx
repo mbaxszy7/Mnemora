@@ -1,4 +1,5 @@
 import { Info } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export type SelectionHintType = "screens" | "apps";
 
@@ -14,17 +15,24 @@ export interface SelectionHintProps {
  * Requirements: 6.1, 6.2
  */
 export function SelectionHint({ type, isVisible }: SelectionHintProps) {
+  const { t } = useTranslation();
+
   if (!isVisible) {
     return null;
   }
 
-  const message =
-    type === "screens" ? "All screens will be captured" : "All applications will be captured";
+  const messageKey =
+    type === "screens"
+      ? "captureSourceSettings.screens.allScreensHint"
+      : "captureSourceSettings.apps.allAppsHint";
 
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted/50 rounded-md p-3">
+    <div
+      role="alert"
+      className="flex items-center gap-2 rounded-lg bg-muted/50 p-3 text-sm text-muted-foreground"
+    >
       <Info className="h-4 w-4 shrink-0" />
-      <span>{message}</span>
+      <span>{t(messageKey)}</span>
     </div>
   );
 }

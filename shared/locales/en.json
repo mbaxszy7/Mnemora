@@ -79,21 +79,24 @@
   },
   "captureSourceSettings": {
     "title": "Capture Source Settings",
+    "description": "Configure which screens and applications to capture",
     "screens": {
       "title": "Screens",
       "selectAll": "Select All",
       "deselectAll": "Deselect All",
       "allScreensHint": "All screens will be captured",
       "primary": "Primary",
-      "resolution": "Resolution"
+      "resolution": "Resolution",
+      "noScreens": "No screens available"
     },
     "apps": {
-      "title": "Applications",
+      "title": "Select Windows",
       "selectAll": "Select All",
       "deselectAll": "Deselect All",
-      "allAppsHint": "All applications will be captured",
-      "searchPlaceholder": "Search applications...",
-      "noResults": "No applications found",
+      "allAppsHint": "All windows will be captured",
+      "searchPlaceholder": "Search windows...",
+      "noResults": "No windows found",
+      "noApps": "No windows available",
       "windowCount": "{{count}} window",
       "windowCount_plural": "{{count}} windows"
     },

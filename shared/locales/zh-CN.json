@@ -79,21 +79,24 @@
   },
   "captureSourceSettings": {
     "title": "捕获源设置",
+    "description": "配置要捕获的屏幕和应用程序",
     "screens": {
       "title": "屏幕",
       "selectAll": "全选",
       "deselectAll": "全不选",
       "allScreensHint": "将捕获所有屏幕",
       "primary": "主显示器",
-      "resolution": "分辨率"
+      "resolution": "分辨率",
+      "noScreens": "没有可用的屏幕"
     },
     "apps": {
-      "title": "应用程序",
+      "title": "选择窗口",
       "selectAll": "全选",
       "deselectAll": "全不选",
-      "allAppsHint": "将捕获所有应用程序",
-      "searchPlaceholder": "搜索应用程序...",
-      "noResults": "未找到应用程序",
+      "allAppsHint": "将捕获所有窗口",
+      "searchPlaceholder": "搜索窗口...",
+      "noResults": "未找到窗口",
+      "noApps": "没有可用的窗口",
       "windowCount": "{{count}} 个窗口",
       "windowCount_plural": "{{count}} 个窗口"
     },

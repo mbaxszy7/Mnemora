@@ -42,7 +42,8 @@ export function registerLLMConfigHandlers(): void {
     IPC_CHANNELS.LLM_CONFIG_SAVE,
     async (_event: Electron.IpcMainInvokeEvent, config: LLMConfig): Promise<void> => {
       logger.debug({ mode: config.mode }, "Handling LLM_CONFIG_SAVE");
-      return configService.saveConfiguration(config);
+      await configService.saveConfiguration(config);
+      return void 0;
     }
   );
 

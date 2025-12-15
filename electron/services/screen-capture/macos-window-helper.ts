@@ -202,7 +202,9 @@ export function extractAppNameFromTitle(windowName: CaptureSource["name"]): stri
   // }
 
   // Default to first part for "AppName - Subtitle" format
-  return firstPart;
+  if (checkAppNameFromAlias(firstPart)) return firstPart;
+  if (checkAppNameFromAlias(lastPart)) return lastPart;
+  return windowName;
 }
 
 /** Merge Electron and AppleScript sources, removing duplicates */
@@ -271,9 +273,11 @@ export async function getHybridWindowSources(
   const sourceFromElectron = electronSources.map((source) => {
     return {
       ...source,
-      appName: source.appName ?? extractAppNameFromTitle(source.name),
+      appName: source.name || extractAppNameFromTitle(source.name),
     };
   });
+
+  logger.info({ sourceFromElectron, electronSources }, "Hybrid window sources");
 
   if (!isMacOS()) {
     return sourceFromElectron;

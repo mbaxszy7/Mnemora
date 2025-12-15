@@ -2,6 +2,7 @@ import { Suspense, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Separator } from "@/components/ui/separator";
 import { ArrowLeft } from "lucide-react";
 import { useViewTransition } from "@/components/core/view-transition";
 import { ScreenSelector, AppSelector } from "./components";
@@ -30,6 +31,8 @@ function CaptureSourceSettingsSkeleton() {
           ))}
         </div>
       </div>
+
+      <Separator />
 
       {/* Apps section skeleton */}
       <div className="space-y-4">
@@ -64,51 +67,67 @@ function CaptureSourceSettingsContent() {
   );
   const apps = useMemo(() => appsQuery.data?.data?.apps ?? [], [appsQuery.data?.data?.apps]);
 
-  const selectedScreenIds = useMemo(
-    () => preferences?.selectedScreenIds ?? [],
-    [preferences?.selectedScreenIds]
+  const selectedScreens = useMemo(
+    () => preferences?.selectedScreens ?? [],
+    [preferences?.selectedScreens]
   );
-  const selectedAppNames = useMemo(
-    () => preferences?.selectedAppNames ?? [],
-    [preferences?.selectedAppNames]
-  );
+  const selectedApps = useMemo(() => preferences?.selectedApps ?? [], [preferences?.selectedApps]);
 
   // Screen selection handlers
   const handleToggleScreen = useCallback(
     (screenId: string) => {
-      const newSelectedIds = selectedScreenIds.includes(screenId)
-        ? selectedScreenIds.filter((id) => id !== screenId)
-        : [...selectedScreenIds, screenId];
-      updatePreferences({ selectedScreenIds: newSelectedIds });
+      const isSelected = selectedScreens.some((s) => s.id === screenId);
+      if (isSelected) {
+        const newSelectedScreens = selectedScreens.filter((s) => s.id !== screenId);
+        updatePreferences({ selectedScreens: newSelectedScreens });
+      } else {
+        const screenToAdd = screens.find((s) => s.id === screenId);
+        if (screenToAdd) {
+          // Clear apps when selecting screen (mutually exclusive)
+          updatePreferences({
+            selectedScreens: [...selectedScreens, screenToAdd],
+            selectedApps: [],
+          });
+        }
+      }
     },
-    [selectedScreenIds, updatePreferences]
+    [screens, selectedScreens, updatePreferences]
   );
 
   const handleSelectAllScreens = useCallback(() => {
-    updatePreferences({ selectedScreenIds: screens.map((s) => s.id) });
+    // Clear apps when selecting screens (mutually exclusive)
+    updatePreferences({ selectedScreens: screens, selectedApps: [] });
   }, [screens, updatePreferences]);
 
   const handleDeselectAllScreens = useCallback(() => {
-    updatePreferences({ selectedScreenIds: [] });
+    updatePreferences({ selectedScreens: [] });
   }, [updatePreferences]);
 
   // App selection handlers
   const handleToggleApp = useCallback(
-    (appName: string) => {
-      const newSelectedNames = selectedAppNames.includes(appName)
-        ? selectedAppNames.filter((name) => name !== appName)
-        : [...selectedAppNames, appName];
-      updatePreferences({ selectedAppNames: newSelectedNames });
+    (appId: string) => {
+      const isSelected = selectedApps.some((app) => app.id === appId);
+      if (isSelected) {
+        const newSelectedApps = selectedApps.filter((app) => app.id !== appId);
+        updatePreferences({ selectedApps: newSelectedApps });
+      } else {
+        const appToAdd = apps.find((app) => app.id === appId);
+        if (appToAdd) {
+          // Clear screens when selecting app (mutually exclusive)
+          updatePreferences({ selectedApps: [...selectedApps, appToAdd], selectedScreens: [] });
+        }
+      }
     },
-    [selectedAppNames, updatePreferences]
+    [apps, selectedApps, updatePreferences]
   );
 
   const handleSelectAllApps = useCallback(() => {
-    updatePreferences({ selectedAppNames: apps.map((a) => a.name) });
+    // Clear screens when selecting apps (mutually exclusive)
+    updatePreferences({ selectedApps: apps, selectedScreens: [] });
   }, [apps, updatePreferences]);
 
   const handleDeselectAllApps = useCallback(() => {
-    updatePreferences({ selectedAppNames: [] });
+    updatePreferences({ selectedApps: [] });
   }, [updatePreferences]);
 
   return (
@@ -116,16 +135,18 @@ function CaptureSourceSettingsContent() {
       {/* Screen Selector */}
       <ScreenSelector
         screens={screens}
-        selectedScreenIds={selectedScreenIds}
+        selectedScreens={selectedScreens}
         onToggleScreen={handleToggleScreen}
         onSelectAll={handleSelectAllScreens}
         onDeselectAll={handleDeselectAllScreens}
       />
 
+      <Separator />
+
       {/* App Selector */}
       <AppSelector
         apps={apps}
-        selectedAppNames={selectedAppNames}
+        selectedApps={selectedApps}
         onToggleApp={handleToggleApp}
         onSelectAll={handleSelectAllApps}
         onDeselectAll={handleDeselectAllApps}

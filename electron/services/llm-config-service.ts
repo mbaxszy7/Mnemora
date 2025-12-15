@@ -252,20 +252,6 @@ export class LLMConfigService {
     // Save the current configuration to restore if validation fails
     const previousConfig = await this.loadConfiguration();
 
-    // Temporarily initialize AISDKService with the config to validate
-    try {
-      aiService.initialize(config);
-    } catch (error) {
-      // Initialization failed - return error for all capabilities
-      const errorCode = this.mapErrorToCode(error);
-      return {
-        success: false,
-        textCompletion: { success: false, error: errorCode },
-        vision: { success: false, error: errorCode },
-        embedding: { success: false, error: errorCode },
-      };
-    }
-
     // Validate all capabilities in parallel
     const [textResult, visionResult, embeddingResult] = await Promise.all([
       this.validateTextCompletion(aiService),

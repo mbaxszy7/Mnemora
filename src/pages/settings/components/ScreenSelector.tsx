@@ -1,11 +1,13 @@
 import { Button } from "@/components/ui/button";
 import { ScreenCard } from "./ScreenCard";
+import { SelectionHint } from "./SelectionHint";
 import type { ScreenInfo } from "@shared/capture-source-types";
 import { CheckSquare, Square } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 export interface ScreenSelectorProps {
   screens: ScreenInfo[];
-  selectedScreenIds: string[];
+  selectedScreens: ScreenInfo[];
   onToggleScreen: (screenId: string) => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
@@ -19,37 +21,35 @@ export interface ScreenSelectorProps {
  */
 export function ScreenSelector({
   screens,
-  selectedScreenIds,
+  selectedScreens,
   onToggleScreen,
   onSelectAll,
   onDeselectAll,
 }: ScreenSelectorProps) {
-  const allSelected = screens.length > 0 && selectedScreenIds.length === screens.length;
-  const noneSelected = selectedScreenIds.length === 0;
+  const { t } = useTranslation();
+  const selectedScreenIds = selectedScreens.map((s) => s.id);
+  const allSelected = screens.length > 0 && selectedScreens.length === screens.length;
+  const noneSelected = selectedScreens.length === 0;
 
   return (
     <div className="space-y-4">
       {/* Header with title and actions */}
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Screens</h3>
+        <h3 className="text-lg font-semibold">{t("captureSourceSettings.screens.title")}</h3>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onSelectAll} disabled={allSelected}>
             <CheckSquare className="h-4 w-4 mr-1" />
-            Select All
+            {t("captureSourceSettings.screens.selectAll")}
           </Button>
           <Button variant="outline" size="sm" onClick={onDeselectAll} disabled={noneSelected}>
             <Square className="h-4 w-4 mr-1" />
-            Deselect All
+            {t("captureSourceSettings.screens.deselectAll")}
           </Button>
         </div>
       </div>
 
       {/* Empty selection hint */}
-      {noneSelected && screens.length > 0 && (
-        <div className="text-sm text-muted-foreground bg-muted/50 rounded-md p-3">
-          All screens will be captured
-        </div>
-      )}
+      <SelectionHint type="screens" isVisible={noneSelected && screens.length > 0} />
 
       {/* Screen cards grid */}
       {screens.length > 0 ? (
@@ -64,7 +64,9 @@ export function ScreenSelector({
           ))}
         </div>
       ) : (
-        <div className="text-center text-muted-foreground py-8">No screens available</div>
+        <div className="text-center text-muted-foreground py-8">
+          {t("captureSourceSettings.screens.noScreens")}
+        </div>
       )}
     </div>
   );

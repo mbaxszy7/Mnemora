@@ -207,7 +207,6 @@ async function initializeApp(): Promise<void> {
   if (isDev) {
     ScreenCaptureModule.resetInstance();
   }
-  ScreenCaptureModule.tryInitialize();
 }
 
 // ============================================================================

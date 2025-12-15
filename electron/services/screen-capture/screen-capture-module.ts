@@ -16,14 +16,13 @@
 import { CaptureSourceProvider } from "./capture-source-provider";
 import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./capture-scheduler";
-import { windowFilter } from "./window-filter";
+
 import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
 import type {
   SchedulerConfig,
   SchedulerState,
   CaptureOptions,
   CaptureResult,
-  CaptureSource,
   SchedulerEvent,
   SchedulerEventHandler,
   SchedulerEventPayload,
@@ -32,7 +31,10 @@ import { DEFAULT_SCHEDULER_CONFIG, DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
 import { powerMonitorService } from "../power-monitor";
 import { permissionService } from "../permission-service";
+import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
+
+const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
@@ -95,7 +97,7 @@ export class ScreenCaptureModule {
    * Try to initialize and start screen capture if permissions are granted
    * Call this after user grants permissions
    */
-  static tryInitialize(): boolean {
+  static async tryInitialize() {
     const logger = getLogger("screen-capture-module");
 
     if (!permissionService.hasScreenRecordingPermission()) {
@@ -105,6 +107,13 @@ export class ScreenCaptureModule {
 
     if (!permissionService.hasAccessibilityPermission()) {
       logger.info("Accessibility permission not granted, skipping initialization");
+      return false;
+    }
+
+    const llmConfig = await llmConfigService.loadConfiguration();
+
+    if (!llmConfig && !isDev) {
+      logger.info("LLM config not saved, skipping initialization ");
       return false;
     }
 
@@ -170,22 +179,13 @@ export class ScreenCaptureModule {
     await this.ensureSourcesAvailable();
 
     // Get current sources and preferences
-    const screens = this.getScreens();
-    const windows = this.getWindows();
-    const availableScreenIds = screens.map((s: CaptureSource) => s.id);
-
-    // Compute effective capture sources
-    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(
-      availableScreenIds,
-      windows
-    );
+    const captureSources = this.sourceProvider.getSources();
+    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(captureSources);
 
     this.logger.info(
       {
-        effectiveScreenIds: effectiveSources.screenIds,
-        effectiveAppNames: effectiveSources.appNames,
-        screenFallback: effectiveSources.screenFallback,
-        appFallback: effectiveSources.appFallback,
+        selectedApps: effectiveSources.selectedApps.map((app) => app.name),
+        selectedScreens: effectiveSources.selectedScreens.map((screen) => screen.displayId),
       },
       "Effective capture sources"
     );
@@ -193,59 +193,35 @@ export class ScreenCaptureModule {
     let results: CaptureResult[];
 
     // Determine capture mode based on user preferences
-    const hasSelectedApps = effectiveSources.appNames.length > 0 && !effectiveSources.appFallback;
+    const hasSelectedApps = effectiveSources.selectedApps.length > 0;
 
     if (hasSelectedApps) {
       // Window capture mode: user selected specific apps
-      this.logger.info(
-        { appNames: effectiveSources.appNames },
-        "Using window capture mode for selected apps"
-      );
+      // this.logger.info(
+      //   { appNames: effectiveSources.selectedApps },
+      //   "Using window capture mode for selected apps"
+      // );
       results = await this.captureService.captureWindowsByApp(
-        effectiveSources.appNames,
+        effectiveSources,
         this.captureOptions
       );
 
       // If no windows found, fall back to screen capture
       if (results.length === 0) {
-        this.logger.warn("No windows found for selected apps, falling back to screen capture");
-        results = await this.captureScreensWithDisplayIds(screens, effectiveSources.screenIds);
+        this.logger.error("No windows found for selected apps, falling back to screen capture");
       }
     } else {
-      // Screen capture mode: default or fallback
-      results = await this.captureScreensWithDisplayIds(screens, effectiveSources.screenIds);
+      results = await this.captureService.captureScreens({
+        ...this.captureOptions,
+        selectedScreenIds: effectiveSources.selectedScreens.map((screen) => screen.displayId),
+      });
     }
 
     // Save all captures to disk
-    const isMultiCapture = results.length > 1;
-    await this.saveCapturesToDisk(results, isMultiCapture);
-
-    this.logger.debug(
-      {
-        capturedCount: results.length,
-        captureIds: results.map((r) => r.screenId),
-      },
-      "Capture task completed"
-    );
+    await this.saveCapturesToDisk(results);
 
     // Return first result for scheduler compatibility
     return results[0];
-  }
-
-  /**
-   * Helper to capture screens with displayId conversion
-   */
-  private async captureScreensWithDisplayIds(
-    screens: CaptureSource[],
-    screenIds: string[]
-  ): Promise<CaptureResult[]> {
-    return this.captureService.captureScreens({
-      ...this.captureOptions,
-      screenIds: screenIds.map((id) => {
-        const screen = screens.find((s) => s.id === id);
-        return screen?.displayId ?? id;
-      }),
-    });
   }
 
   private async ensureSourcesAvailable(): Promise<void> {
@@ -259,22 +235,18 @@ export class ScreenCaptureModule {
     }
   }
 
-  private async saveCapturesToDisk(
-    results: CaptureResult[],
-    isMultiScreen: boolean
-  ): Promise<void> {
+  private async saveCapturesToDisk(results: CaptureResult[]): Promise<void> {
     for (const result of results) {
       try {
         const filepath = await saveCaptureToFile(
+          result.source,
           result.buffer,
           result.timestamp,
-          this.captureOptions.format,
-          result.screenId,
-          isMultiScreen
+          this.captureOptions.format
         );
-        this.logger.debug({ filepath, screenId: result.screenId }, "Capture saved to disk");
+        this.logger.debug({ filepath }, "Capture saved to disk");
       } catch (error) {
-        this.logger.error({ error, screenId: result.screenId }, "Failed to save capture to disk");
+        this.logger.error({ error }, "Failed to save capture to disk");
       }
     }
   }
@@ -342,22 +314,22 @@ export class ScreenCaptureModule {
   // Public API: Source Access
   // ============================================================================
 
-  getSources(): CaptureSource[] {
-    return this.sourceProvider.getSources();
-  }
+  // getSources(): CaptureSource[] {
+  //   return this.sourceProvider.getSources();
+  // }
 
-  getScreens(): CaptureSource[] {
-    return this.sourceProvider.getScreens();
-  }
+  // getScreens(): CaptureSource[] {
+  //   return this.sourceProvider.getScreens();
+  // }
 
-  getWindows(): CaptureSource[] {
-    const windows = this.sourceProvider.getWindows();
-    return windowFilter.filterSystemWindows(windows);
-  }
+  // getWindows(): CaptureSource[] {
+  //   const windows = this.sourceProvider.getWindows();
+  //   return windowFilter.filterSystemWindows(windows);
+  // }
 
-  async refreshSources(): Promise<void> {
-    await this.sourceProvider.refresh();
-  }
+  // async refreshSources(): Promise<void> {
+  //   await this.sourceProvider.refresh();
+  // }
 
   // ============================================================================
   // Public API: Capture Operations

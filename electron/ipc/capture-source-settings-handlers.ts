@@ -36,7 +36,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
       try {
         logger.debug("IPC: Getting screens with thumbnails");
         const captureService = getScreenCaptureModule().getCaptureService();
-        const screens = await captureService.getScreensWithThumbnails();
+        const screens = await captureService.getCaptureScreenInfo();
         return { success: true, data: { screens } };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to get screens");
@@ -51,9 +51,8 @@ export function registerCaptureSourceSettingsHandlers(): void {
     async (): Promise<IPCResult<GetAppsResponse>> => {
       try {
         logger.debug("IPC: Getting active apps");
-        const module = getScreenCaptureModule();
-        const windows = module.getWindows();
-        const apps = module.getPreferencesService().getActiveApps(windows);
+        const captureService = getScreenCaptureModule().getCaptureService();
+        const apps = await captureService.getCaptureAppInfo();
         return { success: true, data: { apps } };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to get apps");
@@ -82,7 +81,6 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_SET_PREFERENCES,
     async (_event, request: SetPreferencesRequest): Promise<IPCResult<PreferencesResponse>> => {
       try {
-        logger.info({ request }, "IPC: Setting capture preferences");
         const service = getScreenCaptureModule().getPreferencesService();
         service.setPreferences(request.preferences);
         const preferences = service.getPreferences();

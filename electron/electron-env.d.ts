@@ -73,7 +73,6 @@ interface Window {
     requestAccessibility(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     openScreenRecordingSettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
     openAccessibilitySettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
-    initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
   };
   // TEMPORARY: Screen capture API - remove later
   screenCaptureApi: {
@@ -86,6 +85,7 @@ interface Window {
     >;
   };
   captureSourceApi: {
+    initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     getScreens(): Promise<
       import("../shared/ipc-types").IPCResult<
         import("../shared/capture-source-types").GetScreensResponse

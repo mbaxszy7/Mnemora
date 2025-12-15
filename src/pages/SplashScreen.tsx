@@ -4,6 +4,8 @@ import { useViewTransition } from "@/components/core/view-transition";
 
 const slogans = ["Pixels to memory.", "Memory, amplified.", "Remember everything."];
 
+const isDev = process.env.NODE_ENV === "development";
+
 /**
  * Determines the navigation target based on LLM configuration check result
  * @param configured - Whether LLM is configured
@@ -74,6 +76,9 @@ export default function SplashScreen() {
     const timer = setTimeout(() => {
       // Navigate unconditionally after timeout
       // If config check completed, use the result; otherwise default to config page
+      if (isDev) {
+        return navigate("/", { type: "splash-fade", duration: 900 });
+      }
       const target = configCheckResult.checked
         ? getNavigationTarget(configCheckResult.configured)
         : "/llm-config";

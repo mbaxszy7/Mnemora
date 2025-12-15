@@ -12,7 +12,7 @@
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { SchedulerConfigPayload, SchedulerStatePayload } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { getScreenCaptureModule } from "../services/screen-capture";
+import { getScreenCaptureModule, ScreenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("screen-capture-handlers");
@@ -110,6 +110,21 @@ export function registerScreenCaptureHandlers(): void {
         return { success: true };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to update screen capture scheduler config");
+        return { success: false, error: toIPCError(error) };
+      }
+    }
+  );
+
+  // Initialize capture services
+  registry.registerHandler(
+    IPC_CHANNELS.CAPTURE_SOURCES_INIT_SERVICES,
+    async (): Promise<IPCResult<boolean>> => {
+      try {
+        logger.info("Attempting to initialize capture services");
+        const initialized = await ScreenCaptureModule.tryInitialize();
+        return { success: true, data: initialized };
+      } catch (error) {
+        logger.error({ error }, "Failed to initialize capture services");
         return { success: false, error: toIPCError(error) };
       }
     }

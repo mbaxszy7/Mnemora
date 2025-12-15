@@ -1,7 +1,9 @@
 import { useState, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AppItem } from "./AppItem";
+import { SelectionHint } from "./SelectionHint";
 import type { AppInfo } from "@shared/capture-source-types";
 import { CheckSquare, Square, Search } from "lucide-react";
 
@@ -10,8 +12,8 @@ const SEARCH_THRESHOLD = 10;
 
 export interface AppSelectorProps {
   apps: AppInfo[];
-  selectedAppNames: string[];
-  onToggleApp: (appName: string) => void;
+  selectedApps: AppInfo[];
+  onToggleApp: (appId: string) => void;
   onSelectAll: () => void;
   onDeselectAll: () => void;
 }
@@ -25,16 +27,18 @@ export interface AppSelectorProps {
  */
 export function AppSelector({
   apps,
-  selectedAppNames,
+  selectedApps,
   onToggleApp,
   onSelectAll,
   onDeselectAll,
 }: AppSelectorProps) {
+  const { t } = useTranslation();
   const [searchQuery, setSearchQuery] = useState("");
 
+  const selectedAppIds = selectedApps.map((a) => a.id);
   const showSearch = apps.length > SEARCH_THRESHOLD;
-  const allSelected = apps.length > 0 && selectedAppNames.length === apps.length;
-  const noneSelected = selectedAppNames.length === 0;
+  const allSelected = apps.length > 0 && selectedApps.length === apps.length;
+  const noneSelected = selectedApps.length === 0;
 
   // Filter apps based on search query
   const filteredApps = useMemo(() => {
@@ -49,15 +53,17 @@ export function AppSelector({
     <div className="space-y-4">
       {/* Header with title and actions */}
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Applications</h3>
+        <h3 className="text-lg font-semibold">
+          {t("captureSourceSettings.apps.title", "Select Windows")}
+        </h3>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={onSelectAll} disabled={allSelected}>
             <CheckSquare className="h-4 w-4 mr-1" />
-            Select All
+            {t("captureSourceSettings.apps.selectAll", "Select All")}
           </Button>
           <Button variant="outline" size="sm" onClick={onDeselectAll} disabled={noneSelected}>
             <Square className="h-4 w-4 mr-1" />
-            Deselect All
+            {t("captureSourceSettings.apps.deselectAll", "Deselect All")}
           </Button>
         </div>
       </div>
@@ -68,7 +74,7 @@ export function AppSelector({
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
             type="text"
-            placeholder="Search applications..."
+            placeholder={t("captureSourceSettings.apps.searchPlaceholder", "Search windows...")}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
@@ -77,28 +83,28 @@ export function AppSelector({
       )}
 
       {/* Empty selection hint */}
-      {noneSelected && apps.length > 0 && (
-        <div className="text-sm text-muted-foreground bg-muted/50 rounded-md p-3">
-          All applications will be captured
-        </div>
-      )}
+      <SelectionHint type="apps" isVisible={noneSelected && apps.length > 0} />
 
       {/* App list */}
       {filteredApps.length > 0 ? (
-        <div className="space-y-2 max-h-[400px] overflow-y-auto">
+        <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
           {filteredApps.map((app) => (
             <AppItem
-              key={app.name}
+              key={app.id}
               app={app}
-              isSelected={selectedAppNames.includes(app.name)}
+              isSelected={selectedAppIds.includes(app.id)}
               onToggle={onToggleApp}
             />
           ))}
         </div>
       ) : apps.length > 0 ? (
-        <div className="text-center text-muted-foreground py-8">No applications found</div>
+        <div className="text-center text-muted-foreground py-8">
+          {t("captureSourceSettings.apps.noResults", "No windows found")}
+        </div>
       ) : (
-        <div className="text-center text-muted-foreground py-8">No applications available</div>
+        <div className="text-center text-muted-foreground py-8">
+          {t("captureSourceSettings.apps.noApps", "No windows available")}
+        </div>
       )}
     </div>
   );

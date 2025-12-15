@@ -1,5 +1,4 @@
 import { POPULAR_APPS } from "@shared/popular-apps";
-import type { NativeImage } from "electron";
 
 // ============================================================================
 // Scheduler Types
@@ -28,6 +27,13 @@ export interface SchedulerState {
   errorCount: number;
 }
 
+export interface VisibleSource {
+  id: string;
+  name: string;
+  type: "screen" | "window";
+  displayId?: string;
+}
+
 // ============================================================================
 // Capture Source Types
 // ============================================================================
@@ -40,9 +46,7 @@ export interface CaptureSource {
   name: string;
   type: "screen" | "window";
   displayId?: string;
-  appIcon?: NativeImage;
-  /** Application name (from AppleScript on macOS, e.g., "Google Chrome" for browser windows) */
-  appName?: string;
+  appIcon?: string | null;
   /** Window bounds (used to detect minimized windows with zero/negative dimensions) */
   bounds?: { x: number; y: number; width: number; height: number };
 }
@@ -68,12 +72,8 @@ export interface CaptureOptions {
   format: "jpeg" | "png" | "webp";
   /** Quality for lossy formats (0-100) */
   quality: number;
-  /**
-   * Filter to capture only specific screens by their display IDs (CGDirectDisplayID as string).
-   * If undefined or empty, captures all available screens.
-   * These IDs should match the numeric display IDs from node-screenshots Monitor.id.
-   */
-  screenIds?: string[];
+
+  selectedScreenIds?: string[];
 }
 
 /**
@@ -86,8 +86,6 @@ export interface CaptureResult {
   timestamp: number;
   /** Source information (single screen) */
   source: CaptureSource;
-  /** Screen ID for multi-screen file naming (CGDirectDisplayID) */
-  screenId: string;
 }
 
 // ============================================================================
@@ -238,6 +236,7 @@ export const DEFAULT_WINDOW_FILTER_CONFIG: WindowFilterConfig = {
     "Window Server",
     "Mnemora", // Exclude self
     "Electron", // Exclude self (process name in dev mode)
+    "Mnemora - Your Second Brain",
   ],
   appAliases: {
     ...POPULAR_APPS_ALIAS,

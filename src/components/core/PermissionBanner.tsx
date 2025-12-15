@@ -41,15 +41,8 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
 
         setPermissions(result.data);
 
-        // If all permissions just became granted, initialize services
+        // If all permissions just became granted, notify parent
         if (!prevAllGranted && newAllGranted) {
-          try {
-            await window.permissionApi.initServices();
-            console.log("Services initialized after permission grant");
-          } catch (error) {
-            console.error("Failed to initialize services:", error);
-          }
-
           if (onPermissionGranted) {
             onPermissionGranted();
           }

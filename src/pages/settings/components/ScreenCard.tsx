@@ -1,6 +1,7 @@
-import { cn } from "@/lib/utils";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
+import { cn } from "@/lib/utils";
 import type { ScreenInfo } from "@shared/capture-source-types";
 import { useTranslation } from "react-i18next";
 
@@ -31,13 +32,13 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
   };
 
   return (
-    <div
+    <Card
       role="button"
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
-        "relative rounded-lg border-2 overflow-hidden cursor-pointer transition-all",
+        "relative overflow-hidden cursor-pointer transition-all border-2",
         "hover:border-primary/50 hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         isSelected ? "border-primary bg-primary/5" : "border-border"
@@ -57,7 +58,7 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
         <div className="absolute top-2 right-2">
           <Checkbox
             checked={isSelected}
-            className="bg-background/80 backdrop-blur-sm"
+            className="bg-background/80 backdrop-blur-sm border-primary"
             onClick={(e) => e.stopPropagation()}
             onCheckedChange={() => onToggle(screen.id)}
           />
@@ -66,8 +67,11 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
         {/* Primary badge */}
         {screen.isPrimary && (
           <div className="absolute top-2 left-2">
-            <Badge variant="secondary" className="bg-background/80 backdrop-blur-sm text-xs">
-              Primary
+            <Badge
+              variant="secondary"
+              className="bg-background/80 backdrop-blur-sm text-xs shadow-sm"
+            >
+              {t("captureSourceSettings.screens.primary", "Primary")}
             </Badge>
           </div>
         )}
@@ -78,10 +82,13 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
         <div className="font-medium text-sm truncate" title={screen.name}>
           {screen.name}
         </div>
-        <div className="text-xs text-muted-foreground">
-          {screen.width} × {screen.height}
+        <div className="text-xs text-muted-foreground flex items-center gap-1">
+          <span>{t("captureSourceSettings.screens.resolution", "Resolution")}:</span>
+          <span>
+            {screen.bounds.width} × {screen.bounds.height}
+          </span>
         </div>
       </div>
-    </div>
+    </Card>
   );
 }

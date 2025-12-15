@@ -8,7 +8,6 @@ import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { PermissionCheckResult } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
 import { permissionService } from "../services/permission-service";
-import { ScreenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 // Lazy logger initialization to avoid issues with app not being ready
@@ -97,21 +96,6 @@ export function registerPermissionHandlers(): void {
         return { success: true };
       } catch (error) {
         logger.error({ error }, "Failed to open accessibility settings");
-        return { success: false, error: toIPCError(error) };
-      }
-    }
-  );
-
-  // Initialize services after permissions are granted
-  registry.registerHandler(
-    IPC_CHANNELS.PERMISSION_INIT_SERVICES,
-    async (): Promise<IPCResult<boolean>> => {
-      try {
-        logger.info("Attempting to initialize services after permission grant");
-        const initialized = ScreenCaptureModule.tryInitialize();
-        return { success: true, data: initialized };
-      } catch (error) {
-        logger.error({ error }, "Failed to initialize services");
         return { success: false, error: toIPCError(error) };
       }
     }

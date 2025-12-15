@@ -57,4 +57,4 @@ export {
 } from "./capture-source-types";
 
 // Popular Apps
-export { type PopularAppConfig, POPULAR_APPS, findPopularApp, isPopularApp } from "./popular-apps";
+export { type PopularAppConfig, POPULAR_APPS } from "./popular-apps";

@@ -20,10 +20,6 @@ export class CapturePreferencesService {
     this.logger.info("CapturePreferencesService initialized with default preferences");
   }
 
-  /**
-   * Get current capture preferences (deep copy to prevent external mutation)
-   * @returns Current preferences
-   */
   getPreferences(): CapturePreferences {
     // this.logger.info({ preferences: this.preferences }, "Getting current preferences");
     return {
@@ -32,10 +28,6 @@ export class CapturePreferencesService {
     };
   }
 
-  /**
-   * Update capture preferences
-   * @param prefs - Partial preferences to update
-   */
   setPreferences(prefs: Partial<CapturePreferences>): void {
     // const oldPreferences = this.getPreferences();
 
@@ -60,7 +52,7 @@ export class CapturePreferencesService {
   getEffectiveCaptureSources(captureSources: VisibleSource[]) {
     const result = {
       selectedScreens: this.computeEffectiveScreens(captureSources),
-      selectedApps: this.computeEffectiveApps(captureSources),
+      selectedApps: this.preferences.selectedApps,
     };
 
     // this.logger.info(
@@ -106,9 +98,6 @@ export class CapturePreferencesService {
     return effectiveApps;
   }
 
-  /**
-   * Reset preferences to default values
-   */
   resetPreferences(): void {
     const oldPreferences = this.getPreferences();
 

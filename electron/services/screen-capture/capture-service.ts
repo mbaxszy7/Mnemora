@@ -170,7 +170,7 @@ export class CaptureService implements ICaptureService {
     );
 
     if (targetSources.length === 0) {
-      logger.warn({ selectedInfo }, "No windows found for specified apps");
+      logger.warn("No windows found for specified apps");
       return [];
     }
 

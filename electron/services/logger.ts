@@ -23,9 +23,6 @@ class LoggerService {
     this.logger = this.createLogger();
   }
 
-  /**
-   * Get the singleton instance
-   */
   static getInstance(): LoggerService {
     if (!LoggerService.instance) {
       LoggerService.instance = new LoggerService();
@@ -33,16 +30,10 @@ class LoggerService {
     return LoggerService.instance;
   }
 
-  /**
-   * Reset instance (for testing only)
-   */
   static resetInstance(): void {
     LoggerService.instance = null;
   }
 
-  /**
-   * Get logs directory - use project electron/logs folder
-   */
   private getLogsDir(): string {
     const debugLogDir = path.join(os.homedir(), ".mnemora", "logs");
     // const __filename = fileURLToPath(import.meta.url);
@@ -51,18 +42,12 @@ class LoggerService {
     return debugLogDir;
   }
 
-  /**
-   * Ensure logs directory exists
-   */
   private ensureLogsDir(): void {
     if (!fs.existsSync(this.logsDir)) {
       fs.mkdirSync(this.logsDir, { recursive: true });
     }
   }
 
-  /**
-   * Create logger instance with file and console streams
-   */
   private createLogger(): pino.Logger {
     // Clear log file on each hot reload (development mode)
     if (fs.existsSync(this.logFile)) {
@@ -119,10 +104,6 @@ class LoggerService {
     );
   }
 
-  /**
-   * Get the pino logger instance
-   * @param name - Optional module name for child logger
-   */
   getLogger(name?: string): pino.Logger {
     if (name) {
       return this.logger.child({ module: name });
@@ -130,17 +111,11 @@ class LoggerService {
     return this.logger;
   }
 
-  /**
-   * Get the log file path
-   */
   getLogFile(): string {
     return this.logFile;
   }
 }
 
-/**
- * Initialize logger - call this in app.whenReady()
- */
 export function initializeLogger(): pino.Logger {
   const service = LoggerService.getInstance();
   const logger = service.getLogger();
@@ -148,10 +123,6 @@ export function initializeLogger(): pino.Logger {
   return logger;
 }
 
-/**
- * Get the logger instance (convenience function)
- * @param name - Optional module name for child logger
- */
 export function getLogger(name?: string): pino.Logger {
   return LoggerService.getInstance().getLogger(name);
 }

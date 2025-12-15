@@ -16,8 +16,6 @@ export interface ScreenSelectorProps {
 /**
  * ScreenSelector component renders a grid of screen cards with
  * select all/deselect all buttons and empty selection hint.
- *
- * Requirements: 1.1, 1.4, 6.1, 10.1, 10.2
  */
 export function ScreenSelector({
   screens,

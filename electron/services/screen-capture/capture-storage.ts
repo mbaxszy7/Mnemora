@@ -15,16 +15,10 @@ import { formatAppName } from "@shared/popular-apps";
 
 const logger = getLogger("capture-storage");
 
-/**
- * Get the base directory for storing captures
- */
 export function getCaptureStorageDir(): string {
   return path.join(os.homedir(), ".mnemora", "images");
 }
 
-/**
- * Ensure the storage directory exists
- */
 export async function ensureStorageDir(): Promise<void> {
   const dir = getCaptureStorageDir();
   try {
@@ -39,9 +33,8 @@ export async function ensureStorageDir(): Promise<void> {
 /**
  * Generate a filename for a capture based on timestamp
  * @param timestamp - The capture timestamp
- * @param format - The image format
- * @param screenId - Optional screen ID for multi-screen captures
- * @param isMultiScreen - Whether this is part of a multi-screen capture
+ * @param format - The image format (jpeg, png, webp)
+ * @param source - The capture source (screen or window)
  */
 export function generateCaptureFilename(
   timestamp: number,
@@ -83,9 +76,6 @@ export async function saveCaptureToFile(
   }
 }
 
-/**
- * List all captures in the storage directory
- */
 export async function listCaptures(): Promise<string[]> {
   const dir = getCaptureStorageDir();
   try {

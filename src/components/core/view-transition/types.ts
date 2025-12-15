@@ -1,7 +1,6 @@
 /**
  * View Transition Type Definitions
  * Provides TypeScript types for the view transition system
- * Requirements: 5.1, 5.2, 5.3
  */
 
 /**

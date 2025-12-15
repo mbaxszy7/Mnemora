@@ -7,8 +7,6 @@
  * - Hooks: useViewTransition, useTransitionState
  * - Components: ViewTransitionProvider, ViewTransitionContext, TransitionNavLink
  * - Utilities: getTransitionCSS, transitionPresets, getReverseTransition
- *
- * Requirements: 1.1, 3.4, 5.1
  */
 
 // Type exports

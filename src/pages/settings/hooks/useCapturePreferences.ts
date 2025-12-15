@@ -2,6 +2,8 @@ import { useSuspenseQuery, useMutation, useQueryClient } from "@tanstack/react-q
 import type { CapturePreferences, PreferencesResponse } from "@shared/capture-source-types";
 import type { IPCResult } from "@shared/ipc-types";
 
+export const CAPTURE_PREFERENCES_QUERY_KEY = ["capture-preferences"] as const;
+
 /**
  * Hook to manage capture source preferences (session-level only)
  *
@@ -14,7 +16,7 @@ export function useCapturePreferences() {
   const queryClient = useQueryClient();
 
   const query = useSuspenseQuery<IPCResult<PreferencesResponse>>({
-    queryKey: ["capture-preferences"],
+    queryKey: CAPTURE_PREFERENCES_QUERY_KEY,
     queryFn: async () => {
       return await window.captureSourceApi.getPreferences();
     },
@@ -29,28 +31,31 @@ export function useCapturePreferences() {
     },
 
     onMutate: async (newPrefs) => {
-      await queryClient.cancelQueries({ queryKey: ["capture-preferences"] });
+      await queryClient.cancelQueries({ queryKey: CAPTURE_PREFERENCES_QUERY_KEY });
 
-      const previousPrefs = queryClient.getQueryData<IPCResult<PreferencesResponse>>([
-        "capture-preferences",
-      ]);
+      const previousPrefs = queryClient.getQueryData<IPCResult<PreferencesResponse>>(
+        CAPTURE_PREFERENCES_QUERY_KEY
+      );
 
-      queryClient.setQueryData<IPCResult<PreferencesResponse>>(["capture-preferences"], (old) => {
-        if (!old?.success || !old.data) return old;
-        return {
-          ...old,
-          data: {
-            preferences: { ...old.data.preferences, ...newPrefs },
-          },
-        };
-      });
+      queryClient.setQueryData<IPCResult<PreferencesResponse>>(
+        CAPTURE_PREFERENCES_QUERY_KEY,
+        (old) => {
+          if (!old?.success || !old.data) return old;
+          return {
+            ...old,
+            data: {
+              preferences: { ...old.data.preferences, ...newPrefs },
+            },
+          };
+        }
+      );
 
       return { previousPrefs };
     },
 
     onError: (_err, _newPrefs, context) => {
       if (context?.previousPrefs) {
-        queryClient.setQueryData(["capture-preferences"], context.previousPrefs);
+        queryClient.setQueryData(CAPTURE_PREFERENCES_QUERY_KEY, context.previousPrefs);
       }
     },
   });

@@ -1,6 +1,5 @@
 /**
  * i18n Configuration for Renderer Process
- * Requirements: 3.1, 3.2
  */
 import type { SupportedLanguage } from "@shared/i18n-types";
 import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from "@shared/i18n-types";

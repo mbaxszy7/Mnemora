@@ -1,6 +1,5 @@
 /**
  * Unit tests for ViewTransitionProvider and useTransitionState
- * Requirements: 3.1, 3.4
  * @vitest-environment jsdom
  */
 

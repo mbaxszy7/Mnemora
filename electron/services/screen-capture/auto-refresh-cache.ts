@@ -1,10 +1,5 @@
 /**
  * AutoRefreshCache - Generic cache with automatic refresh at configurable intervals
- *
- * Features:
- * - Synchronous access to cached data
- * - Error resilience (retains previous data on fetch failure)
- * - setTimeout-based refresh loop for better control
  */
 
 import { AutoRefreshCacheOptions, DEFAULT_CACHE_INTERVAL } from "./types";

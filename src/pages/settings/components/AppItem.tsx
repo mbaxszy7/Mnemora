@@ -14,8 +14,6 @@ export interface AppItemProps {
 /**
  * AppItem component displays an application with icon, name, window count,
  * and checkbox selection interaction.
- *
- * Requirements: 2.2, 2.3, 2.5
  */
 export function AppItem({ app, isSelected, onToggle }: AppItemProps) {
   const handleClick = () => {

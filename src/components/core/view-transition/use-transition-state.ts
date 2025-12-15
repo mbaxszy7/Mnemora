@@ -1,7 +1,6 @@
 /**
  * useTransitionState Hook
  * Provides access to current transition state from context
- * Requirements: 3.4
  */
 
 import { useContext } from "react";

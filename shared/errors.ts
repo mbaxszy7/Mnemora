@@ -1,6 +1,3 @@
-/**
- * Unified error code enum - shared between frontend and backend
- */
 export enum ErrorCode {
   // AI SDK related
   API_KEY_MISSING = "API_KEY_MISSING",
@@ -17,9 +14,6 @@ export enum ErrorCode {
   UNKNOWN = "UNKNOWN",
 }
 
-/**
- * Error code to user-friendly message mapping
- */
 export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.API_KEY_MISSING]: "Please configure API Key",
   [ErrorCode.NOT_INITIALIZED]: "AI service not initialized",
@@ -31,9 +25,6 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.UNKNOWN]: "An unknown error occurred, please try again",
 };
 
-/**
- * Get user-friendly error message
- */
 export function getErrorMessage(code: ErrorCode | string): string {
   if (Object.prototype.hasOwnProperty.call(ERROR_MESSAGES, code)) {
     return ERROR_MESSAGES[code as ErrorCode];
@@ -41,9 +32,6 @@ export function getErrorMessage(code: ErrorCode | string): string {
   return ERROR_MESSAGES[ErrorCode.UNKNOWN];
 }
 
-/**
- * Service error class - with error code and details
- */
 export class ServiceError extends Error {
   constructor(
     public readonly code: ErrorCode,

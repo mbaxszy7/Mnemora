@@ -11,8 +11,6 @@ export interface SelectionHintProps {
 /**
  * SelectionHint component displays a hint message when no items are selected,
  * indicating that all screens/apps will be captured.
- *
- * Requirements: 6.1, 6.2
  */
 export function SelectionHint({ type, isVisible }: SelectionHintProps) {
   const { t } = useTranslation();

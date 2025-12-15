@@ -1,7 +1,6 @@
 /**
  * CSS Animation Presets for View Transitions
  * Provides predefined CSS animations for each transition type
- * Requirements: 4.1, 4.2
  */
 
 import type { TransitionType } from "./types";

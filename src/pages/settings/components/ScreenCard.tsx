@@ -14,8 +14,6 @@ export interface ScreenCardProps {
 /**
  * ScreenCard component displays a screen with thumbnail, name, resolution,
  * and primary display indicator. Supports selection interaction.
- *
- * Requirements: 1.2, 1.3, 6.3, 7.1, 7.2
  */
 export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
   const { t } = useTranslation();

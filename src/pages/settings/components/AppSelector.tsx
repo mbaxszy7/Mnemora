@@ -22,8 +22,6 @@ export interface AppSelectorProps {
  * AppSelector component renders a list of applications with
  * search/filter functionality (when apps > 10), select all/deselect all buttons,
  * and empty selection hint.
- *
- * Requirements: 2.1, 2.4, 6.2, 8.2, 10.1, 10.2
  */
 export function AppSelector({
   apps,

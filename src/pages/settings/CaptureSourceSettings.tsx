@@ -3,12 +3,16 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCw } from "lucide-react";
 import { useViewTransition } from "@/components/core/view-transition";
 import { ScreenSelector, AppSelector } from "./components";
-import { useCaptureScreens } from "./hooks/useCaptureScreens";
-import { useCaptureApps } from "./hooks/useCaptureApps";
-import { useCapturePreferences } from "./hooks/useCapturePreferences";
+import { CAPTURE_SCREENS_QUERY_KEY, useCaptureScreens } from "./hooks/useCaptureScreens";
+import { CAPTURE_APPS_QUERY_KEY, useCaptureApps } from "./hooks/useCaptureApps";
+import {
+  CAPTURE_PREFERENCES_QUERY_KEY,
+  useCapturePreferences,
+} from "./hooks/useCapturePreferences";
+import { useQueryClient } from "@tanstack/react-query";
 
 /**
  * Loading skeleton for the capture source settings page
@@ -161,16 +165,23 @@ function CaptureSourceSettingsContent() {
  * Allows users to configure which screens and applications to capture.
  * Combines ScreenSelector and AppSelector components.
  * Preferences are session-level only and reset when app restarts.
- *
- * Requirements: 1.1, 2.1
  */
 export default function CaptureSourceSettings() {
   const { t } = useTranslation();
   const { navigate } = useViewTransition();
+  const queryClient = useQueryClient();
 
   const handleBack = useCallback(() => {
     navigate("/settings", { type: "slide-right", duration: 300 });
   }, [navigate]);
+
+  const handleReload = useCallback(async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: CAPTURE_SCREENS_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: CAPTURE_APPS_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: CAPTURE_PREFERENCES_QUERY_KEY }),
+    ]);
+  }, [queryClient]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -180,16 +191,22 @@ export default function CaptureSourceSettings() {
           <ArrowLeft className="mr-2 h-4 w-4" />
           {t("settings.title", "Settings")}
         </Button>
-        <div>
-          <h1 className="text-3xl font-bold">
-            {t("captureSourceSettings.title", "Capture Source Settings")}
-          </h1>
-          <p className="text-muted-foreground mt-2">
-            {t(
-              "captureSourceSettings.description",
-              "Configure which screens and applications to capture"
-            )}
-          </p>
+        <div className="flex items-start justify-between">
+          <div>
+            <h1 className="text-3xl font-bold">
+              {t("captureSourceSettings.title", "Capture Source Settings")}
+            </h1>
+            <p className="text-muted-foreground mt-2">
+              {t(
+                "captureSourceSettings.description",
+                "Configure which screens and applications to capture"
+              )}
+            </p>
+          </div>
+          <Button variant="outline" onClick={handleReload} className="gap-2">
+            <RotateCw className="h-4 w-4" />
+            {t("common.buttons.reload", "Reload")}
+          </Button>
         </div>
       </div>
 

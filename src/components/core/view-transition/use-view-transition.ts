@@ -1,7 +1,6 @@
 /**
  * useViewTransition Hook
  * Provides navigation with View Transitions API support
- * Requirements: 1.1, 1.2, 1.3, 1.4, 1.5, 4.3
  */
 
 import { useCallback, useContext } from "react";

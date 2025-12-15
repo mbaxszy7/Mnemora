@@ -208,7 +208,10 @@ export class ScreenCaptureModule {
 
       // If no windows found, fall back to screen capture
       if (results.length === 0) {
-        this.logger.error("No windows found for selected apps, falling back to screen capture");
+        this.logger.error(
+          { hasSelectedApps },
+          "No windows found for selected apps, no screenshots captured"
+        );
       }
     } else {
       results = await this.captureService.captureScreens({

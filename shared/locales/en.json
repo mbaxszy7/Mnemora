@@ -4,7 +4,8 @@
       "save": "Save",
       "cancel": "Cancel",
       "confirm": "Confirm",
-      "close": "Close"
+      "close": "Close",
+      "reload": "Reload"
     },
     "messages": {
       "loading": "Loading...",

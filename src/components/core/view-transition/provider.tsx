@@ -1,7 +1,6 @@
 /**
  * ViewTransitionProvider and Context
  * Provides transition state management and reduced motion detection
- * Requirements: 3.1, 3.2, 3.3, 2.1, 2.2
  */
 
 import {

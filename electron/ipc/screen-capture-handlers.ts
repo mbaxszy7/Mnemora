@@ -5,8 +5,6 @@
  * - start/stop/pause/resume
  * - getState
  * - updateConfig
- *
- * Requirements: 3.2, 5.4
  */
 
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";

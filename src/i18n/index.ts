@@ -1,6 +1,5 @@
 /**
  * i18next initialization for Renderer Process
- * Requirements: 3.1, 3.2
  */
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";

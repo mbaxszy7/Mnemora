@@ -36,6 +36,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 const isDev = !!VITE_DEV_SERVER_URL;
 
+// App icon path (for BrowserWindow and Dock)
 const appIconPath = path.join(
   VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST,
   "logo.png"
@@ -227,6 +228,7 @@ app.on("before-quit", () => {
   isQuitting = true;
   // Dispose screen capture module
   ScreenCaptureModule.resetInstance();
+  TrayService.resetInstance();
   // Dispose power monitor
   powerMonitorService.dispose();
   // Close database connection before quitting
@@ -252,24 +254,20 @@ if (gotTheLock) {
 
     await initializeApp();
     mainWindow = createMainWindow();
-    trayService = new TrayService({
-      iconPath: appIconPath,
-      onShowMainWindow: () => {
-        if (!mainWindow) {
+    trayService = TrayService.getInstance();
+    trayService
+      .configure({
+        createWindow: () => {
           mainWindow = createMainWindow();
-        }
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.show();
-        mainWindow.focus();
-      },
-      onQuit: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    });
-    trayService.init();
+          return mainWindow;
+        },
+        getMainWindow: () => mainWindow,
+        onQuit: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      })
+      .init();
     logger.info("Main window created");
   });
 }

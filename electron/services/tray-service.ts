@@ -1,15 +1,20 @@
-import { Menu, Tray, nativeImage } from "electron";
+import { BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { getScreenCaptureModule } from "./screen-capture";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
+import { VITE_DEV_SERVER_URL, RENDERER_DIST } from "../main";
 
-interface TrayServiceOptions {
-  iconPath: string;
+export interface TrayServiceConfig {
   /**
-   * Show the main window (create if needed, restore if minimized, focus).
+   * Function to create the main window.
+   * Should return the created BrowserWindow and handle assignment to main process variable.
    */
-  onShowMainWindow: () => void;
+  createWindow: () => BrowserWindow;
+  /**
+   * Function to get the current main window instance.
+   */
+  getMainWindow: () => BrowserWindow | null;
   /**
    * Callback before quitting the app (set flags, cleanup, then call app.quit()).
    */
@@ -17,20 +22,45 @@ interface TrayServiceOptions {
 }
 
 export class TrayService {
+  private static instance: TrayService | null = null;
   private tray: Tray | null = null;
   private readonly logger = getLogger("tray-service");
-  private readonly iconPath: string;
-  private readonly onShowMainWindow: () => void;
-  private readonly onQuit: () => void;
+  private config: TrayServiceConfig | null = null;
   private readonly handleSchedulerEventBound = () => {
     this.refreshMenu();
     this.refreshTooltip();
   };
 
-  constructor(options: TrayServiceOptions) {
-    this.iconPath = options.iconPath;
-    this.onShowMainWindow = options.onShowMainWindow;
-    this.onQuit = options.onQuit;
+  private constructor() {
+    // Private constructor for singleton
+  }
+
+  static getInstance(): TrayService {
+    if (!TrayService.instance) {
+      TrayService.instance = new TrayService();
+    }
+    return TrayService.instance;
+  }
+
+  static resetInstance(): void {
+    if (TrayService.instance) {
+      TrayService.instance.dispose();
+      TrayService.instance = null;
+    }
+  }
+
+  configure(config: TrayServiceConfig) {
+    this.config = config;
+    return this;
+  }
+
+  private getIconPath(): string {
+    const base = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT!, "public") : RENDERER_DIST;
+    // macOS tray uses Template images (monochrome)
+    if (process.platform === "darwin") {
+      return path.join(base, "logoTemplate@2x.png");
+    }
+    return path.join(base, "logo.png");
   }
 
   init(): void {
@@ -39,7 +69,7 @@ export class TrayService {
       return;
     }
 
-    const resolvedIconPath = path.resolve(this.iconPath);
+    const resolvedIconPath = path.resolve(this.getIconPath());
     const icon = nativeImage.createFromPath(resolvedIconPath);
     this.tray = new Tray(icon);
     this.refreshTooltip();
@@ -107,7 +137,19 @@ export class TrayService {
 
   private handleShowMainWindow = (): void => {
     try {
-      this.onShowMainWindow();
+      if (!this.config) {
+        this.logger.warn("TrayService not configured");
+        return;
+      }
+      let mainWindow = this.config.getMainWindow();
+      if (!mainWindow) {
+        mainWindow = this.config.createWindow();
+      }
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
     } catch (error) {
       this.logger.error({ error }, "Failed to show main window from tray");
     }
@@ -115,7 +157,11 @@ export class TrayService {
 
   private handleQuit = (): void => {
     try {
-      this.onQuit();
+      if (!this.config) {
+        this.logger.warn("TrayService not configured");
+        return;
+      }
+      this.config.onQuit();
     } catch (error) {
       this.logger.error({ error }, "Failed to quit app from tray");
     }

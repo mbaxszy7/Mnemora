@@ -15,12 +15,34 @@ class LoggerService {
   private logger: pino.Logger;
   private logsDir: string;
   private logFile: string;
+  private readonly maxEntries = 50;
 
   private constructor() {
     this.logsDir = this.getLogsDir();
     this.ensureLogsDir();
     this.logFile = path.join(this.logsDir, "main.log");
     this.logger = this.createLogger();
+  }
+
+  private trimLogFile(): void {
+    try {
+      const content = fs.readFileSync(this.logFile, "utf8");
+      const lines = content.split(/\r?\n/).filter((line) => line.length > 0);
+      if (lines.length > this.maxEntries) {
+        const trimmed = lines.slice(-this.maxEntries).join(os.EOL) + os.EOL;
+        fs.writeFileSync(this.logFile, trimmed, "utf8");
+      }
+    } catch {
+      // Fail silently to avoid blocking logging
+    }
+  }
+
+  private isProd(): boolean {
+    try {
+      return app.isPackaged;
+    } catch {
+      return false;
+    }
   }
 
   static getInstance(): LoggerService {
@@ -50,8 +72,13 @@ class LoggerService {
 
   private createLogger(): pino.Logger {
     // Clear log file on each hot reload (development mode)
+    // In production, retain latest maxEntries to cap file growth
     if (fs.existsSync(this.logFile)) {
-      fs.unlinkSync(this.logFile);
+      if (this.isProd()) {
+        this.trimLogFile();
+      } else {
+        fs.unlinkSync(this.logFile);
+      }
     }
 
     // Create pretty stream for console with custom format
@@ -80,20 +107,23 @@ class LoggerService {
       },
     });
 
-    // Create multiple streams for file and console output
-    const streams = [{ stream: filePrettyStream }, { stream: prettyStream }];
-
     // Use try-catch for app.isPackaged as it may not be available before app is ready
-    let logLevel = "debug";
-    try {
-      logLevel = app.isPackaged ? "info" : "debug";
-    } catch {
-      // Default to debug if app is not ready
-    }
+    const isProd = this.isProd();
+
+    // Create multiple streams for file and console output with per-env levels
+    const streams = isProd
+      ? [
+          { level: "error", stream: filePrettyStream },
+          { level: "error", stream: prettyStream },
+        ]
+      : [
+          { level: "debug", stream: filePrettyStream },
+          { level: "debug", stream: prettyStream },
+        ];
 
     return pino(
       {
-        level: logLevel,
+        level: isProd ? "error" : "debug",
         base: {
           pid: process.pid,
           app: "mnemora",

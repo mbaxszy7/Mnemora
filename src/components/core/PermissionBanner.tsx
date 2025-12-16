@@ -6,7 +6,7 @@
  * grant permission or open system settings.
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { AlertTriangle, X, Settings, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -28,21 +28,28 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
   const [isLoading, setIsLoading] = useState(true);
   const [isRequesting, setIsRequesting] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
+  const isGrantedRef = useRef(false);
 
-  // Check permission status on mount and periodically
+  const allGranted = useCallback(
+    (p?: PermissionState | null) =>
+      p?.screenRecording === "granted" && p?.accessibility === "granted",
+    []
+  );
+
+  // Check permission status on mount and periodically (until granted)
   const checkPermission = useCallback(async () => {
+    // Skip calling IPC if we already know everything is granted
+    if (isGrantedRef.current || allGranted(permissions)) {
+      return;
+    }
     try {
       const result = await window.permissionApi.check();
       if (result.success && result.data) {
-        const prevAllGranted =
-          permissions?.screenRecording === "granted" && permissions?.accessibility === "granted";
-        const newAllGranted =
-          result.data.screenRecording === "granted" && result.data.accessibility === "granted";
-
         setPermissions(result.data);
 
         // If all permissions just became granted, notify parent
-        if (!prevAllGranted && newAllGranted) {
+        if (allGranted(result.data)) {
+          isGrantedRef.current = true;
           if (onPermissionGranted) {
             onPermissionGranted();
           }
@@ -53,24 +60,22 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
     } finally {
       setIsLoading(false);
     }
-  }, [onPermissionGranted, permissions]);
+  }, [allGranted, onPermissionGranted, permissions]);
 
   useEffect(() => {
     checkPermission();
 
-    // Poll for permission changes every 2 seconds when not all granted
+    // Poll for permission changes every 2 seconds only until granted
+    if (isGrantedRef.current || allGranted(permissions)) {
+      return;
+    }
+
     const interval = setInterval(() => {
-      if (
-        !permissions ||
-        permissions.screenRecording !== "granted" ||
-        permissions.accessibility !== "granted"
-      ) {
-        checkPermission();
-      }
+      checkPermission();
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [checkPermission, permissions]);
+  }, [allGranted, checkPermission, permissions]);
 
   // Handle grant permission button click
   const handleGrantPermission = async () => {
@@ -108,8 +113,7 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
   };
 
   // Check if all permissions are granted
-  const allGranted =
-    permissions?.screenRecording === "granted" && permissions?.accessibility === "granted";
+  const isAllGranted = allGranted(permissions);
 
   // Check if any permission is not-determined (can be requested)
   const canRequest =
@@ -118,7 +122,7 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
     permissions?.accessibility === "denied"; // Accessibility can always be requested
 
   // Don't show banner if loading, dismissed, or all permissions granted
-  if (isLoading || isDismissed || allGranted) {
+  if (isLoading || isDismissed || isAllGranted) {
     return null;
   }
 

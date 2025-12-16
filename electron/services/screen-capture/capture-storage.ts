@@ -14,6 +14,7 @@ import { CaptureSource } from "./types";
 import { formatAppName } from "@shared/popular-apps";
 
 const logger = getLogger("capture-storage");
+export const MAX_CAPTURE_COUNT = 20;
 
 export function getCaptureStorageDir(): string {
   return path.join(os.homedir(), ".mnemora", "images");

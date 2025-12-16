@@ -17,7 +17,7 @@ import { CaptureSourceProvider } from "./capture-source-provider";
 import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./capture-scheduler";
 
-import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
+import { saveCaptureToFile, cleanupOldCaptures, MAX_CAPTURE_COUNT } from "./capture-storage";
 import type {
   SchedulerConfig,
   SchedulerState,
@@ -251,6 +251,15 @@ export class ScreenCaptureModule {
       } catch (error) {
         this.logger.error({ error }, "Failed to save capture to disk");
       }
+    }
+
+    try {
+      const deleted = await cleanupOldCaptures(undefined, MAX_CAPTURE_COUNT);
+      if (deleted > 0) {
+        this.logger.info({ deleted }, "Cleaned up old captures after save");
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Failed to cleanup old captures after save");
     }
   }
 

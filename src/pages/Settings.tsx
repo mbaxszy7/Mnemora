@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useTheme } from "@/providers/theme-provider";
 import {
   Save,
   Languages,
@@ -37,11 +38,11 @@ export default function SettingsPage() {
     supportedLanguages,
     languageDisplayNames,
   } = useLanguage();
+  const { theme, setTheme } = useTheme();
 
   const [settings, setSettings] = useState({
     autoStart: false,
     notifications: true,
-    darkMode: true,
   });
 
   // Permission state
@@ -51,24 +52,44 @@ export default function SettingsPage() {
   const [isRequestingAccessibility, setIsRequestingAccessibility] = useState(false);
 
   // Check permission status
+  const allGranted = useCallback(
+    (screen?: PermissionStatus | null, accessibility?: PermissionStatus | null) =>
+      screen === "granted" && accessibility === "granted",
+    []
+  );
+  const grantedRef = useRef(false);
+
   const checkPermission = useCallback(async () => {
+    // Skip IPC if already fully granted
+    if (grantedRef.current || allGranted(screenRecordingStatus, accessibilityStatus)) {
+      return;
+    }
     try {
       const result = await window.permissionApi.check();
       if (result.success && result.data) {
         setScreenRecordingStatus(result.data.screenRecording);
         setAccessibilityStatus(result.data.accessibility);
+
+        if (allGranted(result.data.screenRecording, result.data.accessibility)) {
+          grantedRef.current = true;
+        }
       }
     } catch (error) {
       console.error("Failed to check permission:", error);
     }
-  }, []);
+  }, [accessibilityStatus, allGranted, screenRecordingStatus]);
 
   useEffect(() => {
     checkPermission();
-    // Poll for permission changes
+
+    // Poll only when not all granted
+    if (grantedRef.current || allGranted(screenRecordingStatus, accessibilityStatus)) {
+      return;
+    }
+
     const interval = setInterval(checkPermission, 2000);
     return () => clearInterval(interval);
-  }, [checkPermission]);
+  }, [accessibilityStatus, allGranted, checkPermission, screenRecordingStatus]);
 
   const handleRequestScreenRecording = async () => {
     setIsRequestingScreenRecording(true);
@@ -319,14 +340,19 @@ export default function SettingsPage() {
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="darkMode">Dark Mode</Label>
-            <p className="text-sm text-muted-foreground">Use dark theme interface</p>
+            <Label htmlFor="theme">{t("settings.appearance.label")}</Label>
+            <p className="text-sm text-muted-foreground">{t("settings.appearance.description")}</p>
           </div>
-          <Switch
-            id="darkMode"
-            checked={settings.darkMode}
-            onCheckedChange={() => updateSetting("darkMode")}
-          />
+          <Select value={theme} onValueChange={(value) => setTheme(value as typeof theme)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder={t("settings.appearance.placeholder")} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="system">{t("settings.appearance.options.system")}</SelectItem>
+              <SelectItem value="light">{t("settings.appearance.options.light")}</SelectItem>
+              <SelectItem value="dark">{t("settings.appearance.options.dark")}</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
       </div>
 

@@ -21,7 +21,17 @@
   "settings": {
     "title": "Settings",
     "language": "Language",
-    "theme": "Theme"
+    "theme": "Theme",
+    "appearance": {
+      "label": "Appearance",
+      "description": "Choose light, dark, or follow system",
+      "placeholder": "Select theme",
+      "options": {
+        "system": "System",
+        "light": "Light",
+        "dark": "Dark"
+      }
+    }
   },
   "dialogs": {
     "confirmExit": {

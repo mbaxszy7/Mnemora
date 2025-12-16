@@ -20,7 +20,17 @@
   "settings": {
     "title": "设置",
     "language": "语言",
-    "theme": "主题"
+    "theme": "主题",
+    "appearance": {
+      "label": "外观",
+      "description": "选择亮色、暗色或跟随系统",
+      "placeholder": "选择主题",
+      "options": {
+        "system": "跟随系统",
+        "light": "亮色",
+        "dark": "暗色"
+      }
+    }
   },
   "dialogs": {
     "confirmExit": {

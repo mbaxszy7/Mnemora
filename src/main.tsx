@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router-dom";
 import { router } from "./router";
 import { QueryProvider } from "./providers/query-provider.tsx";
 import { I18nProvider } from "./providers/i18n-provider.tsx";
+import { ThemeProvider } from "./providers/theme-provider";
 import "./index.css";
 
 // Session storage key for tracking if this is a fresh app launch
@@ -41,11 +42,13 @@ router.subscribe((state) => {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <I18nProvider>
-      <QueryProvider>
-        <RouterProvider router={router} />
-      </QueryProvider>
-    </I18nProvider>
+    <ThemeProvider>
+      <I18nProvider>
+        <QueryProvider>
+          <RouterProvider router={router} />
+        </QueryProvider>
+      </I18nProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );
 

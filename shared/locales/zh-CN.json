@@ -38,6 +38,18 @@
       "message": "确定要退出吗？"
     }
   },
+  "tray": {
+    "show": "显示窗口",
+    "startRecording": "开始录制",
+    "stopRecording": "停止录制",
+    "quit": "退出应用",
+    "status": {
+      "idle": "空闲",
+      "running": "录制中",
+      "paused": "已暂停",
+      "stopped": "已停止"
+    }
+  },
   "vlmDemo": {
     "title": "VLM 演示",
     "description": "选择图片进行 AI 视觉分析",

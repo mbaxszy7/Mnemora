@@ -17,6 +17,7 @@ import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
 import { ScreenCaptureModule, cleanupDevCaptures } from "./services/screen-capture";
 import { powerMonitorService } from "./services/power-monitor";
+import { TrayService } from "./services/tray-service";
 
 // ============================================================================
 // Environment Setup
@@ -67,6 +68,7 @@ if (!gotTheLock) {
 
 let mainWindow: BrowserWindow | null = null;
 let logger: ReturnType<typeof getLogger>;
+let trayService: TrayService | null = null;
 
 function createMainWindow(): BrowserWindow {
   // Create native image for icon to prevent flashing
@@ -85,17 +87,17 @@ function createMainWindow(): BrowserWindow {
     app.dock.setIcon(appIcon);
   }
 
-  // macOS: Hide window instead of closing when user clicks close button
-  // This allows the app to stay in dock and reopen quickly
-  if (process.platform === "darwin") {
-    win.on("close", (event) => {
-      // Only hide if not quitting the app
-      if (!isQuitting) {
-        event.preventDefault();
-        win.hide();
-      }
-    });
-  }
+  // All platforms: hide window instead of closing when user clicks close button
+  win.on("close", (event) => {
+    if (!isQuitting) {
+      event.preventDefault();
+      win.hide();
+    }
+  });
+
+  win.on("closed", () => {
+    mainWindow = null;
+  });
 
   win.webContents.on("did-finish-load", () => {
     win.webContents.send("main-process-message", new Date().toLocaleString());
@@ -217,11 +219,7 @@ async function initializeApp(): Promise<void> {
 let isQuitting = false;
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-    mainWindow = null;
-    IPCHandlerRegistry.getInstance().unregisterAll();
-  }
+  // Keep app running in tray; do not quit on window closed
 });
 
 app.on("before-quit", () => {
@@ -233,6 +231,7 @@ app.on("before-quit", () => {
   powerMonitorService.dispose();
   // Close database connection before quitting
   databaseService.close();
+  trayService?.dispose();
 });
 
 app.on("activate", () => {
@@ -253,6 +252,24 @@ if (gotTheLock) {
 
     await initializeApp();
     mainWindow = createMainWindow();
+    trayService = new TrayService({
+      iconPath: appIconPath,
+      onShowMainWindow: () => {
+        if (!mainWindow) {
+          mainWindow = createMainWindow();
+        }
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+        mainWindow.show();
+        mainWindow.focus();
+      },
+      onQuit: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    });
+    trayService.init();
     logger.info("Main window created");
   });
 }

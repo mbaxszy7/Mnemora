@@ -39,6 +39,18 @@
       "message": "Are you sure you want to exit?"
     }
   },
+  "tray": {
+    "show": "Show Window",
+    "startRecording": "Start Recording",
+    "stopRecording": "Stop Recording",
+    "quit": "Quit",
+    "status": {
+      "idle": "Idle",
+      "running": "Recording",
+      "paused": "Paused",
+      "stopped": "Stopped"
+    }
+  },
   "vlmDemo": {
     "title": "VLM Demo",
     "description": "Select an image to analyze using AI vision capabilities",

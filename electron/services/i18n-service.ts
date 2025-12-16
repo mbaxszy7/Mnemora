@@ -32,9 +32,9 @@ class MainI18nService {
     if (app.isPackaged) {
       return path.join(process.resourcesPath, "shared", "locales");
     }
-    // Development mode - go up from electron/services to project root
-    const projectRoot = path.join(__dirname, "..", "..");
-    return path.join(projectRoot, "shared", "locales");
+    // Development mode - use APP_ROOT set by main.ts
+    const appRoot = process.env.APP_ROOT || path.join(__dirname, "..");
+    return path.join(appRoot, "shared", "locales");
   }
 
   async initialize(): Promise<void> {

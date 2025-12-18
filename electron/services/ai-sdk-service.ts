@@ -89,6 +89,9 @@ export class AISDKService {
       name: "mnemora",
       baseURL: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
+      headers: {
+        authorization: `bearer ${endpoint.apiKey}`,
+      },
     });
     return { provider, model: endpoint.model };
   }

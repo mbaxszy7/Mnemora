@@ -1,30 +1,8 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Brain, Zap, Eye, ArrowRight, Pause, Play, Square } from "lucide-react";
 import { PermissionBanner } from "@/components/core/PermissionBanner";
-
-/**
- * Hook to initialize capture services once when permissions are granted
- */
-function useInitServices() {
-  const initializedRef = useRef(false);
-
-  const initServices = async () => {
-    if (initializedRef.current) return;
-    try {
-      const result = await window.captureSourceApi.initServices();
-      if (result.success) {
-        initializedRef.current = true;
-        console.log("Capture services initialized");
-      }
-    } catch (error) {
-      console.error("Failed to initialize capture services:", error);
-    }
-  };
-
-  return { initServices };
-}
 
 // TEMPORARY: Screen capture control buttons - remove later
 function ScreenCaptureControls() {
@@ -93,17 +71,11 @@ function ScreenCaptureControls() {
 
 export default function HomePage() {
   const navigate = useNavigate();
-  const { initServices } = useInitServices();
-
-  // Initialize services when page loads (if permissions are already granted)
-  useEffect(() => {
-    initServices();
-  }, [initServices]);
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       {/* Permission Banner */}
-      <PermissionBanner onPermissionGranted={initServices} />
+      <PermissionBanner />
 
       {/* TEMPORARY: Screen Capture Controls */}
       <ScreenCaptureControls />

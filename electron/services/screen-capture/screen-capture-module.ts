@@ -34,7 +34,7 @@ import { permissionService } from "../permission-service";
 import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
 
-const isDev = !!process.env["VITE_DEV_SERVER_URL"];
+// const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
@@ -112,7 +112,7 @@ export class ScreenCaptureModule {
 
     const llmConfig = await llmConfigService.loadConfiguration();
 
-    if (!llmConfig && !isDev) {
+    if (!llmConfig) {
       logger.info("LLM config not saved, skipping initialization ");
       return false;
     }

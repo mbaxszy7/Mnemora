@@ -15,7 +15,7 @@ import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
-import { ScreenCaptureModule, cleanupDevCaptures } from "./services/screen-capture";
+import { ScreenCaptureModule } from "./services/screen-capture";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 
@@ -184,18 +184,6 @@ function initPowerMonitor(): void {
 }
 
 async function initializeApp(): Promise<void> {
-  // 0. In dev mode, cleanup old captures (older than 1 day) to keep dev environment clean
-  if (isDev) {
-    try {
-      const deletedCount = await cleanupDevCaptures();
-      if (deletedCount > 0) {
-        logger.info({ deletedCount }, "Dev mode: cleaned up old captures");
-      }
-    } catch (error) {
-      logger.warn({ error }, "Dev mode: failed to cleanup old captures");
-    }
-  }
-
   // 1. Register IPC handlers first (before any async operations)
   registerIPCHandlers();
   // 2. Initialize database (critical, must succeed)

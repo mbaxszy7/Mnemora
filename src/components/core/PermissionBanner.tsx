@@ -12,19 +12,17 @@ import { AlertTriangle, X, Settings, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { PermissionStatus } from "@shared/ipc-types";
-
-interface PermissionBannerProps {
-  onPermissionGranted?: () => void;
-}
+import { useInitServices } from "@/hooks/use-capture-source";
 
 interface PermissionState {
   screenRecording: PermissionStatus;
   accessibility: PermissionStatus;
 }
 
-export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps) {
+export function PermissionBanner() {
   const { t } = useTranslation();
   const [permissions, setPermissions] = useState<PermissionState | null>(null);
+  const { initServices } = useInitServices();
   const [isLoading, setIsLoading] = useState(true);
   const [isRequesting, setIsRequesting] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
@@ -50,9 +48,7 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
         // If all permissions just became granted, notify parent
         if (allGranted(result.data)) {
           isGrantedRef.current = true;
-          if (onPermissionGranted) {
-            onPermissionGranted();
-          }
+          initServices();
         }
       }
     } catch (error) {
@@ -60,7 +56,7 @@ export function PermissionBanner({ onPermissionGranted }: PermissionBannerProps)
     } finally {
       setIsLoading(false);
     }
-  }, [allGranted, onPermissionGranted, permissions]);
+  }, [allGranted, initServices, permissions]);
 
   useEffect(() => {
     checkPermission();

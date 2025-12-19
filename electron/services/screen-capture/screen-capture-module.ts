@@ -41,6 +41,7 @@ import { CapturePreferencesService } from "../capture-preferences-service";
  */
 export class ScreenCaptureModule {
   private static instance: ScreenCaptureModule | null = null;
+  private static disabled = false;
 
   private readonly sourceProvider: CaptureSourceProvider;
   private readonly captureService: CaptureService;
@@ -53,10 +54,7 @@ export class ScreenCaptureModule {
   private constructor() {
     this.logger.info("Initializing ScreenCaptureModule");
 
-    this.sourceProvider = new CaptureSourceProvider({
-      immediate: true,
-      onError: (error) => this.logger.error({ error }, "Source provider cache error"),
-    });
+    this.sourceProvider = new CaptureSourceProvider();
     this.captureService = new CaptureService();
     this.preferencesService = new CapturePreferencesService();
     this.scheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
@@ -76,6 +74,10 @@ export class ScreenCaptureModule {
    */
   static getInstance(): ScreenCaptureModule {
     const logger = getLogger("screen-capture-module");
+    if (ScreenCaptureModule.disabled) {
+      logger.info("ScreenCaptureModule disabled, skipping getInstance");
+      throw new Error("ScreenCaptureModule disabled");
+    }
     if (!ScreenCaptureModule.instance) {
       logger.info("Creating new ScreenCaptureModule instance");
       ScreenCaptureModule.instance = new ScreenCaptureModule();
@@ -94,11 +96,28 @@ export class ScreenCaptureModule {
   }
 
   /**
+   * Disable creation/restart (e.g., during app quit)
+   */
+  static disable(): void {
+    const logger = getLogger("screen-capture-module");
+    if (ScreenCaptureModule.instance) {
+      ScreenCaptureModule.instance.dispose();
+      ScreenCaptureModule.instance = null;
+    }
+    ScreenCaptureModule.disabled = true;
+    logger.info("ScreenCaptureModule disabled");
+  }
+
+  /**
    * Try to initialize and start screen capture if permissions are granted
    * Call this after user grants permissions
    */
   static async tryInitialize() {
     const logger = getLogger("screen-capture-module");
+    if (ScreenCaptureModule.disabled) {
+      logger.info("Screen capture module disabled, skipping initialization");
+      return false;
+    }
 
     if (!permissionService.hasScreenRecordingPermission()) {
       logger.info("Screen recording permission not granted, skipping initialization");
@@ -175,41 +194,22 @@ export class ScreenCaptureModule {
   private async executeCaptureTask(): Promise<CaptureResult> {
     this.logger.debug("Executing capture task");
 
-    // Ensure source provider has data
-    await this.ensureSourcesAvailable();
-
-    // Get current sources and preferences
-    const captureSources = this.sourceProvider.getSources();
-    const effectiveSources = this.preferencesService.getEffectiveCaptureSources(captureSources);
-
-    this.logger.info(
-      {
-        selectedApps: effectiveSources.selectedApps.map((app) => app.name),
-        selectedScreens: effectiveSources.selectedScreens.map((screen) => screen.displayId),
-      },
-      "Effective capture sources"
-    );
-
+    const effectiveSources = this.preferencesService.getEffectiveCaptureSources();
+    this.logger.info({ effectiveSources }, "Effective capture sources");
     let results: CaptureResult[];
+    if (effectiveSources.selectedApps.length > 0) {
+      // Filter windows to only include those from selected apps
+      const selectedAppIds = new Set(effectiveSources.selectedApps.map((app) => app.id));
+      const apps = await this.sourceProvider.getWindowsSources([...selectedAppIds]);
+      const visibleApps = apps.filter((app) => app.isVisible);
 
-    // Determine capture mode based on user preferences
-    const hasSelectedApps = effectiveSources.selectedApps.length > 0;
-
-    if (hasSelectedApps) {
-      // Window capture mode: user selected specific apps
-      // this.logger.info(
-      //   { appNames: effectiveSources.selectedApps },
-      //   "Using window capture mode for selected apps"
-      // );
       results = await this.captureService.captureWindowsByApp(
-        effectiveSources,
+        visibleApps.map((app) => app.id),
         this.captureOptions
       );
-
-      // If no windows found, fall back to screen capture
       if (results.length === 0) {
         this.logger.error(
-          { hasSelectedApps },
+          { visibleApps },
           "No windows found for selected apps, no screenshots captured"
         );
       }
@@ -225,17 +225,6 @@ export class ScreenCaptureModule {
 
     // Return first result for scheduler compatibility
     return results[0];
-  }
-
-  private async ensureSourcesAvailable(): Promise<void> {
-    if (!this.sourceProvider.getSources().length) {
-      this.logger.debug("Source provider cache empty, triggering refresh");
-      try {
-        await this.sourceProvider.refresh();
-      } catch (error) {
-        this.logger.warn({ error }, "Source provider refresh failed, continuing with empty cache");
-      }
-    }
   }
 
   private async saveCapturesToDisk(results: CaptureResult[]): Promise<void> {
@@ -380,7 +369,6 @@ export class ScreenCaptureModule {
     this.disposed = true;
 
     this.scheduler.stop();
-    this.sourceProvider.dispose();
 
     this.logger.info("ScreenCaptureModule disposed");
   }

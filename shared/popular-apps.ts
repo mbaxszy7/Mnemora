@@ -52,6 +52,48 @@ export const POPULAR_APPS: Record<string, PopularAppConfig> = {
   Zoom: {
     aliases: ["zoom.us", "Zoom", "zoom"],
   },
+  Skype: {
+    aliases: ["Skype", "skype"],
+  },
+  "Microsoft PowerPoint": {
+    aliases: ["PowerPoint", "powerpoint", "ppt", "Microsoft PowerPoint"],
+  },
+  Keynote: {
+    aliases: ["Keynote", "keynote", "presentation"],
+  },
+  Obsidian: {
+    aliases: ["Obsidian", "obsidian"],
+  },
+  "Roam Research": {
+    aliases: ["Roam Research", "roam", "roam research"],
+  },
+  Logseq: {
+    aliases: ["Logseq", "logseq"],
+  },
+  "IntelliJ IDEA": {
+    aliases: ["IntelliJ IDEA", "intellij", "idea"],
+  },
+  PyCharm: {
+    aliases: ["PyCharm", "pycharm"],
+  },
+  "Microsoft Edge": {
+    aliases: ["Microsoft Edge", "edge"],
+  },
+  Sketch: {
+    aliases: ["Sketch", "sketch"],
+  },
+  "Adobe Photoshop": {
+    aliases: ["Adobe Photoshop", "photoshop", "ps"],
+  },
+  "Adobe Illustrator": {
+    aliases: ["Adobe Illustrator", "illustrator", "ai"],
+  },
+  "System Preferences": {
+    aliases: ["System Preferences", "system preferences", "settings", "系统设置"],
+  },
+  "Activity Monitor": {
+    aliases: ["Activity Monitor", "activity monitor"],
+  },
   Xcode: {
     aliases: ["Xcode", "xcode"],
   },
@@ -76,80 +118,40 @@ export const POPULAR_APPS: Record<string, PopularAppConfig> = {
   "Zen browser": {
     aliases: ["Zen browser", "zen browser"],
   },
-};
-
-export const formatAppName = (name: string): string => {
-  // Extract app name from window title
-  let appName = name;
-
-  // Microsoft Teams specific patterns
-  if (
-    name.includes("Microsoft Teams") ||
-    name.includes("MSTeams") ||
-    (name.includes("Chat |") && name.includes("| Microsoft Teams"))
-  ) {
-    appName = "Microsoft Teams";
-  }
-  // WeChat specific patterns
-  else if (name.includes("WeChat") || name.includes("微信")) {
-    appName = "WeChat";
-  }
-  // Slack specific patterns
-  else if (name.includes("Slack")) {
-    appName = "Slack";
-  }
-  // Chrome specific patterns
-  else if (name.includes("Google Chrome") || name.endsWith(" - Chrome")) {
-    appName = "Google Chrome";
-  }
-  // Safari specific patterns
-  else if (name.includes("Safari") || name.endsWith(" — Safari")) {
-    appName = "Safari";
-  }
-  // Visual Studio Code
-  else if (name.includes("Visual Studio Code") || name.endsWith(" - Code")) {
-    appName = "Visual Studio Code";
-  }
-  // Terminal/iTerm
-  else if (name.includes("Terminal") || name.includes("iTerm")) {
-    appName = name.includes("iTerm") ? "iTerm" : "Terminal";
-  }
-  // For other apps, try to extract from window title more carefully
-  else if (name.includes(" — ")) {
-    // For apps that use em dash separator (like many Mac apps)
-    // Take the last part, but only if it looks like an app name (not too long)
-    const lastPart = name.split(" — ").pop();
-    if (lastPart && lastPart.length < 30) {
-      appName = lastPart;
-    }
-  } else if (name.includes(" - ")) {
-    // For apps that use regular dash separator
-    // Be more careful - only take the last part if it's likely an app name
-    const parts = name.split(" - ");
-    const lastPart = parts[parts.length - 1];
-
-    // Check if the last part looks like an app name (starts with capital, not too long, etc.)
-    if (
-      lastPart &&
-      lastPart.length < 30 &&
-      /^[A-Z]/.test(lastPart) &&
-      !lastPart.includes(".") && // Not a filename
-      !lastPart.includes("/") && // Not a path
-      !lastPart.match(/^\d/)
-    ) {
-      // Doesn't start with a number
-      appName = lastPart;
-    }
-  }
-
-  // Final cleanup - if appName is still the full window title and it's very long,
-  // just use the first part before any separator
-  if (appName === name && appName.length > 50) {
-    const firstPart = appName.split(/[-—]/)[0].trim();
-    if (firstPart && firstPart.length < 30) {
-      appName = firstPart;
-    }
-  }
-
-  return appName;
+  "Microsoft Word": {
+    aliases: ["Microsoft Word", "microsoft word"],
+  },
+  "Microsoft Excel": {
+    aliases: ["Microsoft Excel", "microsoft excel"],
+  },
+  Arc: {
+    aliases: ["Arc", "arc"],
+  },
+  Brave: {
+    aliases: ["Brave", "brave"],
+  },
+  Hyper: {
+    aliases: ["Hyper", "hyper"],
+  },
+  Alacritty: {
+    aliases: ["Alacritty", "alacritty"],
+  },
+  Warp: {
+    aliases: ["Warp", "warp"],
+  },
+  SourceTree: {
+    aliases: ["SourceTree", "sourcetree"],
+  },
+  Insomnia: {
+    aliases: ["Insomnia", "insomnia"],
+  },
+  TablePlus: {
+    aliases: ["TablePlus", "tableplus"],
+  },
+  "Sequel Pro": {
+    aliases: ["Sequel Pro", "sequel pro"],
+  },
+  DataGrip: {
+    aliases: ["DataGrip", "datagrip"],
+  },
 };

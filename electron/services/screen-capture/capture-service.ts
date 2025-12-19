@@ -5,17 +5,82 @@
 import { desktopCapturer, screen } from "electron";
 import sharp from "sharp";
 import type { CaptureOptions, CaptureResult } from "./types";
-import type { CapturePreferences, ScreenInfo, AppInfo } from "../../../shared/capture-source-types";
-import { DEFAULT_CAPTURE_OPTIONS } from "./types";
+import type { ScreenInfo, AppInfo } from "../../../shared/capture-source-types";
+import { DEFAULT_CAPTURE_OPTIONS, DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
 import { getLogger } from "../logger";
 import { windowFilter } from "./window-filter";
+import { getHybridWindowSources, isMacOS } from "./macos-window-helper";
+import type { CaptureSource } from "./types";
 
 const logger = getLogger("capture-service");
+
+const APP_NAME_DELIMITERS = /[-–—|｜:·•]/;
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasWordBoundaries(source: string, index: number, length: number): boolean {
+  const before = index === 0 ? " " : source[index - 1];
+  const after = index + length >= source.length ? " " : source[index + length];
+  const boundary = /[^a-z0-9]/i;
+  return boundary.test(before) && boundary.test(after);
+}
+
+/**
+ * Parse desktopCapturer source.name (mainly on non-mac platforms) to extract
+ * canonical appName and windowTitle for known apps (APP_ALIASES list).
+ * For other apps we leave the name as-is.
+ */
+function formatAppName(sourceName: string): { appName: string; windowTitle?: string } | null {
+  const lowerName = sourceName.toLowerCase();
+  let bestMatch: { canonical: string; alias: string; index: number } | null = null;
+
+  for (const [canonical, aliases] of Object.entries(DEFAULT_WINDOW_FILTER_CONFIG.appAliases)) {
+    const candidates = [canonical, ...aliases];
+    for (const candidate of candidates) {
+      const candidateLower = candidate.toLowerCase();
+      const idx = lowerName.indexOf(candidateLower);
+      if (idx === -1) continue;
+      if (!hasWordBoundaries(sourceName, idx, candidate.length)) continue;
+      if (!bestMatch || candidate.length > bestMatch.alias.length) {
+        bestMatch = { canonical, alias: candidate, index: idx };
+      }
+    }
+  }
+
+  if (!bestMatch) return null;
+
+  const aliasPattern = escapeRegExp(bestMatch.alias.trim());
+  const leading = new RegExp(`^${aliasPattern}\\s*${APP_NAME_DELIMITERS.source}\\s*(.+)$`, "i");
+  const trailing = new RegExp(`^(.+?)\\s*${APP_NAME_DELIMITERS.source}\\s*${aliasPattern}$`, "i");
+
+  let windowTitle: string | undefined;
+  const trimmed = sourceName.trim();
+
+  if (leading.test(trimmed)) {
+    windowTitle = trimmed.replace(leading, "$1").trim();
+  } else if (trailing.test(trimmed)) {
+    windowTitle = trimmed.replace(trailing, "$1").trim();
+  } else if (trimmed.toLowerCase() === bestMatch.alias.toLowerCase()) {
+    windowTitle = undefined;
+  }
+
+  // Avoid empty subtitles
+  if (windowTitle && windowTitle.length === 0) {
+    windowTitle = undefined;
+  }
+
+  return {
+    appName: bestMatch.canonical,
+    windowTitle,
+  };
+}
 
 export interface ICaptureService {
   captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]>;
   captureWindowsByApp(
-    selectedInfo: CapturePreferences,
+    appSourceIds: string[],
     options?: Partial<CaptureOptions>
   ): Promise<CaptureResult[]>;
   getCaptureScreenInfo(): Promise<ScreenInfo[]>;
@@ -133,15 +198,11 @@ export class CaptureService implements ICaptureService {
   }
 
   async captureWindowsByApp(
-    selectedInfo: CapturePreferences,
+    appSourceIds: string[],
     options?: Partial<CaptureOptions>
   ): Promise<CaptureResult[]> {
     const opts = { ...DEFAULT_CAPTURE_OPTIONS, ...options };
     const timestamp = Date.now();
-
-    // logger.info({ selectedApps }, "Capturing windows by app names");
-
-    // Get all window sources with high resolution thumbnails
     const sources = await desktopCapturer.getSources({
       types: ["window"],
       thumbnailSize: { width: 1280, height: 720 },
@@ -158,7 +219,7 @@ export class CaptureService implements ICaptureService {
 
     // Filter windows by app name (case-insensitive partial match)
     const targetSources = sources.filter((source) => {
-      return selectedInfo.selectedApps.some((app) => app.id === source.id);
+      return appSourceIds.includes(source.id);
     });
 
     logger.info(
@@ -306,20 +367,72 @@ export class CaptureService implements ICaptureService {
       thumbnailSize: { width: 320, height: 180 },
       fetchWindowIcons: true,
     });
-    // todo: mac platform cross-space window detection, and should handle capture window by app with such virtual id
+    // Map Electron sources into internal structure (keep even minimized for macOS cross-Space detection)
+    const electronSources: (CaptureSource & {
+      appIcon?: string | null;
+      appName?: string;
+    })[] = sources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      type: "window",
+      appIcon: source.appIcon ? source.appIcon.toDataURL() : "",
+      // Leave appName undefined; mac hybrid helper may populate/normalize it
+    }));
 
-    // Filter out empty thumbnails (minimized windows)
-    const windows: AppInfo[] = sources
-      .filter((source) => !source.thumbnail.isEmpty())
-      .map((source) => ({
-        id: source.id,
-        name: source.name,
-        type: "window" as const,
-        appIcon: source.appIcon ? source.appIcon.toDataURL() : "",
-      }));
+    // On macOS, enrich with cross-Space windows (virtual ids) via AppleScript helper (no Python dependency)
+    const hybridSources = isMacOS()
+      ? await getHybridWindowSources(electronSources)
+      : electronSources;
 
-    logger.info({ windowCount: windows.length }, "App info retrieved");
+    // On non-mac, try to parse known apps from source.name to derive canonical appName/windowTitle
+    const normalizedSources = !isMacOS()
+      ? hybridSources.map((source) => {
+          const parsed = formatAppName(source.name);
+          if (!parsed) return source;
+          return {
+            ...source,
+            appName: parsed.appName,
+            windowTitle: parsed.windowTitle,
+          };
+        })
+      : hybridSources;
 
-    return windowFilter.filterSystemWindows(windows);
+    const windows: AppInfo[] = normalizedSources
+      .map((source) => {
+        const appName = source.appName;
+        const originalName = source.name;
+        const parsedWindowTitle = source.windowTitle;
+        // Use appName as display name, fall back to original name
+        const name = appName || originalName;
+        // Keep original window title for subtitle (only if different from appName)
+        const windowTitle =
+          parsedWindowTitle ?? (appName && originalName !== appName ? originalName : undefined);
+        // Validate appIcon - must have actual base64 content, not just the prefix
+        const rawIcon = source.appIcon ?? "";
+        const appIcon = rawIcon.length > 50 ? rawIcon : ""; // Empty base64 prefix is ~22 chars
+
+        return {
+          id: source.id,
+          name,
+          type: "window" as const,
+          appIcon,
+          windowTitle,
+        };
+      })
+      // Filter out unnamed entries
+      .filter((w) => !!w.name && w.name.trim().length > 0);
+
+    const filtered = windowFilter.filterSystemWindows(windows);
+
+    const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
+
+    logger.info(
+      {
+        hybridSources,
+      },
+      "App info retrieved (mac hybrid cross-space)"
+    );
+
+    return sorted;
   }
 }

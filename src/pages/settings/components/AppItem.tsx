@@ -2,7 +2,6 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import type { AppInfo } from "@shared/capture-source-types";
-import { formatAppName } from "@shared/popular-apps";
 import { AppWindow } from "lucide-react";
 
 export interface AppItemProps {
@@ -27,8 +26,10 @@ export function AppItem({ app, isSelected, onToggle }: AppItemProps) {
     }
   };
 
-  const appName = formatAppName(app.name);
-  const showSubtitle = app.name !== appName;
+  // app.name is already the real app name from Python/Quartz, no need to transform
+  const appName = app.name;
+  // Show window title as subtitle to distinguish multiple windows of the same app
+  const showSubtitle = !!app.windowTitle;
 
   return (
     <Card
@@ -66,8 +67,8 @@ export function AppItem({ app, isSelected, onToggle }: AppItemProps) {
             {appName}
           </span>
           {showSubtitle && (
-            <span className="text-xs text-muted-foreground truncate" title={app.name}>
-              {app.name}
+            <span className="text-xs text-muted-foreground truncate" title={app.windowTitle}>
+              {app.windowTitle}
             </span>
           )}
         </div>

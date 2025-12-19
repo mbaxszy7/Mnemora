@@ -29,6 +29,12 @@
     target: ["dmg"],
     artifactName: "${productName}-Mac-${version}-Installer.${ext}",
     icon: "public/logo.icns",
+    extraResources: [
+      {
+        from: "externals/python/window_inspector/dist/window_inspector",
+        to: "bin/window_inspector",
+      },
+    ],
   },
   win: {
     target: [

@@ -11,7 +11,6 @@ import * as os from "os";
 import * as crypto from "crypto";
 import { getLogger } from "../logger";
 import { CaptureSource } from "./types";
-import { formatAppName } from "@shared/popular-apps";
 
 const logger = getLogger("capture-storage");
 export const MAX_CAPTURE_COUNT = 20;
@@ -50,7 +49,7 @@ export function generateCaptureFilename(
     // Create a short hash of the original window name to prevent conflicts
     // when multiple windows have the same cleaned app name (e.g. multiple Chrome windows)
     const nameHash = crypto.createHash("md5").update(source.name).digest("hex").slice(0, 6);
-    return `capture-${dateStr}-window-${formatAppName(source.name)}-${nameHash}.${format}`;
+    return `capture-${dateStr}-window-${source.name}-${nameHash}.${format}`;
   }
 
   return `capture-${dateStr}-screen-${source.displayId}.${format}`;

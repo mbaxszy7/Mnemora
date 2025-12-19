@@ -1,6 +1,5 @@
 import { CapturePreferences } from "../../shared/capture-source-types";
 import { getLogger } from "./logger";
-import { VisibleSource } from "./screen-capture/types";
 
 /**
  * Service for managing capture source preferences
@@ -49,53 +48,13 @@ export class CapturePreferencesService {
     // );
   }
 
-  getEffectiveCaptureSources(captureSources: VisibleSource[]) {
+  getEffectiveCaptureSources() {
     const result = {
-      selectedScreens: this.computeEffectiveScreens(captureSources),
+      selectedScreens: this.preferences.selectedScreens,
       selectedApps: this.preferences.selectedApps,
     };
 
-    // this.logger.info(
-    //   {
-    //     preferences: {
-    //       selectedScreens: this.preferences.selectedScreens,
-    //       selectedApps: this.preferences.selectedApps,
-    //     },
-    //     available: { captureSources },
-    //     effective: result,
-    //   },
-    //   "Computed effective capture sources"
-    // );
-
     return result;
-  }
-
-  /**
-   * Compute effective screens to capture
-   * Falls back to all screens if:
-   * - No screens are selected (empty = capture all)
-   * - None of the selected screens are available (e.g., external monitor disconnected)
-   */
-  private computeEffectiveScreens(availableSource: VisibleSource[]) {
-    // Find intersection of selected and available screens
-    const effectiveScreens = this.preferences.selectedScreens.filter((screen) =>
-      availableSource.some((available) => available.id === screen.id)
-    );
-    return effectiveScreens;
-  }
-
-  /**
-   * Compute effective apps to capture
-   * Falls back to all apps if:
-   * - No apps are selected (empty = capture all)
-   * - None of the selected apps are currently active
-   */
-  private computeEffectiveApps(availableWindows: VisibleSource[]) {
-    // Find intersection of selected and active apps
-    const effectiveApps = this.preferences.selectedApps.filter((app) =>
-      availableWindows.some((available) => available.type === "window" && app.id === available.id)
-    );
-    return effectiveApps;
   }
 
   resetPreferences(): void {

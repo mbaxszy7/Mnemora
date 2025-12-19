@@ -4,7 +4,8 @@
       "save": "保存",
       "cancel": "取消",
       "confirm": "确认",
-      "close": "关闭"
+      "close": "关闭",
+      "reload": "重新加载"
     },
     "messages": {
       "loading": "加载中...",

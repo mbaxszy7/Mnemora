@@ -32,6 +32,7 @@ export interface VisibleSource {
   name: string;
   type: "screen" | "window";
   displayId?: string;
+  isVisible: boolean;
 }
 
 // ============================================================================
@@ -49,6 +50,8 @@ export interface CaptureSource {
   appIcon?: string | null;
   /** Window bounds (used to detect minimized windows with zero/negative dimensions) */
   bounds?: { x: number; y: number; width: number; height: number };
+  windowTitle?: string;
+  appName?: string;
 }
 
 /**
@@ -187,6 +190,8 @@ export interface WindowFilterConfig {
   systemWindows: string[];
   /** App name aliases for normalization */
   appAliases: Record<string, string[]>;
+  /** Important apps that may be prioritized/kept even when minimized/off-space */
+  importantApps?: string[];
 }
 
 // ============================================================================
@@ -223,6 +228,19 @@ const POPULAR_APPS_ALIAS = Object.keys(POPULAR_APPS).reduce(
   {} as Record<string, string[]>
 );
 
+const APP_ALIASES: Record<string, string[]> = {
+  ...POPULAR_APPS_ALIAS,
+  "Microsoft PowerPoint": ["powerpoint"],
+  "Microsoft Word": ["word"],
+  "Microsoft Excel": ["excel"],
+};
+
+const IMPORTANT_APPS = Array.from(
+  new Set<string>(
+    Object.entries(APP_ALIASES).flatMap(([canonical, aliases]) => [canonical, ...aliases])
+  )
+);
+
 /**
  * Default window filter configuration
  */
@@ -237,11 +255,29 @@ export const DEFAULT_WINDOW_FILTER_CONFIG: WindowFilterConfig = {
     "Mnemora", // Exclude self
     "Electron", // Exclude self (process name in dev mode)
     "Mnemora - Your Second Brain",
+    "ControlCenter",
+    "WindowManager",
+    "NotificationCenter",
+    "AXVisualSupportAgent",
+    "universalaccessd",
+    "TextInputMenuAgent",
+    "CoreLocationAgent",
+    "loginwindow",
+    "UserNotificationCenter",
+    "CursorUIViewService",
+    "LinkedNotesUIService",
+    "Open and Save Panel Service",
+    "程序坞",
+    "通知中心",
+    "聚焦",
+    "墙纸",
+    "微信输入法",
+    "自动填充",
+    "隐私与安全性",
   ],
   appAliases: {
-    ...POPULAR_APPS_ALIAS,
-    "Microsoft PowerPoint": ["powerpoint"],
-    "Microsoft Word": ["word"],
-    "Microsoft Excel": ["excel"],
+    ...APP_ALIASES,
   },
+  // Treat all popular apps (canonical + aliases) as important
+  importantApps: IMPORTANT_APPS,
 };

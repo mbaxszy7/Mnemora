@@ -11,6 +11,8 @@ export type ScreenInfo = Omit<CaptureSource, "appIcon"> & {
 export type AppInfo = Omit<CaptureSource, "displayId" | "bounds"> & {
   appIcon: string;
   type: "window";
+  /** Original window title (e.g., Chrome page title) to distinguish multiple windows */
+  windowTitle?: string;
 };
 
 export interface CapturePreferences {

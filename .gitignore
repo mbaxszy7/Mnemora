@@ -35,3 +35,11 @@ dev.db-wal
 *.db
 *.db-journal
 *.db-wal
+
+# Python window inspector
+externals/python/window_inspector/venv/
+externals/python/window_inspector/build/
+externals/python/window_inspector/dist/
+externals/python/window_inspector/__pycache__/
+externals/python/window_inspector/**/*.pyc
+externals/python/window_inspector/*.spec

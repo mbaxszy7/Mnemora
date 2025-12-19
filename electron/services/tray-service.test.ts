@@ -24,6 +24,7 @@ vi.mock("electron", () => ({
   nativeImage: {
     createFromPath: vi.fn(() => ({ isEmpty: () => false })),
   },
+  BrowserWindow: vi.fn(),
 }));
 
 // Mock screen capture module
@@ -58,37 +59,60 @@ vi.mock("./logger", () => ({
   })),
 }));
 
+// Mock main.ts exports
+vi.mock("../main", () => ({
+  VITE_DEV_SERVER_URL: "http://localhost:5173",
+  RENDERER_DIST: "/dist",
+}));
+
 describe("TrayService", () => {
   let TrayService: typeof import("./tray-service").TrayService;
-  let mockOnShowMainWindow: Mock<() => void>;
-  let mockOnQuit: Mock<() => void>;
+  let mockCreateWindow: Mock;
+  let mockGetMainWindow: Mock;
+  let mockOnQuit: Mock;
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    mockOnShowMainWindow = vi.fn<() => void>();
-    mockOnQuit = vi.fn<() => void>();
+    // Set APP_ROOT for path resolution in getIconPath
+    process.env.APP_ROOT = "/test/app/root";
+
+    mockCreateWindow = vi.fn(() => ({
+      isMinimized: vi.fn(() => false),
+      restore: vi.fn(),
+      show: vi.fn(),
+      focus: vi.fn(),
+    }));
+    mockGetMainWindow = vi.fn(() => null);
+    mockOnQuit = vi.fn();
 
     // Reset module to get fresh instance
     vi.resetModules();
     const module = await import("./tray-service");
     TrayService = module.TrayService;
+    // Reset the singleton for each test
+    TrayService.resetInstance();
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  describe("constructor", () => {
-    it("should store options without creating tray", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+  describe("singleton pattern", () => {
+    it("should return same instance via getInstance", () => {
+      const instance1 = TrayService.getInstance();
+      const instance2 = TrayService.getInstance();
+      expect(instance1).toBe(instance2);
+    });
+
+    it("should be configurable via configure method", () => {
+      const service = TrayService.getInstance();
+      const result = service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
-
-      expect(service).toBeDefined();
-      // Tray should not be created yet (init not called)
-      expect(mockTray.setToolTip).not.toHaveBeenCalled();
+      // configure should return the service for chaining
+      expect(result).toBe(service);
     });
   });
 
@@ -96,9 +120,10 @@ describe("TrayService", () => {
     it("should create tray with icon", async () => {
       const { nativeImage } = await import("electron");
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -110,9 +135,10 @@ describe("TrayService", () => {
     });
 
     it("should set tooltip on init", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -124,9 +150,10 @@ describe("TrayService", () => {
     it("should set context menu on init", async () => {
       const { Menu } = await import("electron");
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -137,9 +164,10 @@ describe("TrayService", () => {
     });
 
     it("should register click and double-click handlers", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -150,9 +178,10 @@ describe("TrayService", () => {
     });
 
     it("should subscribe to scheduler events", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -162,9 +191,10 @@ describe("TrayService", () => {
     });
 
     it("should not reinitialize if already initialized", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -178,9 +208,10 @@ describe("TrayService", () => {
 
   describe("dispose", () => {
     it("should unsubscribe from scheduler events", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -191,9 +222,10 @@ describe("TrayService", () => {
     });
 
     it("should remove all tray listeners", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -204,9 +236,10 @@ describe("TrayService", () => {
     });
 
     it("should destroy tray", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -217,9 +250,10 @@ describe("TrayService", () => {
     });
 
     it("should do nothing if not initialized", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -235,9 +269,10 @@ describe("TrayService", () => {
       const { Menu } = await import("electron");
       mockCaptureModule.getState.mockReturnValue({ status: "idle" });
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -256,9 +291,10 @@ describe("TrayService", () => {
       const { Menu } = await import("electron");
       mockCaptureModule.getState.mockReturnValue({ status: "running" });
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -274,9 +310,10 @@ describe("TrayService", () => {
     it("should refresh menu and tooltip when scheduler state changes", async () => {
       const { Menu } = await import("electron");
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -302,10 +339,19 @@ describe("TrayService", () => {
   });
 
   describe("click handlers", () => {
-    it("should call onShowMainWindow when tray is clicked", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+    it("should show main window when tray is clicked", () => {
+      const mockWindow = {
+        isMinimized: vi.fn(() => false),
+        restore: vi.fn(),
+        show: vi.fn(),
+        focus: vi.fn(),
+      };
+      mockGetMainWindow.mockReturnValue(mockWindow);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -317,27 +363,29 @@ describe("TrayService", () => {
       expect(clickHandler).toBeDefined();
       clickHandler?.();
 
-      expect(mockOnShowMainWindow).toHaveBeenCalled();
+      expect(mockWindow.show).toHaveBeenCalled();
+      expect(mockWindow.focus).toHaveBeenCalled();
     });
 
-    it("should call onShowMainWindow when tray is double-clicked", () => {
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+    it("should create window if none exists when tray is clicked", () => {
+      mockGetMainWindow.mockReturnValue(null);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
       service.init();
 
-      // Get the double-click handler
-      const dblClickHandler = mockTray.on.mock.calls.find(
-        (call) => call[0] === "double-click"
-      )?.[1];
+      // Get the click handler
+      const clickHandler = mockTray.on.mock.calls.find((call) => call[0] === "click")?.[1];
 
-      expect(dblClickHandler).toBeDefined();
-      dblClickHandler?.();
+      expect(clickHandler).toBeDefined();
+      clickHandler?.();
 
-      expect(mockOnShowMainWindow).toHaveBeenCalled();
+      expect(mockCreateWindow).toHaveBeenCalled();
     });
   });
 
@@ -346,9 +394,10 @@ describe("TrayService", () => {
       const { Menu } = await import("electron");
       mockCaptureModule.getState.mockReturnValue({ status: "idle" });
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -371,9 +420,10 @@ describe("TrayService", () => {
       const { Menu } = await import("electron");
       mockCaptureModule.getState.mockReturnValue({ status: "running" });
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 
@@ -398,9 +448,10 @@ describe("TrayService", () => {
       // Start as idle
       mockCaptureModule.getState.mockReturnValue({ status: "idle" });
 
-      const service = new TrayService({
-        iconPath: "/path/to/icon.png",
-        onShowMainWindow: mockOnShowMainWindow,
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
         onQuit: mockOnQuit,
       });
 

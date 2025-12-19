@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowLeft, RotateCw } from "lucide-react";
+import { ArrowLeft, Loader2, RotateCw } from "lucide-react";
 import { useViewTransition } from "@/components/core/view-transition";
 import { ScreenSelector, AppSelector } from "./components";
 import { CAPTURE_SCREENS_QUERY_KEY, useCaptureScreens } from "./hooks/useCaptureScreens";
@@ -169,8 +169,9 @@ function CaptureSourceSettingsContent() {
 export default function CaptureSourceSettings() {
   const { t } = useTranslation();
   const { navigate } = useViewTransition();
+  const screensQuery = useCaptureScreens();
+  const appsQuery = useCaptureApps();
   const queryClient = useQueryClient();
-
   const handleBack = useCallback(() => {
     navigate("/settings", { type: "slide-right", duration: 300 });
   }, [navigate]);
@@ -203,8 +204,17 @@ export default function CaptureSourceSettings() {
               )}
             </p>
           </div>
-          <Button variant="outline" onClick={handleReload} className="gap-2">
-            <RotateCw className="h-4 w-4" />
+          <Button
+            variant="outline"
+            onClick={handleReload}
+            className="gap-2"
+            disabled={screensQuery.isFetching || appsQuery.isFetching}
+          >
+            {screensQuery.isFetching || appsQuery.isFetching ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RotateCw className="h-4 w-4" />
+            )}
             {t("common.buttons.reload", "Reload")}
           </Button>
         </div>

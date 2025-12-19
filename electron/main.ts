@@ -214,9 +214,9 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   // Set flag to allow window to actually close
   isQuitting = true;
-  // Dispose screen capture module
-  ScreenCaptureModule.resetInstance();
   TrayService.resetInstance();
+  // Dispose screen capture module after tray cleanup
+  ScreenCaptureModule.disable();
   // Dispose power monitor
   powerMonitorService.dispose();
   // Close database connection before quitting

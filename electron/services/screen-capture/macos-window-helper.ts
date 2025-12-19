@@ -198,6 +198,13 @@ export async function getHybridWindowSources(
   electronSources: CaptureSource[]
 ): Promise<CaptureSource[]> {
   const macWindows = await getMacWindows();
+
+  // Fallback: if Python inspector failed or returned empty, return electron sources unchanged
+  if (macWindows.length === 0) {
+    logger.warn("No macOS windows from Python inspector, falling back to electron sources");
+    return electronSources;
+  }
+
   return electronSources
     .map((source) => {
       if (source.type === "screen") return source;

@@ -4,13 +4,8 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { app } from "electron";
 import path from "node:path";
 import fs from "node:fs";
-import { fileURLToPath } from "node:url";
 import { getLogger } from "../services/logger";
 import * as schema from "./schema";
-
-// Get __dirname equivalent in ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export type DrizzleDB = BetterSQLite3Database<typeof schema>;
 
@@ -102,8 +97,8 @@ class DatabaseService {
     // In development: uses __dirname which points to dist-electron/
     // In production: resources/app.asar.unpacked/dist-electron/database/migrations
     const migrationsFolder = app.isPackaged
-      ? path.join(process.resourcesPath, "migrations")
-      : path.join(__dirname, "migrations");
+      ? path.join(app.getAppPath(), "dist-electron", "migrations")
+      : path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations");
 
     this.logger.info({ migrationsFolder }, "Migrations folder");
 

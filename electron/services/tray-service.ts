@@ -1,6 +1,6 @@
 import { BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
-import { getScreenCaptureModule } from "./screen-capture";
+import { getScreenCaptureModule, ScreenCaptureModule } from "./screen-capture";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from "../main";
@@ -131,7 +131,7 @@ export class TrayService {
       captureModule.stop();
     } else {
       this.logger.info("Starting screen capture from tray");
-      captureModule.start();
+      ScreenCaptureModule.tryInitialize();
     }
   }
 

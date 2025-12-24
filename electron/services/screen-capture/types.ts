@@ -8,7 +8,7 @@ import { POPULAR_APPS } from "@shared/popular-apps";
  * Configuration for the screen capture scheduler
  */
 export interface SchedulerConfig {
-  /** Capture interval in milliseconds (default: 15000) */
+  /** Capture interval in milliseconds (default: 6000) */
   interval: number;
   /** Minimum delay between captures (default: 100) */
   minDelay: number;
@@ -87,6 +87,8 @@ export interface CaptureResult {
   buffer: Buffer;
   /** Capture timestamp */
   timestamp: number;
+  /** Optional saved file path after persistence */
+  filePath?: string;
   /** Source information (single screen) */
   source: CaptureSource;
 }
@@ -102,7 +104,8 @@ export type SchedulerEvent =
   | "capture:start"
   | "capture:complete"
   | "capture:error"
-  | "scheduler:state";
+  | "scheduler:state"
+  | "preferences:changed";
 
 /**
  * Event emitted when a capture cycle begins
@@ -120,7 +123,7 @@ export interface CaptureCompleteEvent {
   type: "capture:complete";
   timestamp: number;
   captureId: string;
-  result: CaptureResult;
+  result: CaptureResult[];
   executionTime: number;
 }
 
@@ -145,13 +148,22 @@ export interface SchedulerStateEvent {
 }
 
 /**
+ * Event emitted when capture preferences change
+ */
+export interface PreferencesChangedEvent {
+  type: "preferences:changed";
+  timestamp: number;
+}
+
+/**
  * Union type for all scheduler event payloads
  */
 export type SchedulerEventPayload =
   | CaptureStartEvent
   | CaptureCompleteEvent
   | CaptureErrorEvent
-  | SchedulerStateEvent;
+  | SchedulerStateEvent
+  | PreferencesChangedEvent;
 
 /**
  * Event handler type for scheduler events
@@ -202,7 +214,7 @@ export interface WindowFilterConfig {
  * Default scheduler configuration
  */
 export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
-  interval: 6000, // 6 seconds
+  interval: 3000, // 6 seconds
   minDelay: 100, // 100ms minimum
   autoStart: false,
 };

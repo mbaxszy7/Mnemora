@@ -38,6 +38,12 @@ const mockCaptureModule = {
 
 vi.mock("./screen-capture", () => ({
   getScreenCaptureModule: vi.fn(() => mockCaptureModule),
+  ScreenCaptureModule: {
+    tryInitialize: vi.fn(() => {
+      mockCaptureModule.start();
+      return true;
+    }),
+  },
 }));
 
 // Mock i18n service

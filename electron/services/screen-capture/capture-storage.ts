@@ -13,7 +13,6 @@ import { getLogger } from "../logger";
 import { CaptureSource } from "./types";
 
 const logger = getLogger("capture-storage");
-export const MAX_CAPTURE_COUNT = 20;
 
 export function getCaptureStorageDir(): string {
   return path.join(os.homedir(), ".mnemora", "images");
@@ -73,6 +72,22 @@ export async function saveCaptureToFile(
   } catch (error) {
     logger.error({ error, filepath }, "Failed to save capture to file");
     throw error;
+  }
+}
+
+export async function safeDeleteCaptureFile(filePath: string): Promise<boolean> {
+  try {
+    await fs.unlink(filePath);
+    logger.info({ filePath }, "Capture file deleted");
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      logger.debug({ filePath }, "Capture file already missing");
+      return true;
+    }
+
+    logger.warn({ error, filePath }, "Failed to delete capture file");
+    return false;
   }
 }
 

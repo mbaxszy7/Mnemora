@@ -13,3 +13,5 @@ export { cleanupDevCaptures } from "./capture-storage";
 
 // Types needed by IPC handlers
 export type { SchedulerConfig, SchedulerState, CaptureSource } from "./types";
+
+export { DEFAULT_SCHEDULER_CONFIG as DefaultCaptureConfig } from "./types";

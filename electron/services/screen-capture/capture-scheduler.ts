@@ -13,6 +13,7 @@ import type {
   CaptureCompleteEvent,
   CaptureErrorEvent,
   SchedulerStateEvent,
+  PreferencesChangedEvent,
   SchedulerEventPayload,
 } from "./types";
 import { DEFAULT_SCHEDULER_CONFIG } from "./types";
@@ -37,6 +38,7 @@ export interface IScreenCaptureScheduler {
   resume(): void;
   updateConfig(config: Partial<SchedulerConfig>): void;
   getState(): SchedulerState;
+  notifyPreferencesChanged(): void;
   on<T extends SchedulerEventPayload>(
     event: SchedulerEvent,
     handler: SchedulerEventHandler<T>
@@ -47,7 +49,7 @@ export interface IScreenCaptureScheduler {
   ): void;
 }
 
-export type CaptureTask = () => Promise<CaptureResult>;
+export type CaptureTask = () => Promise<CaptureResult[]>;
 
 export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   private config: SchedulerConfig;
@@ -56,17 +58,10 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private captureTask!: CaptureTask;
 
-  constructor(config: Partial<SchedulerConfig> = {}, captureTask?: CaptureTask) {
+  constructor(config: Partial<SchedulerConfig> = {}, captureTask: CaptureTask) {
     this.config = { ...DEFAULT_SCHEDULER_CONFIG, ...config };
     // Default no-op capture task for testing state machine without actual captures
-    this.captureTask =
-      captureTask ??
-      (async () => ({
-        buffer: Buffer.from([]),
-        timestamp: Date.now(),
-        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-        screenId: "0",
-      }));
+    this.captureTask = captureTask;
     this.emitter = new EventEmitter();
     this.state = {
       status: "idle",
@@ -148,6 +143,14 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     this.config = { ...this.config, ...config };
   }
 
+  notifyPreferencesChanged(): void {
+    const event: PreferencesChangedEvent = {
+      type: "preferences:changed",
+      timestamp: Date.now(),
+    };
+    this.emitter.emit("preferences:changed", event);
+  }
+
   getState(): SchedulerState {
     return { ...this.state };
   }
@@ -190,7 +193,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     this.emitCaptureStart(captureId, startTime);
 
     try {
-      let result: CaptureResult | null = null;
+      let result: CaptureResult[] | null = null;
 
       logger.info({ hasCaptureTask: !!this.captureTask }, "About to execute capture task");
 
@@ -260,7 +263,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
 
   private emitCaptureComplete(
     captureId: string,
-    result: CaptureResult,
+    result: CaptureResult[],
     executionTime: number
   ): void {
     const event: CaptureCompleteEvent = {

@@ -17,7 +17,7 @@ import { CaptureSourceProvider } from "./capture-source-provider";
 import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./capture-scheduler";
 
-import { saveCaptureToFile, cleanupOldCaptures, MAX_CAPTURE_COUNT } from "./capture-storage";
+import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
 import type {
   SchedulerConfig,
   SchedulerState,
@@ -33,6 +33,8 @@ import { powerMonitorService } from "../power-monitor";
 import { permissionService } from "../permission-service";
 import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
+import type { CapturePreferences } from "@shared/capture-source-types";
+import { screenshotProcessingModule } from "../screenshot-processing/screenshot-processing-module";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
@@ -60,6 +62,11 @@ export class ScreenCaptureModule {
     this.scheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
       this.executeCaptureTask()
     );
+
+    screenshotProcessingModule.initialize({
+      screenCapture: this,
+      preferencesService: this.preferencesService,
+    });
 
     this.setupPowerMonitorCallbacks();
     this.logger.info("ScreenCaptureModule initialized");
@@ -191,15 +198,16 @@ export class ScreenCaptureModule {
    * Execute the capture task - called by the scheduler on each cycle
    * Returns the first CaptureResult for scheduler compatibility
    */
-  private async executeCaptureTask(): Promise<CaptureResult> {
+  private async executeCaptureTask(): Promise<CaptureResult[]> {
     this.logger.debug("Executing capture task");
 
     const effectiveSources = this.preferencesService.getEffectiveCaptureSources();
     this.logger.info({ effectiveSources }, "Effective capture sources");
     let results: CaptureResult[];
     if (effectiveSources.selectedApps.length > 0) {
+      const currentSelectedApps = [...effectiveSources.selectedApps];
       // Filter windows to only include those from selected apps
-      const selectedAppIds = new Set(effectiveSources.selectedApps.map((app) => app.id));
+      const selectedAppIds = new Set(currentSelectedApps.map((app) => app.id));
       const apps = await this.sourceProvider.getWindowsSources([...selectedAppIds]);
       const visibleApps = apps.filter((app) => app.isVisible);
 
@@ -213,6 +221,16 @@ export class ScreenCaptureModule {
           "No windows found for selected apps, no screenshots captured"
         );
       }
+      results.forEach((result) => {
+        const { appName, windowTitle } = currentSelectedApps.find(
+          (app) => app.id === result.source.id
+        ) || { appName: undefined, windowTitle: undefined };
+        result.source = {
+          ...result.source,
+          appName,
+          windowTitle,
+        };
+      });
     } else {
       results = await this.captureService.captureScreens({
         ...this.captureOptions,
@@ -223,8 +241,7 @@ export class ScreenCaptureModule {
     // Save all captures to disk
     await this.saveCapturesToDisk(results);
 
-    // Return first result for scheduler compatibility
-    return results[0];
+    return results;
   }
 
   private async saveCapturesToDisk(results: CaptureResult[]): Promise<void> {
@@ -236,20 +253,21 @@ export class ScreenCaptureModule {
           result.timestamp,
           this.captureOptions.format
         );
+        result.filePath = filepath;
         this.logger.debug({ filepath }, "Capture saved to disk");
       } catch (error) {
         this.logger.error({ error }, "Failed to save capture to disk");
       }
     }
 
-    try {
-      const deleted = await cleanupOldCaptures(undefined, MAX_CAPTURE_COUNT);
-      if (deleted > 0) {
-        this.logger.info({ deleted }, "Cleaned up old captures after save");
-      }
-    } catch (error) {
-      this.logger.error({ error }, "Failed to cleanup old captures after save");
-    }
+    // try {
+    //   const deleted = await cleanupOldCaptures(undefined, MAX_CAPTURE_COUNT);
+    //   if (deleted > 0) {
+    //     this.logger.info({ deleted }, "Cleaned up old captures after save");
+    //   }
+    // } catch (error) {
+    //   this.logger.error({ error }, "Failed to cleanup old captures after save");
+    // }
   }
 
   // ============================================================================
@@ -356,6 +374,11 @@ export class ScreenCaptureModule {
     return this.preferencesService;
   }
 
+  setPreferences(prefs: Partial<CapturePreferences>): void {
+    this.preferencesService.setPreferences(prefs);
+    this.scheduler.notifyPreferencesChanged();
+  }
+
   // ============================================================================
   // Public API: Lifecycle
   // ============================================================================
@@ -369,6 +392,7 @@ export class ScreenCaptureModule {
     this.disposed = true;
 
     this.scheduler.stop();
+    screenshotProcessingModule.dispose();
 
     this.logger.info("ScreenCaptureModule disposed");
   }

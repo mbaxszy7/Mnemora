@@ -8,6 +8,46 @@ import {
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 
+export const STORAGE_STATE_VALUES = ["ephemeral", "persisted", "deleted"] as const;
+export const VLM_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
+export const BATCH_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
+export const CONTEXT_KIND_VALUES = [
+  "event",
+  "knowledge",
+  "state_snapshot",
+  "procedure",
+  "plan",
+  "entity_profile",
+] as const;
+export const EDGE_TYPE_VALUES = [
+  "event_next",
+  "event_mentions_entity",
+  "event_produces_knowledge",
+  "event_updates_state",
+  "event_suggests_plan",
+  "event_uses_procedure",
+  "derived_from_screenshot",
+] as const;
+export const MERGE_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+export const EMBEDDING_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+export const INDEX_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+export const ALIAS_TYPE_VALUES = ["nickname", "abbr", "translation"] as const;
+export const ALIAS_SOURCE_VALUES = ["ocr", "vlm", "llm", "manual"] as const;
+export const DOC_TYPE_VALUES = ["context_node", "screenshot_snippet"] as const;
+export const SUMMARY_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+
 /**
  * LLM Configuration table
  * Stores LLM API configuration for unified or separate mode
@@ -68,7 +108,7 @@ export const screenshots = sqliteTable(
     // File storage
     filePath: text("file_path"),
     storageState: text("storage_state", {
-      enum: ["ephemeral", "persisted", "deleted"],
+      enum: STORAGE_STATE_VALUES,
     })
       .notNull()
       .default("ephemeral"),
@@ -91,7 +131,7 @@ export const screenshots = sqliteTable(
 
     // VLM processing status
     vlmStatus: text("vlm_status", {
-      enum: ["pending", "running", "succeeded", "failed", "failed_permanent"],
+      enum: VLM_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
@@ -140,7 +180,7 @@ export const batches = sqliteTable(
 
     // Status tracking
     status: text("status", {
-      enum: ["pending", "running", "succeeded", "failed", "failed_permanent"],
+      enum: BATCH_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
@@ -170,7 +210,7 @@ export const contextNodes = sqliteTable(
 
     // Node type and identity
     kind: text("kind", {
-      enum: ["event", "knowledge", "state_snapshot", "procedure", "plan", "entity_profile"],
+      enum: CONTEXT_KIND_VALUES,
     }).notNull(),
     threadId: text("thread_id"), // groups related events into threads
 
@@ -195,12 +235,12 @@ export const contextNodes = sqliteTable(
 
     // Processing status
     mergeStatus: text("merge_status", {
-      enum: ["pending", "succeeded", "failed"],
+      enum: MERGE_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
     embeddingStatus: text("embedding_status", {
-      enum: ["pending", "succeeded", "failed"],
+      enum: EMBEDDING_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
@@ -236,15 +276,7 @@ export const contextEdges = sqliteTable(
 
     // Edge type
     edgeType: text("edge_type", {
-      enum: [
-        "event_next",
-        "event_mentions_entity",
-        "event_produces_knowledge",
-        "event_updates_state",
-        "event_suggests_plan",
-        "event_uses_procedure",
-        "derived_from_screenshot",
-      ],
+      enum: EDGE_TYPE_VALUES,
     }).notNull(),
 
     // Timestamps
@@ -302,11 +334,11 @@ export const entityAliases = sqliteTable(
     // Alias information
     alias: text("alias").notNull(),
     aliasType: text("alias_type", {
-      enum: ["nickname", "abbr", "translation"],
+      enum: ALIAS_TYPE_VALUES,
     }),
     confidence: real("confidence").notNull().default(1.0),
     source: text("source", {
-      enum: ["ocr", "vlm", "llm", "manual"],
+      enum: ALIAS_SOURCE_VALUES,
     }),
 
     // Timestamps
@@ -330,7 +362,7 @@ export const vectorDocuments = sqliteTable(
     // Vector identification
     vectorId: text("vector_id").notNull().unique(),
     docType: text("doc_type", {
-      enum: ["context_node", "screenshot_snippet"],
+      enum: DOC_TYPE_VALUES,
     }).notNull(),
     refId: integer("ref_id").notNull(), // references context_nodes.id or screenshots.id
 
@@ -345,12 +377,12 @@ export const vectorDocuments = sqliteTable(
 
     // Processing status
     embeddingStatus: text("embedding_status", {
-      enum: ["pending", "succeeded", "failed"],
+      enum: EMBEDDING_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
     indexStatus: text("index_status", {
-      enum: ["pending", "succeeded", "failed"],
+      enum: INDEX_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
@@ -390,7 +422,7 @@ export const activitySummaries = sqliteTable(
 
     // Processing status
     status: text("status", {
-      enum: ["pending", "succeeded", "failed"],
+      enum: SUMMARY_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
@@ -450,28 +482,15 @@ export type NewActivitySummaryRecord = typeof activitySummaries.$inferInsert;
 // Enum Type Exports (for use in other modules)
 // ============================================================================
 
-export type StorageState = "ephemeral" | "persisted" | "deleted";
-export type VlmStatus = "pending" | "running" | "succeeded" | "failed" | "failed_permanent";
-export type BatchStatus = "pending" | "running" | "succeeded" | "failed" | "failed_permanent";
-export type ContextKind =
-  | "event"
-  | "knowledge"
-  | "state_snapshot"
-  | "procedure"
-  | "plan"
-  | "entity_profile";
-export type EdgeType =
-  | "event_next"
-  | "event_mentions_entity"
-  | "event_produces_knowledge"
-  | "event_updates_state"
-  | "event_suggests_plan"
-  | "event_uses_procedure"
-  | "derived_from_screenshot";
-export type MergeStatus = "pending" | "succeeded" | "failed";
-export type EmbeddingStatus = "pending" | "succeeded" | "failed";
-export type IndexStatus = "pending" | "succeeded" | "failed";
-export type AliasType = "nickname" | "abbr" | "translation";
-export type AliasSource = "ocr" | "vlm" | "llm" | "manual";
-export type DocType = "context_node" | "screenshot_snippet";
-export type SummaryStatus = "pending" | "succeeded" | "failed";
+export type StorageState = (typeof STORAGE_STATE_VALUES)[number];
+export type VlmStatus = (typeof VLM_STATUS_VALUES)[number];
+export type BatchStatus = (typeof BATCH_STATUS_VALUES)[number];
+export type ContextKind = (typeof CONTEXT_KIND_VALUES)[number];
+export type EdgeType = (typeof EDGE_TYPE_VALUES)[number];
+export type MergeStatus = (typeof MERGE_STATUS_VALUES)[number];
+export type EmbeddingStatus = (typeof EMBEDDING_STATUS_VALUES)[number];
+export type IndexStatus = (typeof INDEX_STATUS_VALUES)[number];
+export type AliasType = (typeof ALIAS_TYPE_VALUES)[number];
+export type AliasSource = (typeof ALIAS_SOURCE_VALUES)[number];
+export type DocType = (typeof DOC_TYPE_VALUES)[number];
+export type SummaryStatus = (typeof SUMMARY_STATUS_VALUES)[number];

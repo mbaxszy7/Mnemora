@@ -180,7 +180,7 @@ flowchart TD
   - 输入：`CapturePreferencesService`（用户配置） + `CaptureSourceProvider`（当前可用源）
   - 输出：`active_sources: Set<source_key>`（本轮允许 capture 的源集合）
   - 刷新触发：
-    - 定时刷新：复用/对齐 `AutoRefreshCache` 的刷新节奏（例如 1-3s 或按现有实现）
+    - 定时刷新：复用 `AutoRefreshCache`
     - 事件刷新：preferences 变更时立即触发一次 refresh
 
 - `PerSourceBuffers`：`Map<source_key, { buffer, last_seen_at, source_generation }>`
@@ -193,6 +193,27 @@ flowchart TD
   - 仅对同一个 `source_key` 的 buffer 内做比较（按你当前考虑的 map 分桶）
   - buffer 删除/重建时，会自然重置该源的去重上下文（这符合“源已变化”的语义：例如外接显示器切换）
   - 窗口源建议额外记录 `app_hint/pid`（若可获取），用于后续 thread 合并与检索，而不是用于跨源去重
+
+#### 3.3.1 pHash 计算实现建议（不使用 imghash）
+
+- 不引入 `imghash`，直接使用现有依赖 `sharp` 进行图像预处理，并在项目内实现 pHash（DCT）
+- 推荐算法：
+  - 预处理：解码 → 灰度 → resize 到 `32x32` → `raw` 灰度像素
+  - 2D DCT：对 `32x32` 做 DCT
+  - 取低频：取左上 `8x8`（通常跳过 DC 分量用于阈值计算）
+  - hash：与中位数比较生成 `64-bit`（建议存 `16-char hex`）
+
+#### 3.3.2 是否会 block 主线程？
+
+- `sharp(...).toBuffer()` 是异步调用，底层由 native 线程池执行，通常不会在 JS 主线程上做大块同步工作。
+- 自实现 DCT 属于 JS 计算，理论上会占用调用线程；但输入固定为 `32x32`，单次计算量很小。
+- 需要隔离/降载的典型情况：捕获频率更高、同时活跃源更多、或主进程还承担大量 DB/IPC/编排工作。
+
+#### 3.3.3 高性能封装（推荐）
+
+- **有界窗口**：每个 `source_key` 仅保留最近 `windowSize=32` 个 hash（RingBuffer），判重只遍历窗口，避免 `Set` 变成无界内存。
+- **并发限制**：对 pHash 计算增加 `concurrency=2-4` 的限流，避免短时间堆积过多 sharp 任务导致线程池拥塞。
+- **可选 Worker Pool**：若主进程压力较大，可将“DCT + hash 生成”放到 `worker_threads` 池；主线程仅负责 sharp 预处理调度与判重逻辑。
 
 ---
 
@@ -212,7 +233,7 @@ flowchart TD
 #### 4.1.1 Screenshot（输入）
 
 - `screenshot_id`：SQLite 自增或 UUID
-- `source_key`：`screen:<displayId>` 或 `window:<windowId>`
+- `source_key`：`screen:<displayId>` 或 `window:<desktopCapturerSourceId>`
 - `ts`：capture timestamp
 - `file_path`：落盘路径（**可选**；仅在长期保留模式下可作为长期证据索引）
 - `storage_state`：`ephemeral|persisted|deleted`

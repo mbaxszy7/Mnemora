@@ -79,9 +79,9 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_SET_PREFERENCES,
     async (_event, request: SetPreferencesRequest): Promise<IPCResult<PreferencesResponse>> => {
       try {
-        const service = getScreenCaptureModule().getPreferencesService();
-        service.setPreferences(request.preferences);
-        const preferences = service.getPreferences();
+        const module = getScreenCaptureModule();
+        module.setPreferences(request.preferences);
+        const preferences = module.getPreferencesService().getPreferences();
         return { success: true, data: { preferences } };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to set preferences");

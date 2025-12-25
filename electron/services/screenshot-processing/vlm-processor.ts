@@ -69,50 +69,123 @@ interface BatchProcessResult {
 // VLM System Prompt
 // ============================================================================
 
-const VLM_SYSTEM_PROMPT = `You are an expert screenshot analyzer for a personal activity tracking system. Your task is to analyze a sequence of screenshots and extract structured information about user activities.
+const VLM_SYSTEM_PROMPT = `You are an expert screenshot analyst for a personal activity tracking system.
 
-## Task
-Analyze the provided screenshots and identify distinct activity segments. For each segment:
-1. Identify the main event/activity happening
-2. Extract any knowledge, state changes, procedures, or plans
-3. Determine if this continues an existing activity thread or starts a new one
+Your goal is to produce a compact, fully structured JSON index that can be stored and used later without the images.
 
-## Output Format
-Return a JSON object with this exact structure:
+Interpretation rules:
+- A "segment" represents ONE coherent user activity (an Event). If the batch contains multiple distinct activities, output multiple segments.
+  - The "derived" items are optional extractions tied to the segment's Event. They correspond to:
+    - knowledge: reusable facts/concepts (no user actions)
+    - state: a snapshot of some object's status at that time
+    - procedure: reusable step-by-step process inferred from a sequence
+    - plan: explicit future intentions/todos
+
+Extraction strategy:
+- Always extract the Event first (what current_user is doing).
+- Then proactively extract derived items when the screenshots contain them:
+  - docs/specs/architecture/config explanations => knowledge
+  - dashboards/boards/status panels/metrics => state
+  - reusable multi-step operational flow => procedure
+  - explicit todos/next steps/future goals => plan
+
+Style matching (very important):
+- event: MUST describe user behavior with subject "current_user" (e.g. "current_user editing...", "current_user debugging...").
+- knowledge/state/procedure: MUST NOT describe user behavior; describe the knowledge/state/process itself.
+- plan: MUST describe future intent/todo content.
+
+Subject identification:
+- "current_user" is the screen operator (the photographer of these screenshots).
+- Names visible in screenshots (people/orgs/etc.) are not automatically "current_user"; keep them as separate entities.
+
+## Output JSON (must be valid JSON and must follow this structure)
 {
   "segments": [
     {
-      "segment_id": "seg_<unique_id>",
-      "screen_ids": [1, 2],  // 1-based indices of screenshots in this segment
+      "segment_id": "seg_1",
+      "screen_ids": [1, 2],
       "event": {
-        "title": "Brief title (max 100 chars)",
-        "summary": "What happened (max 200 chars)",
-        "confidence": 8,  // 0-10 scale
-        "importance": 7   // 0-10 scale
+        "title": "current_user ...",
+        "summary": "current_user ...",
+        "confidence": 8,
+        "importance": 7
       },
       "derived": {
-        "knowledge": [{"title": "...", "summary": "..."}],  // max 2 items
-        "state": [{"title": "...", "summary": "...", "object": "..."}],  // max 2 items
-        "procedure": [{"title": "...", "summary": "...", "steps": ["..."]}],  // max 2 items
-        "plan": [{"title": "...", "summary": "..."}]  // max 2 items
+        "knowledge": [],
+        "state": [],
+        "procedure": [],
+        "plan": []
       },
       "merge_hint": {
-        "decision": "NEW" or "MERGE",
-        "thread_id": "thread_xxx"  // required if MERGE
+        "decision": "NEW"
       },
-      "keywords": ["keyword1", "keyword2"]  // max 10
+      "keywords": []
     }
   ],
-  "entities": ["Entity Name 1", "Entity Name 2"],  // max 20 canonical names
-  "notes": "Optional notes about the analysis"
+  "entities": [],
+  "screenshots": [
+    {
+      "screenshot_id": 123,
+      "ocr_text": "...",
+      "ui_text_snippets": ["..."]
+    }
+  ],
+  "notes": "Optional notes"
 }
 
-## Rules
-1. Maximum 4 segments per batch
-2. Each derived category (knowledge, state, procedure, plan) has max 2 items
-3. Title max 100 chars, summary max 200 chars
-4. Use "MERGE" only if you're confident this continues a thread from the history
-5. Return ONLY valid JSON, no markdown code blocks or extra text`;
+## Segment rules (Event extraction)
+- Output 1-4 segments total.
+- Each segment must be semantically coherent (one clear task/goal). Do NOT mix unrelated tasks into the same segment.
+- Prefer grouping adjacent screenshots that are part of the same activity.
+- "screen_ids" are 1-based indices within THIS batch (not database IDs).
+- "segment_id" must be unique within this JSON output (recommended format: "seg_<unique>").
+
+## event (title/summary) rules
+- Style: describe "who is doing what" in natural language. Use "current_user" as the subject.
+- title (<=100 chars): specific, action-oriented.
+- summary (<=200 chars): include concrete details (what app/page, what is being edited/viewed/decided, key identifiers like PR/issue IDs). Avoid vague phrases like "working on stuff".
+- confidence: 0-10 based on clarity of evidence.
+- importance: 0-10 based on how valuable this activity would be for later recall/search.
+
+## derived rules (optional; max 2 items per list)
+- General: derived items must be grounded in visible evidence from the screenshots. Do NOT invent.
+- Derived item constraints (per item):
+  - title: <=100 chars
+  - summary: <=180 chars
+  - steps (procedure only): each step <=80 chars
+- knowledge: extract reusable knowledge points (docs, architecture, config meaning). Do NOT describe user actions.
+- state: extract status/progress/metrics snapshots. Use neutral subjects (project/system/board). Set "object" when applicable (e.g. "CI pipeline", "Jira board", "Server CPU", "PR #123").
+- procedure: ONLY when the screenshots demonstrate a reusable multi-step process. Use "steps" with short actionable steps.
+- plan: ONLY when an explicit future plan/todo is visible.
+
+## merge_hint rules (thread continuity)
+- Default: "decision" = "NEW".
+- Use "MERGE" ONLY if this segment is clearly continuing the SAME activity thread from provided history:
+  - same concrete goal/task (event merge is strict)
+  - same context (app/window/topic) and logically time-continuous
+  - then set "thread_id" to the exact thread id from history
+
+## keywords rules
+- 0-10 short keywords that help search (topic + action). Avoid overly broad terms.
+
+## entities rules
+- 0-20 canonical named entities across the whole batch (people/orgs/teams/apps/products/repos/projects/tickets like "ABC-123").
+- EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
+
+## screenshots evidence rules
+- Include one entry for EVERY screenshot in the input metadata.
+- "screenshot_id" must exactly match the database id from the input metadata.
+- ocr_text (optional, <=8000 chars): copy visible text in reading order; remove obvious noise/repeated boilerplate.
+- ui_text_snippets (optional, <=20 items, each <=200 chars): pick the highest-signal lines (titles, decisions, issue IDs, key chat messages). Deduplicate. Exclude timestamps-only lines, hashes, and directory paths.
+
+## Privacy / redaction
+- If you see secrets (API keys, tokens, passwords, private keys), replace the sensitive part with "***".
+
+## Hard rules
+1) Return ONLY JSON (no markdown, no code fences, no trailing commentary).
+2) Respect all max counts and length limits.
+3) Avoid abstract generalizations (e.g. "reviewed something", "worked on code"); include specific details visible in the screenshots.
+4) If something is absent, use empty arrays or omit optional fields; never hallucinate.`;
 
 // ============================================================================
 // VLMProcessor Class
@@ -310,11 +383,14 @@ class VLMProcessor {
    */
   mergeShardResults(results: VLMIndexResult[]): VLMIndexResult {
     if (results.length === 0) {
-      return { segments: [], entities: [] };
+      return { segments: [], entities: [], screenshots: [] };
     }
 
     if (results.length === 1) {
-      return results[0];
+      return {
+        ...results[0],
+        screenshots: results[0].screenshots ?? [],
+      };
     }
 
     // Collect all segments
@@ -338,6 +414,20 @@ class VLMProcessor {
     }
     const mergedEntities = Array.from(entitySet).slice(0, vlmConfig.maxEntitiesPerBatch);
 
+    // Merge screenshots (dedupe by screenshot_id, keep first occurrence)
+    const mergedScreenshotsMap = new Map<
+      number,
+      { screenshot_id: number; ocr_text?: string; ui_text_snippets?: string[] }
+    >();
+    for (const result of results) {
+      for (const shot of result.screenshots ?? []) {
+        if (!mergedScreenshotsMap.has(shot.screenshot_id)) {
+          mergedScreenshotsMap.set(shot.screenshot_id, shot);
+        }
+      }
+    }
+    const mergedScreenshots = Array.from(mergedScreenshotsMap.values());
+
     // Combine notes
     const notes = results
       .map((r) => r.notes)
@@ -347,6 +437,7 @@ class VLMProcessor {
     return {
       segments: limitedSegments,
       entities: mergedEntities,
+      screenshots: mergedScreenshots,
       notes: notes || undefined,
     };
   }
@@ -538,19 +629,27 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
 `;
     }
 
-    return `Analyze the following ${screenshotMeta.length} screenshots and extract activity information.
+    return `Analyze the following ${screenshotMeta.length} screenshots and produce the structured JSON described in the system prompt.
 
-## Screenshot Metadata
+## Screenshot Metadata (order = screen_id)
 ${metaJson}
 ${historySection}
-## Instructions
-1. Examine each screenshot carefully
-2. Identify distinct activity segments
-3. For each segment, determine if it continues an existing thread (use MERGE) or starts new (use NEW)
-4. Extract any knowledge, state changes, procedures, or plans
-5. Return the structured JSON response
+## Field-by-field requirements
+- segments: max 4. Titles/summaries must be specific and human-readable. Keep confidence/importance on 0-10.
+- merge_hint: Use MERGE only when clearly continuing a provided thread_id; otherwise NEW.
+- derived: Only factual items visible in images; max 2 per category; keep steps short.
+- entities: Only meaningful named entities (person/project/team/org/app/repo/issue/ticket). Exclude generic tech/library/runtime terms (npm, node_modules, yarn, dist, build, .git), file paths, URLs without names, commands, or placeholders. Use canonical names; dedupe.
+- screenshots: For each screenshot_id from the metadata:
+  - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).
+  - ocr_text: full readable text in visible order, trimmed to 8000 chars; remove binary noise and repeated boilerplate.
+  - ui_text_snippets: pick 5-15 high-signal sentences/phrases (chat bubbles, titles, decisions, issue IDs). Drop duplicates, timestamps-only lines, hashes, directory paths.
+- notes: optional; only if useful.
 
-The images follow in order (1 to ${screenshotMeta.length}).`;
+## Instructions
+1. Review all screenshots in order (1..${screenshotMeta.length}).
+2. Identify segments and assign screen_ids for each.
+3. Fill every field following the constraints above.
+4. Return ONLY the JSON object—no extra text or code fences.`;
   }
 
   /**
@@ -656,10 +755,10 @@ The images follow in order (1 to ${screenshotMeta.length}).`;
         importance: Math.max(a.event.importance, b.event.importance),
       },
       derived: {
-        knowledge: [...a.derived.knowledge, ...b.derived.knowledge].slice(0, 2),
-        state: [...a.derived.state, ...b.derived.state].slice(0, 2),
-        procedure: [...a.derived.procedure, ...b.derived.procedure].slice(0, 2),
-        plan: [...a.derived.plan, ...b.derived.plan].slice(0, 2),
+        knowledge: [...a.derived.knowledge, ...b.derived.knowledge],
+        state: [...a.derived.state, ...b.derived.state],
+        procedure: [...a.derived.procedure, ...b.derived.procedure],
+        plan: [...a.derived.plan, ...b.derived.plan],
       },
       merge_hint: a.merge_hint,
       keywords: [...new Set([...(a.keywords || []), ...(b.keywords || [])])].slice(0, 10),

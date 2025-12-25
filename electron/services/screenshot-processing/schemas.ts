@@ -150,6 +150,19 @@ export const VLMIndexResultSchema = z.object({
   segments: z.array(VLMSegmentSchema).max(4),
   /** Entities mentioned across all segments (max 20) */
   entities: z.array(z.string()).max(20).default([]),
+  /** Per-screenshot OCR results */
+  screenshots: z
+    .array(
+      z.object({
+        /** Screenshot database ID (must match screenshot_id in the input metadata) */
+        screenshot_id: z.number().int().positive(),
+        /** Full OCR text (trimmed, ≤8000 chars) */
+        ocr_text: z.string().max(8000).optional(),
+        /** High-value UI text snippets (≤20, each ≤200 chars) */
+        ui_text_snippets: z.array(z.string().max(200)).max(20).optional(),
+      })
+    )
+    .default([]),
   /** Optional notes from VLM */
   notes: z.string().optional(),
 });

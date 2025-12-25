@@ -105,10 +105,16 @@ function createValidVLMResponse(options?: { segmentCount?: number; entityCount?:
   }));
 
   const entities = Array.from({ length: entityCount }, (_, i) => `Entity${i + 1}`);
+  const screenshots = Array.from({ length: segmentCount }, (_, i) => ({
+    screenshot_id: i + 1,
+    ocr_text: `OCR text for screenshot ${i + 1}`,
+    ui_text_snippets: [`Snippet ${i + 1}-1`, `Snippet ${i + 1}-2`],
+  }));
 
   return JSON.stringify({
     segments,
     entities,
+    screenshots,
     notes: "Test response",
   });
 }
@@ -230,6 +236,7 @@ describe("VLMProcessor", () => {
 
       expect(result.segments).toHaveLength(0);
       expect(result.entities).toHaveLength(0);
+      expect(result.screenshots).toHaveLength(0);
     });
 
     it("should return single result unchanged", () => {
@@ -241,9 +248,17 @@ describe("VLMProcessor", () => {
             event: { title: "Test", summary: "Test summary", confidence: 8, importance: 7 },
             derived: { knowledge: [], state: [], procedure: [], plan: [] },
             merge_hint: { decision: "NEW" },
+            keywords: ["keyword1"],
           },
         ],
         entities: ["Entity1"],
+        screenshots: [
+          {
+            screenshot_id: 1,
+            ocr_text: "ocr",
+            ui_text_snippets: ["s1"],
+          },
+        ],
       };
 
       const result = processor.mergeShardResults([singleResult]);
@@ -255,27 +270,29 @@ describe("VLMProcessor", () => {
       const result1: VLMIndexResult = {
         segments: [],
         entities: ["Entity1", "Entity2"],
+        screenshots: [],
       };
       const result2: VLMIndexResult = {
         segments: [],
         entities: ["Entity2", "Entity3"],
+        screenshots: [],
       };
 
       const merged = processor.mergeShardResults([result1, result2]);
 
-      expect(merged.entities).toContain("Entity1");
-      expect(merged.entities).toContain("Entity2");
-      expect(merged.entities).toContain("Entity3");
+      expect(merged.entities).toEqual(["Entity1", "Entity2", "Entity3"]);
     });
 
     it("should deduplicate entities", () => {
       const result1: VLMIndexResult = {
         segments: [],
         entities: ["Entity1", "Entity2"],
+        screenshots: [],
       };
       const result2: VLMIndexResult = {
         segments: [],
         entities: ["Entity2", "Entity3"],
+        screenshots: [],
       };
 
       const merged = processor.mergeShardResults([result1, result2]);
@@ -457,7 +474,7 @@ describe("VLMProcessor Property Tests", () => {
             merge_hint: { decision: "NEW" },
           }));
 
-          const invalidResponse = JSON.stringify({ segments, entities: [] });
+          const invalidResponse = JSON.stringify({ segments, entities: [], screenshots: [] });
 
           const processor = __test__.createProcessor();
           expect(() => processor.parseVLMResponse(invalidResponse)).toThrow(VLMParseError);
@@ -487,6 +504,7 @@ describe("VLMProcessor Property Tests", () => {
                 },
               ],
               entities: [],
+              screenshots: [],
             });
 
             const processor = __test__.createProcessor();
@@ -535,6 +553,7 @@ describe("VLMProcessor Property Tests", () => {
           merge_hint: { decision: "NEW" },
         })),
         entities: [],
+        screenshots: [],
       });
 
       const processor = __test__.createProcessor();

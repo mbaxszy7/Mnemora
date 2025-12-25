@@ -11,11 +11,12 @@ import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
 
 import { getDb } from "../../database";
 import { batches, screenshots } from "../../database/schema";
-import type { Batch, Shard, SourceKey } from "./types";
+import type { Batch, DetectedEntity, Shard, SourceKey } from "./types";
 import { sourceBufferRegistry, sourceBufferRegistryEmitter } from "./source-buffer-registry";
 import type { ScreenshotInput } from "./source-buffer-registry";
 import type { BatchReadyEvent } from "./source-buffer-registry";
 import { batchBuilder } from "./batch-builder";
+import { evidenceConfig } from "./config";
 import { runVlmOnBatch } from "./vlm-processor";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 
@@ -203,6 +204,8 @@ export class ScreenshotProcessingModule {
       return;
     }
 
+    this.logger.info("Starting cleanup of expired screenshots");
+
     this.cleanupInProgress = true;
     const db = getDb();
     const now = Date.now();
@@ -238,6 +241,8 @@ export class ScreenshotProcessingModule {
           .where(eq(screenshots.id, row.id))
           .run();
       }
+
+      this.logger.info({ count: candidates.length }, "Expired screenshots cleaned up");
     } catch (error) {
       this.logger.warn({ error }, "Failed to cleanup expired screenshots");
     } finally {
@@ -288,16 +293,48 @@ export class ScreenshotProcessingModule {
       const retentionTtlMs = 1 * 60 * 60 * 1000;
       const retentionExpiresAt = Date.now() + retentionTtlMs;
 
-      try {
-        db.update(screenshots)
-          .set({ vlmStatus: "succeeded", retentionExpiresAt, updatedAt })
-          .where(inArray(screenshots.id, screenshotIds))
-          .run();
-      } catch (error) {
-        this.logger.warn(
-          { batchId: batch.batchId, error },
-          "Failed to mark screenshots as succeeded / set retention"
-        );
+      const shots = index.screenshots ?? [];
+      const shotsById = new Map(shots.map((s) => [s.screenshot_id, s] as const));
+      const detectedEntities: DetectedEntity[] = (index.entities ?? []).map((name) => ({
+        name,
+        entityType: "other",
+        confidence: 0.7,
+        source: "vlm",
+      }));
+      const detectedEntitiesJson = JSON.stringify(detectedEntities);
+
+      // Merge evidence persistence + succeeded/retention update in one pass
+      for (const screenshotId of screenshotIds) {
+        const shot = shotsById.get(screenshotId);
+
+        const setValues: Partial<typeof screenshots.$inferInsert> = {
+          vlmStatus: "succeeded",
+          retentionExpiresAt,
+          detectedEntities: detectedEntitiesJson,
+          ocrText: null,
+          uiTextSnippets: null,
+          updatedAt,
+        };
+
+        if (shot?.ocr_text != null) {
+          setValues.ocrText = shot.ocr_text.slice(0, evidenceConfig.maxOcrTextLength);
+        }
+
+        if (shot?.ui_text_snippets != null) {
+          const uiSnippets = shot.ui_text_snippets
+            .slice(0, evidenceConfig.maxUiTextSnippets)
+            .map((s) => s.slice(0, 200));
+          setValues.uiTextSnippets = JSON.stringify(uiSnippets);
+        }
+
+        try {
+          db.update(screenshots).set(setValues).where(eq(screenshots.id, screenshotId)).run();
+        } catch (error) {
+          this.logger.warn(
+            { batchId: batch.batchId, screenshotId, error },
+            "Failed to persist evidence / status for screenshot"
+          );
+        }
       }
 
       db.update(batches)

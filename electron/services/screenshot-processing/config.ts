@@ -89,16 +89,10 @@ export const vlmConfig: VLMConfig = {
 export interface PHashConfig {
   /** Hamming distance threshold for similarity (default: 8) */
   similarityThreshold: number;
-  /** Sliding window size for deduplication per source (default: 32) */
-  windowSize: number;
-  /** Maximum concurrent pHash computations (default: 2) */
-  concurrency: number;
 }
 
 export const phashConfig: PHashConfig = {
   similarityThreshold: 8,
-  windowSize: 32,
-  concurrency: 2,
 };
 
 // ============================================================================

@@ -31,6 +31,7 @@ export const CONTEXT_KIND_VALUES = [
   "plan",
   "entity_profile",
 ] as const;
+// Note: Screenshot evidence is tracked via context_screenshot_links table, not edges
 export const EDGE_TYPE_VALUES = [
   "event_next",
   "event_mentions_entity",
@@ -38,7 +39,6 @@ export const EDGE_TYPE_VALUES = [
   "event_updates_state",
   "event_suggests_plan",
   "event_uses_procedure",
-  "derived_from_screenshot",
 ] as const;
 export const MERGE_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
 export const EMBEDDING_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;

@@ -146,7 +146,7 @@ flowchart TD
 
   IM --> TL["Text LLM Expand + Merge<br/>Input:<br/>- merged VLM Index<br/>- EvidencePack per screenshot (ocr/app/title/ts)<br/>- candidate existing nodes/threads<br/>Output: ContextGraphDelta"]
 
-  TL --> DB4["SQLite Txn Upsert<br/>Produces ContextKind nodes:<br/>- event/knowledge/state_snapshot/procedure/plan<br/>Produces EdgeType edges:<br/>- event_next/event_mentions_entity/event_produces_knowledge/event_updates_state/event_suggests_plan/event_uses_procedure/derived_from_screenshot<br/>Also writes: context_screenshot_links, entity_aliases (optional)"]
+  TL --> DB4["SQLite Txn Upsert<br/>Produces ContextKind nodes:<br/>- event/knowledge/state_snapshot/procedure/plan<br/>Produces EdgeType edges:<br/>- event_next/event_mentions_entity/event_produces_knowledge/event_updates_state/event_suggests_plan/event_uses_procedure<br/>Also writes: context_screenshot_links, entity_aliases (optional)"]
 
   DB4 --> VD["VectorDocument Builder<br/>Input: context_nodes (+ optional OCR snippets)<br/>Output: vector_documents rows (pending)"]
   VD --> DB5["SQLite INSERT: vector_documents<br/>Data: doc_type/ref_id/text_hash/meta_payload<br/>State: embedding_status=pending, index_status=pending"]
@@ -351,7 +351,7 @@ VLM Index 出来后，交给 Text LLM 完成：
 - 把 `segment.event` 扩写为可存储的 EventNode（允许更长，但仍需限长）
 - 把 derived 节点标准化（补 keywords/entities/refs）
 - 执行合并（merge）与 thread 续接
-- 生成可落库的 ContextGraph 变更集：`context_nodes`（见 5.1.1）与 `context_edges`（见 5.1.2），并写入 `context_screenshot_links`（对应 `derived_from_screenshot`）
+- 生成可落库的 ContextGraph 变更集：`context_nodes`（见 5.1.1）与 `context_edges`（见 5.1.2），并写入 `context_screenshot_links`（截图证据关联）
 
 > 这一步可以复用 `prompts_en.yaml` 中 merging 逻辑，但要注意：合并对象应是“同 kind”的节点，并且需要 thread 约束。
 
@@ -398,7 +398,8 @@ VLM Index 出来后，交给 Text LLM 完成：
 - `event_updates_state`
 - `event_suggests_plan`
 - `event_uses_procedure`
-- `derived_from_screenshot`
+
+> 注意：截图证据通过 `context_screenshot_links` 表关联，不使用边类型。这种设计更自然，避免将截图建模为节点。
 
 ### 5.2 合并策略（按 kind，不按旧 type 混合）
 
@@ -675,7 +676,7 @@ VLM Index 出来后，交给 Text LLM 完成：
 **Teams 场景的关键边（建议补齐）**：
 
 - `event_mentions_entity`：event -> 人/项目/bug
-- `derived_from_screenshot`：event/knowledge -> screenshot
+- `context_screenshot_links`：node -> screenshot（通过关联表，非边类型）
 - `event_produces_knowledge`：event -> 结论/决定（knowledge）
 
 **查询执行链路（推荐）**：

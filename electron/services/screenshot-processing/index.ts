@@ -55,9 +55,30 @@ export { BatchBuilder, batchBuilder } from "./batch-builder";
 // Export VLM processor
 export { runVlmOnBatch, VLMParseError } from "./vlm-processor";
 
+// Export Text LLM processor
+export {
+  TextLLMProcessor,
+  textLLMProcessor,
+  expandVLMIndexToNodes,
+  type EvidencePack,
+  type ExpandResult,
+  type MergeResult,
+} from "./text-llm-processor";
+
 // Export screenshot processing module (orchestration facade)
 export {
   ScreenshotProcessingModule,
   screenshotProcessingModule,
   type ScreenCaptureEventSource,
 } from "./screenshot-processing-module";
+
+// Export context graph service (public API only)
+export {
+  ContextGraphService,
+  contextGraphService,
+  type CreateNodeInput,
+  type UpdateNodeInput,
+} from "./context-graph-service";
+
+// Re-export GraphTraversalResult from types (unified DTO)
+export type { GraphTraversalResult } from "./types";

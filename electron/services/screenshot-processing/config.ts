@@ -177,12 +177,18 @@ export const evidenceConfig: EvidenceConfig = {
 export interface ReconcileConfig {
   /** Scan interval in milliseconds (default: 30000 = 30s) */
   scanIntervalMs: number;
+  /** Number of records to process per scan (default: 50) */
+  batchSize: number;
+  /** Threshold for considering a running record as stale in milliseconds (default: 300000 = 5min) */
+  staleRunningThresholdMs: number;
   /** Whether to enable the reconcile loop (default: true) */
   enabled: boolean;
 }
 
 export const reconcileConfig: ReconcileConfig = {
   scanIntervalMs: 30000,
+  batchSize: 50,
+  staleRunningThresholdMs: 300000,
   enabled: true,
 };
 

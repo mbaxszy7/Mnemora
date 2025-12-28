@@ -14,12 +14,20 @@
 
 import crypto from "node:crypto";
 import { generateText } from "ai";
+import { z } from "zod";
 
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
-import type { VLMIndexResult, VLMSegment, DerivedItem } from "./schemas";
-import type { Batch, ExpandedContextNode, EntityRef, ContextKind } from "./types";
+import { parseTextLLMExpandResult } from "./schemas";
+import type { VLMIndexResult, VLMSegment, DerivedItem, TextLLMExpandResult } from "./schemas";
+import type {
+  Batch,
+  ExpandedContextNode,
+  EntityRef,
+  ContextKind,
+  EvidencePack as EvidencePackType,
+} from "./types";
 
 const logger = getLogger("text-llm-processor");
 
@@ -30,13 +38,7 @@ const logger = getLogger("text-llm-processor");
 /**
  * Evidence pack for a screenshot (minimal evidence for retrieval)
  */
-export interface EvidencePack {
-  screenshotId: number;
-  appHint?: string;
-  windowTitle?: string;
-  ocrText?: string;
-  uiTextSnippets?: string[];
-}
+type EvidencePack = EvidencePackType;
 
 /**
  * Result of expanding VLM Index to context nodes
@@ -84,59 +86,85 @@ interface PendingNode {
 // Text LLM System Prompt
 // ============================================================================
 
-const TEXT_LLM_SYSTEM_PROMPT = `You are an expert at expanding and enriching activity context from VLM analysis results.
+const TEXT_LLM_SYSTEM_PROMPT = `You are a top AI analyst and context-structuring expert. Your task is to convert a VLM Index (segments + evidence) into a compact, queryable ContextGraph update.
 
-Your task is to take VLM Index results and expand them into well-structured context nodes that can be stored and retrieved later.
+Core Principles:
+1. Faithfulness: Do not invent facts. Only use information present in the input.
+2. Content Fusion: Integrate related details into coherent nodes. Avoid fragmentation and redundancy.
+3. Traceability: Every node must reference database screenshot IDs via "screenshot_ids". Every derived node must be linked to its source event via an edge.
+4. Searchability: Titles and summaries must be specific (include concrete identifiers like file names, tickets, commands, UI labels when present). Keywords must be high-signal and deduplicated.
+5. Thread Continuity: Each event node must have "thread_id". Respect merge_hint: if decision is MERGE and thread_id is present, reuse it; otherwise create a new thread_id.
 
-## Input
-You will receive:
-1. VLM Index with segments (events and derived items)
-2. Batch metadata (timestamps, source)
-3. Evidence packs with OCR text and UI snippets
+Output Format:
+Return ONLY valid JSON with:
+- "nodes": array of nodes
+- "edges": array of edges (optional)
 
-## Output Format
-Return a JSON object with expanded nodes:
-\`\`\`json
-{
-  "nodes": [
-    {
-      "kind": "event|knowledge|state_snapshot|procedure|plan",
-      "thread_id": "string (for events only)",
-      "title": "string (<=100 chars)",
-      "summary": "string (<=200 chars)",
-      "keywords": ["string"],
-      "entities": [{"name": "string", "entityType": "person|project|app|org|repo|ticket"}],
-      "importance": 0-10,
-      "confidence": 0-10,
-      "screenshot_ids": [1, 2, 3],
-      "event_time": 1234567890000
-    }
-  ],
-  "edges": [
-    {
-      "from_index": 0,
-      "to_index": 1,
-      "edge_type": "event_produces_knowledge|event_updates_state|event_uses_procedure|event_suggests_plan"
-    }
-  ]
-}
-\`\`\`
+Node schema:
+- "kind": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan"
+- "thread_id": string (required for kind="event", omit otherwise)
+- "title": string (<= 100 chars)
+- "summary": string (<= 200 chars)
+- "keywords": array of strings (max 10)
+- "entities": array of objects with:
+  - "name": string
+  - "entity_type": string (optional)
+  - "entity_id": number (optional)
+  - "confidence": number between 0 and 1 (optional)
+- "importance": integer 0-10
+- "confidence": integer 0-10
+- "screenshot_ids": array of database screenshot IDs
+- "event_time": timestamp in milliseconds (optional)
 
-## Rules
-1. Each VLM segment MUST produce at least one "event" node
-2. Derived items (knowledge/state/procedure/plan) become separate nodes with edges to their source event
-3. Use evidence from OCR text and UI snippets to enrich summaries
-4. Keywords should be specific and searchable (5-10 per node)
-5. Entities should be canonical names (people, projects, apps, tickets)
-6. Event nodes must have thread_id (use provided or generate new)
-7. screenshot_ids should reference the actual database IDs from the batch
-8. event_time should be the midpoint timestamp of the segment's screenshots
+Edge schema:
+- "from_index": integer (index into nodes)
+- "to_index": integer (index into nodes)
+- "edge_type": "event_produces_knowledge" | "event_updates_state" | "event_uses_procedure" | "event_suggests_plan"
 
-## Quality Guidelines
-- Summaries should be specific and actionable, not vague
-- Include concrete details from the evidence (file names, issue IDs, etc.)
-- Keywords should help future retrieval
-- Entities should be normalized (e.g., "John Smith" not "john", "PROJ-123" not "the ticket")`;
+Hard Rules:
+1. Each VLM segment MUST produce at least one event node.
+2. Each derived item MUST produce a separate node and an edge from its source event.
+3. "screenshot_ids" MUST be database IDs (use Screenshot Mapping).
+4. "event_time" should be the midpoint timestamp of the segment screenshots (milliseconds).
+5. Do not output markdown, explanations, or extra text.`;
+
+const TEXT_LLM_MERGE_SYSTEM_PROMPT = `You are a top AI analyst and information integration expert.
+
+Task:
+Merge two context nodes of the SAME kind into one coherent node.
+
+Core Principles:
+1. Faithfulness: Do not invent facts. Only use information present in the inputs.
+2. Content Fusion: Integrate complementary details into a single coherent title/summary; avoid redundant phrasing.
+3. Searchability: Use concrete identifiers (file names, tickets, commands, UI labels) when present.
+4. De-duplication: Keywords and entities must be deduplicated.
+
+Output Format:
+Return ONLY valid JSON object with fields:
+- title (<= 100 chars)
+- summary (<= 200 chars)
+- keywords (string[], max 10)
+- entities (array of objects with name, entity_type?, entity_id?, confidence?)
+
+Do not output markdown or extra text.`;
+
+const TextLLMMergeResultSchema = z.object({
+  title: z.string().min(1).max(100),
+  summary: z.string().min(1).max(200),
+  keywords: z.array(z.string()).max(10).default([]),
+  entities: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        entity_id: z.number().int().positive().optional(),
+        entity_type: z.string().optional(),
+        confidence: z.number().min(0).max(1).optional(),
+      })
+    )
+    .default([]),
+});
+
+type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultSchema>;
 
 // ============================================================================
 // TextLLMProcessor Class
@@ -178,13 +206,32 @@ export class TextLLMProcessor {
       const evidencePacks = this.buildEvidencePacks(vlmIndex, batch);
 
       // Convert segments to pending nodes (without LLM call for now - direct conversion)
-      const pendingNodes = this.convertSegmentsToPendingNodes(vlmIndex, batch, evidencePacks);
+      let pendingNodes: PendingNode[];
+      try {
+        const rawExpansion = await this.callTextLLMForExpansion(vlmIndex, batch, evidencePacks);
+        const parsed = parseTextLLMExpandResult(rawExpansion);
+        if (!parsed.success || !parsed.data) {
+          throw new Error(
+            `Text LLM expand schema validation failed: ${parsed.error?.message ?? "unknown error"}`
+          );
+        }
+        pendingNodes = this.convertTextLLMExpandResultToPendingNodes(parsed.data);
+      } catch (error) {
+        logger.warn(
+          {
+            batchId: batch.batchId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Text LLM expansion failed; falling back to direct conversion"
+        );
+        pendingNodes = this.convertSegmentsToPendingNodes(vlmIndex, batch, evidencePacks);
+      }
 
       // Process merge hints and determine thread IDs
-      const processedNodes = await this.processMergeHints(pendingNodes, vlmIndex.segments);
+      const processedNodes = await this.processMergeHints(pendingNodes, vlmIndex.segments, batch);
 
       // Write to database
-      const nodeIds = await this.persistNodes(processedNodes, batch);
+      const nodeIds = await this.persistNodes(processedNodes);
 
       const threadIds = [
         ...new Set(processedNodes.filter((n) => n.threadId).map((n) => n.threadId!)),
@@ -238,46 +285,154 @@ export class TextLLMProcessor {
     newNode: ExpandedContextNode,
     existingNode: ExpandedContextNode
   ): Promise<MergeResult> {
-    // Combine keywords (unique)
-    const combinedKeywords = [...new Set([...existingNode.keywords, ...newNode.keywords])].slice(
-      0,
-      10
-    );
-
-    // Combine entities (unique by name)
-    const entityMap = new Map<string, EntityRef>();
-    for (const entity of [...existingNode.entities, ...newNode.entities]) {
-      if (!entityMap.has(entity.name)) {
-        entityMap.set(entity.name, entity);
-      }
+    if (newNode.kind !== existingNode.kind) {
+      throw new Error(
+        `Cannot merge nodes of different kinds: ${existingNode.kind} vs ${newNode.kind}`
+      );
     }
-    const combinedEntities = Array.from(entityMap.values());
 
-    // Combine screenshot IDs
+    const mergeText = (a: string, b: string, maxLen: number): string => {
+      const aTrim = a.trim();
+      const bTrim = b.trim();
+      if (!aTrim) return bTrim;
+      if (!bTrim) return aTrim;
+      const aLower = aTrim.toLowerCase();
+      const bLower = bTrim.toLowerCase();
+      if (aLower.includes(bLower)) return aTrim;
+      if (bLower.includes(aLower)) return bTrim;
+
+      const combined = `${aTrim} / ${bTrim}`;
+      if (combined.length <= maxLen) return combined;
+
+      const leftBudget = Math.max(0, Math.floor(maxLen * 0.6));
+      const rightBudget = Math.max(0, maxLen - leftBudget - 3);
+      const left = aTrim.slice(0, leftBudget).trimEnd();
+      const right = bTrim.slice(0, rightBudget).trimEnd();
+      const stitched = right ? `${left} / ${right}` : left;
+      if (stitched.length <= maxLen) return stitched;
+      return stitched.slice(0, Math.max(0, maxLen - 3)) + "...";
+    };
+
+    const mergeKeywords = (a: string[], b: string[], max: number): string[] => {
+      const out: string[] = [];
+      const seen = new Set<string>();
+      for (const kw of [...a, ...b]) {
+        const trimmed = kw.trim();
+        if (!trimmed) continue;
+        const key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(trimmed);
+        if (out.length >= max) break;
+      }
+      return out;
+    };
+
+    // Combine keywords (unique, preserve order)
+    const combinedKeywords = mergeKeywords(existingNode.keywords, newNode.keywords, 10);
+
+    // Combine entities (unique by normalized name, preserve order, keep richer metadata)
+    const entityMap = new Map<string, EntityRef>();
+    const entityOrder: string[] = [];
+    for (const entity of [...existingNode.entities, ...newNode.entities]) {
+      const key = entity.name.trim().toLowerCase();
+      if (!key) continue;
+      const existing = entityMap.get(key);
+      if (!existing) {
+        entityMap.set(key, entity);
+        entityOrder.push(key);
+        continue;
+      }
+
+      const merged: EntityRef = {
+        ...existing,
+        entityId: existing.entityId ?? entity.entityId,
+        entityType: existing.entityType ?? entity.entityType,
+        confidence:
+          existing.confidence === undefined
+            ? entity.confidence
+            : entity.confidence === undefined
+              ? existing.confidence
+              : Math.max(existing.confidence, entity.confidence),
+      };
+      entityMap.set(key, merged);
+    }
+    const combinedEntities = entityOrder.map((k) => entityMap.get(k)!).filter(Boolean);
+
+    // Combine screenshot IDs (unique, stable order)
     const combinedScreenshotIds = [
       ...new Set([...existingNode.screenshotIds, ...newNode.screenshotIds]),
+    ].sort((a, b) => a - b);
+
+    // Track merged IDs (unique, preserve order)
+    const mergedFromIds = [
+      ...new Set([...(existingNode.mergedFromIds || []), ...(newNode.mergedFromIds || [])]),
     ];
-
-    // Track merged IDs
-    const mergedFromIds = [...(existingNode.mergedFromIds || []), ...(newNode.mergedFromIds || [])];
-
-    // Use longer/better summary
-    const summary =
-      newNode.summary.length > existingNode.summary.length ? newNode.summary : existingNode.summary;
 
     const mergedNode: ExpandedContextNode = {
       kind: existingNode.kind,
-      threadId: existingNode.threadId,
-      title: existingNode.title, // Keep existing title
-      summary,
+      threadId: existingNode.threadId ?? newNode.threadId,
+      title: mergeText(existingNode.title, newNode.title, 100),
+      summary: mergeText(existingNode.summary, newNode.summary, 200),
       keywords: combinedKeywords,
       entities: combinedEntities,
       importance: Math.max(existingNode.importance, newNode.importance),
       confidence: Math.max(existingNode.confidence, newNode.confidence),
       mergedFromIds: mergedFromIds.length > 0 ? mergedFromIds : undefined,
       screenshotIds: combinedScreenshotIds,
-      eventTime: existingNode.eventTime, // Keep existing event time
+      eventTime: existingNode.eventTime ?? newNode.eventTime,
     };
+
+    try {
+      const llmMerged = await this.callTextLLMForMerge(existingNode, newNode);
+      const llmEntities: EntityRef[] = llmMerged.entities.map((e) => ({
+        name: e.name,
+        entityId: e.entity_id,
+        entityType: e.entity_type,
+        confidence: e.confidence,
+      }));
+
+      const llmKeywordList = llmMerged.keywords ?? [];
+      mergedNode.title = llmMerged.title;
+      mergedNode.summary = llmMerged.summary;
+      mergedNode.keywords = mergeKeywords(llmKeywordList, combinedKeywords, 10);
+
+      const mergedEntityMap = new Map<string, EntityRef>();
+      const mergedEntityOrder: string[] = [];
+      for (const entity of [...llmEntities, ...combinedEntities]) {
+        const key = entity.name.trim().toLowerCase();
+        if (!key) continue;
+        const existing = mergedEntityMap.get(key);
+        if (!existing) {
+          mergedEntityMap.set(key, entity);
+          mergedEntityOrder.push(key);
+          continue;
+        }
+        const merged: EntityRef = {
+          ...existing,
+          entityId: existing.entityId ?? entity.entityId,
+          entityType: existing.entityType ?? entity.entityType,
+          confidence:
+            existing.confidence === undefined
+              ? entity.confidence
+              : entity.confidence === undefined
+                ? existing.confidence
+                : Math.max(existing.confidence, entity.confidence),
+        };
+        mergedEntityMap.set(key, merged);
+      }
+      mergedNode.entities = mergedEntityOrder.map((k) => mergedEntityMap.get(k)!).filter(Boolean);
+
+      logger.debug(
+        { kind: existingNode.kind, title: mergedNode.title },
+        "Text LLM merge succeeded"
+      );
+    } catch (error) {
+      logger.debug(
+        { kind: existingNode.kind, error: error instanceof Error ? error.message : String(error) },
+        "Text LLM merge skipped/failed; using heuristic merge"
+      );
+    }
 
     return {
       mergedNode,
@@ -307,7 +462,7 @@ export class TextLLMProcessor {
       window_title: s.meta.windowTitle,
     }));
 
-    return `Expand the following VLM Index segments into storable context nodes.
+    return `Please expand the following VLM Index into storable context nodes.
 
 ## VLM Segments
 ${segmentsJson}
@@ -324,13 +479,13 @@ ${evidenceJson}
 - Time Range: ${new Date(batch.tsStart).toISOString()} to ${new Date(batch.tsEnd).toISOString()}
 
 ## Instructions
-1. For each segment, create an event node with the segment's event info
-2. For each derived item (knowledge/state/procedure/plan), create a separate node
-3. Use the screenshot_mapping to convert screen_ids to database_ids for screenshot_ids field
-4. Enrich summaries with evidence from OCR text and UI snippets
-5. Return ONLY valid JSON matching the output format
+1. Produce at least one event node for each segment.
+2. For each derived item (knowledge/state/procedure/plan), create a separate node and an edge from its source event.
+3. Convert segment screen_ids (1-based indexes) to database screenshot_ids using the Screenshot Mapping section.
+4. Use Evidence Packs (OCR + UI snippets) only to enrich specificity; do not invent any facts.
+5. Output must be strict JSON only (no markdown, no code fences, no extra commentary).
 
-Return the expanded nodes JSON:`;
+Return the JSON now:`;
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -357,6 +512,69 @@ Return the expanded nodes JSON:`;
     }
 
     return packs;
+  }
+
+  private convertTextLLMExpandResultToPendingNodes(result: TextLLMExpandResult): PendingNode[] {
+    const pendingNodes: PendingNode[] = result.nodes.map((node) => {
+      const entities: EntityRef[] = (node.entities ?? []).map((e) => ({
+        name: e.name,
+        entityId: e.entity_id,
+        entityType: e.entity_type,
+        confidence: e.confidence,
+      }));
+
+      return {
+        kind: node.kind,
+        threadId: node.kind === "event" ? node.thread_id : undefined,
+        title: node.title,
+        summary: node.summary,
+        keywords: node.keywords ?? [],
+        entities,
+        importance: node.importance,
+        confidence: node.confidence,
+        screenshotIds: node.screenshot_ids ?? [],
+        eventTime: node.event_time,
+      };
+    });
+
+    const sourceEventIndexByNodeIndex = new Map<number, number>();
+    for (const edge of result.edges ?? []) {
+      const fromIndex = edge.from_index;
+      const toIndex = edge.to_index;
+      const fromNode = pendingNodes[fromIndex];
+      const toNode = pendingNodes[toIndex];
+      if (!fromNode || !toNode) continue;
+      if (fromNode.kind !== "event") continue;
+      if (toNode.kind === "event") continue;
+      sourceEventIndexByNodeIndex.set(toIndex, fromIndex);
+    }
+
+    for (let i = 0; i < pendingNodes.length; i++) {
+      const node = pendingNodes[i];
+      if (node.kind === "event") continue;
+      let sourceEventIndex = sourceEventIndexByNodeIndex.get(i);
+      if (sourceEventIndex === undefined) {
+        for (let j = i - 1; j >= 0; j--) {
+          if (pendingNodes[j]?.kind === "event") {
+            sourceEventIndex = j;
+            break;
+          }
+        }
+      }
+
+      if (sourceEventIndex === undefined) {
+        const firstEventIndex = pendingNodes.findIndex((n) => n.kind === "event");
+        sourceEventIndex = firstEventIndex >= 0 ? firstEventIndex : undefined;
+      }
+
+      if (sourceEventIndex === undefined) {
+        throw new Error("Text LLM expand output has derived nodes but no event nodes");
+      }
+
+      node.sourceEventIndex = sourceEventIndex;
+    }
+
+    return pendingNodes;
   }
 
   /**
@@ -516,10 +734,37 @@ Return the expanded nodes JSON:`;
    */
   private async processMergeHints(
     pendingNodes: PendingNode[],
-    segments: VLMSegment[]
+    segments: VLMSegment[],
+    batch: Batch
   ): Promise<PendingNode[]> {
     const processedNodes = [...pendingNodes];
-    let segmentIndex = 0;
+
+    const screenIdToDbId = new Map<number, number>();
+    batch.screenshots.forEach((s, idx) => {
+      screenIdToDbId.set(idx + 1, s.id);
+    });
+
+    const segmentDbScreenshotIds = segments.map((segment) =>
+      segment.screen_ids
+        .map((screenId) => screenIdToDbId.get(screenId))
+        .filter((id): id is number => id !== undefined)
+    );
+
+    const threadIdBySegmentIndex = new Map<number, string>();
+    const getThreadIdForSegment = (segment: VLMSegment, index: number): string => {
+      const existing = threadIdBySegmentIndex.get(index);
+      if (existing) return existing;
+      const mergeHint = segment.merge_hint;
+      const threadId =
+        mergeHint.decision === "MERGE" && mergeHint.thread_id
+          ? mergeHint.thread_id
+          : this.generateThreadId();
+      threadIdBySegmentIndex.set(index, threadId);
+      return threadId;
+    };
+
+    const usedSequentialSegmentIndexes = new Set<number>();
+    let nextSequentialSegmentIndex = 0;
 
     for (let i = 0; i < processedNodes.length; i++) {
       const node = processedNodes[i];
@@ -529,28 +774,67 @@ Return the expanded nodes JSON:`;
         continue;
       }
 
-      // Find corresponding segment
-      const segment = segments[segmentIndex];
-      segmentIndex++;
+      let matchedSegmentIndex: number | undefined;
+      if (node.screenshotIds.length > 0) {
+        let bestIndex = -1;
+        let bestOverlap = 0;
+        for (let segIdx = 0; segIdx < segmentDbScreenshotIds.length; segIdx++) {
+          const segIds = segmentDbScreenshotIds[segIdx];
+          if (!segIds || segIds.length === 0) continue;
+          const segIdSet = new Set(segIds);
+          let overlap = 0;
+          for (const sid of node.screenshotIds) {
+            if (segIdSet.has(sid)) overlap++;
+          }
+          if (overlap > bestOverlap) {
+            bestOverlap = overlap;
+            bestIndex = segIdx;
+          }
+        }
+        if (bestIndex >= 0 && bestOverlap > 0) {
+          matchedSegmentIndex = bestIndex;
+        }
+      }
 
-      if (!segment) {
-        // No segment found, create new thread
+      if (matchedSegmentIndex === undefined) {
+        while (usedSequentialSegmentIndexes.has(nextSequentialSegmentIndex)) {
+          nextSequentialSegmentIndex++;
+        }
+        if (nextSequentialSegmentIndex < segments.length) {
+          matchedSegmentIndex = nextSequentialSegmentIndex;
+          usedSequentialSegmentIndexes.add(nextSequentialSegmentIndex);
+          nextSequentialSegmentIndex++;
+        }
+      }
+
+      if (matchedSegmentIndex === undefined) {
         node.threadId = this.generateThreadId();
+        logger.debug(
+          { threadId: node.threadId, nodeTitle: node.title },
+          "Creating new thread for event"
+        );
         continue;
       }
 
-      const mergeHint = segment.merge_hint;
+      const segment = segments[matchedSegmentIndex];
+      const mergeHint = segment?.merge_hint;
+      if (!segment || !mergeHint) {
+        node.threadId = this.generateThreadId();
+        logger.debug(
+          { threadId: node.threadId, nodeTitle: node.title },
+          "Creating new thread for event"
+        );
+        continue;
+      }
+
+      node.threadId = getThreadIdForSegment(segment, matchedSegmentIndex);
 
       if (mergeHint.decision === "MERGE" && mergeHint.thread_id) {
-        // Use existing thread ID
-        node.threadId = mergeHint.thread_id;
         logger.debug(
           { threadId: mergeHint.thread_id, nodeTitle: node.title },
           "Merging event into existing thread"
         );
       } else {
-        // Create new thread
-        node.threadId = this.generateThreadId();
         logger.debug(
           { threadId: node.threadId, nodeTitle: node.title },
           "Creating new thread for event"
@@ -640,7 +924,7 @@ Return the expanded nodes JSON:`;
    * This method can be used for more sophisticated expansion
    * when direct conversion is not sufficient.
    */
-  async callTextLLMForExpansion(
+  protected async callTextLLMForExpansion(
     vlmIndex: VLMIndexResult,
     batch: Batch,
     evidencePacks: EvidencePack[]
@@ -687,6 +971,68 @@ Return the expanded nodes JSON:`;
     }
 
     return JSON.parse(jsonMatch[0]);
+  }
+
+  private buildMergePrompt(
+    existingNode: ExpandedContextNode,
+    newNode: ExpandedContextNode
+  ): string {
+    const toLLMNode = (node: ExpandedContextNode) => ({
+      kind: node.kind,
+      thread_id: node.threadId,
+      title: node.title,
+      summary: node.summary,
+      keywords: node.keywords,
+      entities: node.entities.map((e) => ({
+        name: e.name,
+        entity_id: e.entityId,
+        entity_type: e.entityType,
+        confidence: e.confidence,
+      })),
+      importance: node.importance,
+      confidence: node.confidence,
+      screenshot_ids: node.screenshotIds,
+      event_time: node.eventTime,
+    });
+
+    return `Merge the following two context nodes into one.
+
+## Existing Node
+${JSON.stringify(toLLMNode(existingNode), null, 2)}
+
+## New Node
+${JSON.stringify(toLLMNode(newNode), null, 2)}
+
+Return the JSON object now:`;
+  }
+
+  private async callTextLLMForMerge(
+    existingNode: ExpandedContextNode,
+    newNode: ExpandedContextNode
+  ): Promise<TextLLMMergeResult> {
+    const aiService = AISDKService.getInstance();
+    if (!aiService.isInitialized()) {
+      throw new Error("AI SDK not initialized");
+    }
+
+    const prompt = this.buildMergePrompt(existingNode, newNode);
+    const { text: rawText } = await generateText({
+      model: aiService.getTextClient(),
+      system: TEXT_LLM_MERGE_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+    });
+
+    const parsed = this.parseTextLLMResponse(rawText);
+    const validated = TextLLMMergeResultSchema.safeParse(parsed);
+    if (!validated.success) {
+      throw new Error(`Text LLM merge schema validation failed: ${validated.error.message}`);
+    }
+    return validated.data;
   }
 }
 

@@ -12,10 +12,16 @@
  */
 
 import crypto from "node:crypto";
-import { eq, desc, and, gte, isNotNull } from "drizzle-orm";
+import { eq, desc, and, gte, isNotNull, inArray, isNull } from "drizzle-orm";
 
 import { getDb } from "../../database";
-import { batches, contextNodes, contextEdges, type NewBatchRecord } from "../../database/schema";
+import {
+  batches,
+  contextNodes,
+  contextEdges,
+  screenshots,
+  type NewBatchRecord,
+} from "../../database/schema";
 import { getLogger } from "../logger";
 import { vlmConfig, historyPackConfig } from "./config";
 import type {
@@ -230,26 +236,67 @@ export class BatchBuilder {
   private async persistBatch(batch: Batch, historyPack: HistoryPack): Promise<number> {
     const db = getDb();
     const now = Date.now();
+    const screenshotIds = batch.screenshots.map((s) => s.id);
 
-    const record: NewBatchRecord = {
-      batchId: batch.batchId,
-      sourceKey: batch.sourceKey,
-      screenshotIds: JSON.stringify(batch.screenshots.map((s) => s.id)),
-      tsStart: batch.tsStart,
-      tsEnd: batch.tsEnd,
-      historyPack: JSON.stringify(historyPack),
-      idempotencyKey: batch.idempotencyKey,
-      status: "pending",
-      attempts: 0,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const dbId = db.transaction((tx) => {
+      const record: NewBatchRecord = {
+        batchId: batch.batchId,
+        sourceKey: batch.sourceKey,
+        screenshotIds: JSON.stringify(screenshotIds),
+        tsStart: batch.tsStart,
+        tsEnd: batch.tsEnd,
+        historyPack: JSON.stringify(historyPack),
+        idempotencyKey: batch.idempotencyKey,
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-    const result = db.insert(batches).values(record).returning({ id: batches.id }).get();
+      let batchDbId: number;
+      try {
+        const inserted = tx.insert(batches).values(record).returning({ id: batches.id }).get();
+        batchDbId = inserted.id;
+      } catch (error) {
+        const existing = tx
+          .select({ id: batches.id })
+          .from(batches)
+          .where(eq(batches.idempotencyKey, batch.idempotencyKey))
+          .get();
+        if (!existing) {
+          throw error;
+        }
+        batchDbId = existing.id;
+      }
+
+      if (screenshotIds.length > 0) {
+        const existingEnqueue = tx
+          .select({ id: screenshots.id, enqueuedBatchId: screenshots.enqueuedBatchId })
+          .from(screenshots)
+          .where(inArray(screenshots.id, screenshotIds))
+          .all();
+
+        const conflict = existingEnqueue.find(
+          (s) => s.enqueuedBatchId != null && s.enqueuedBatchId !== batchDbId
+        );
+        if (conflict) {
+          throw new Error(
+            `Screenshot ${conflict.id} is already enqueued to batch ${conflict.enqueuedBatchId}`
+          );
+        }
+
+        tx.update(screenshots)
+          .set({ enqueuedBatchId: batchDbId, updatedAt: now })
+          .where(and(inArray(screenshots.id, screenshotIds), isNull(screenshots.enqueuedBatchId)))
+          .run();
+      }
+
+      return batchDbId;
+    });
 
     logger.info(
       {
-        id: result.id,
+        id: dbId,
         batchId: batch.batchId,
         sourceKey: batch.sourceKey,
         screenshotCount: batch.screenshots.length,
@@ -257,7 +304,7 @@ export class BatchBuilder {
       "Persisted batch to database"
     );
 
-    return result.id;
+    return dbId;
   }
 
   /**

@@ -11,9 +11,15 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import { TextLLMProcessor, type EvidencePack } from "./text-llm-processor";
+import { TextLLMProcessor } from "./text-llm-processor";
 import type { VLMIndexResult, VLMSegment } from "./schemas";
-import type { Batch, AcceptedScreenshot, ExpandedContextNode, SourceKey } from "./types";
+import type {
+  Batch,
+  AcceptedScreenshot,
+  EvidencePack,
+  ExpandedContextNode,
+  SourceKey,
+} from "./types";
 
 // ============================================================================
 // Test Helpers

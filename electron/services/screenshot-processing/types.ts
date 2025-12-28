@@ -271,6 +271,8 @@ export interface EvidencePack {
  * Expanded context node with full details
  */
 export interface ExpandedContextNode {
+  /** Node ID */
+  id?: number;
   /** Node type */
   kind: ContextKind;
   /** Thread identifier (for events) */
@@ -385,7 +387,7 @@ export interface GraphTraversalResult {
 /**
  * Tables that can have pending records
  */
-export type PendingRecordTable = "screenshots" | "batches" | "context_nodes" | "vector_documents";
+export type PendingRecordTable = "batches" | "context_nodes" | "vector_documents";
 
 /**
  * A pending record that needs processing

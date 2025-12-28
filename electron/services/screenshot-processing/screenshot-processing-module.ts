@@ -7,17 +7,16 @@ import type {
 
 import type { CapturePreferencesService } from "../capture-preferences-service";
 import { getLogger } from "../logger";
-import { and, eq, inArray, isNotNull, lte } from "drizzle-orm";
+import { and, eq, isNotNull, lte } from "drizzle-orm";
 
 import { getDb } from "../../database";
-import { batches, screenshots } from "../../database/schema";
-import type { Batch, DetectedEntity, Shard, SourceKey } from "./types";
+import { screenshots } from "../../database/schema";
+import type { SourceKey } from "./types";
 import { sourceBufferRegistry, sourceBufferRegistryEmitter } from "./source-buffer-registry";
 import type { ScreenshotInput } from "./source-buffer-registry";
 import type { BatchReadyEvent } from "./source-buffer-registry";
 import { batchBuilder } from "./batch-builder";
-import { evidenceConfig } from "./config";
-import { runVlmOnBatch } from "./vlm-processor";
+import { reconcileLoop } from "./reconcile-loop";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 
 export interface ScreenCaptureEventSource {
@@ -130,10 +129,20 @@ export class ScreenshotProcessingModule {
       >;
 
       for (const [sourceKey, screenshots] of entries) {
-        const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, screenshots);
-        const shards = batchBuilder.splitIntoShards(batch);
-
-        await this.dispatchToVlmProcessor(batch, shards);
+        try {
+          const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, screenshots);
+          this.logger.info(
+            { batchId: batch.batchId, sourceKey },
+            "Batch persisted, waking reconcile loop"
+          );
+          reconcileLoop.wake();
+        } catch (error) {
+          this.logger.error(
+            { sourceKey, error },
+            "Failed to persist batch for source in batch:ready handler"
+          );
+          continue;
+        }
       }
     } catch (error) {
       this.logger.error({ error }, "Failed to handle batch:ready event");
@@ -159,6 +168,8 @@ export class ScreenshotProcessingModule {
 
     this.startCleanupLoop();
 
+    reconcileLoop.start();
+
     this.initialized = true;
   }
 
@@ -172,6 +183,8 @@ export class ScreenshotProcessingModule {
     sourceBufferRegistryEmitter.off("batch:ready", this.onBatchReady);
 
     this.stopCleanupLoop();
+
+    reconcileLoop.stop();
 
     this.screenCapture = null;
     this.initialized = false;
@@ -247,129 +260,6 @@ export class ScreenshotProcessingModule {
       this.logger.warn({ error }, "Failed to cleanup expired screenshots");
     } finally {
       this.cleanupInProgress = false;
-    }
-  }
-
-  private async dispatchToVlmProcessor(batch: Batch, shards: Shard[]): Promise<void> {
-    this.logger.info(
-      { batchId: batch.batchId, sourceKey: batch.sourceKey, shardCount: shards.length },
-      "Batch ready for VLM processing"
-    );
-
-    // TODO: instantiate/use VLMProcessor and hand off shards for processing
-    // TODO: handle concurrency, retries, and updating batch status
-    // TODO: pass along historyPack (batch.historyPack) and ensure base64 is populated before request
-
-    const db = getDb();
-    const screenshotIds = batch.screenshots.map((s) => s.id);
-
-    try {
-      const now = Date.now();
-
-      try {
-        db.update(batches)
-          .set({ status: "running", updatedAt: now, errorMessage: null, errorCode: null })
-          .where(eq(batches.batchId, batch.batchId))
-          .run();
-      } catch (error) {
-        this.logger.warn({ batchId: batch.batchId, error }, "Failed to mark batch as running");
-      }
-
-      try {
-        db.update(screenshots)
-          .set({ vlmStatus: "running", updatedAt: now })
-          .where(inArray(screenshots.id, screenshotIds))
-          .run();
-      } catch (error) {
-        this.logger.warn(
-          { batchId: batch.batchId, error },
-          "Failed to mark screenshots as running"
-        );
-      }
-
-      const index = await runVlmOnBatch(batch, shards);
-      const updatedAt = Date.now();
-
-      const retentionTtlMs = 1 * 60 * 60 * 1000;
-      const retentionExpiresAt = Date.now() + retentionTtlMs;
-
-      const shots = index.screenshots ?? [];
-      const shotsById = new Map(shots.map((s) => [s.screenshot_id, s] as const));
-      const detectedEntities: DetectedEntity[] = (index.entities ?? []).map((name) => ({
-        name,
-        entityType: "other",
-        confidence: 0.7,
-        source: "vlm",
-      }));
-      const detectedEntitiesJson = JSON.stringify(detectedEntities);
-
-      // Merge evidence persistence + succeeded/retention update in one pass
-      for (const screenshotId of screenshotIds) {
-        const shot = shotsById.get(screenshotId);
-
-        const setValues: Partial<typeof screenshots.$inferInsert> = {
-          vlmStatus: "succeeded",
-          retentionExpiresAt,
-          detectedEntities: detectedEntitiesJson,
-          ocrText: null,
-          uiTextSnippets: null,
-          updatedAt,
-        };
-
-        if (shot?.ocr_text != null) {
-          setValues.ocrText = shot.ocr_text.slice(0, evidenceConfig.maxOcrTextLength);
-        }
-
-        if (shot?.ui_text_snippets != null) {
-          const uiSnippets = shot.ui_text_snippets
-            .slice(0, evidenceConfig.maxUiTextSnippets)
-            .map((s) => s.slice(0, 200));
-          setValues.uiTextSnippets = JSON.stringify(uiSnippets);
-        }
-
-        try {
-          db.update(screenshots).set(setValues).where(eq(screenshots.id, screenshotId)).run();
-        } catch (error) {
-          this.logger.warn(
-            { batchId: batch.batchId, screenshotId, error },
-            "Failed to persist evidence / status for screenshot"
-          );
-        }
-      }
-
-      db.update(batches)
-        .set({ status: "succeeded", indexJson: JSON.stringify(index), updatedAt })
-        .where(eq(batches.batchId, batch.batchId))
-        .run();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const updatedAt = Date.now();
-
-      try {
-        db.update(batches)
-          .set({ status: "failed", errorMessage: message, updatedAt })
-          .where(eq(batches.batchId, batch.batchId))
-          .run();
-      } catch (dbError) {
-        this.logger.error(
-          { batchId: batch.batchId, error: dbError },
-          "Failed to persist batch failure"
-        );
-      }
-
-      try {
-        db.update(screenshots)
-          .set({ vlmStatus: "failed", updatedAt })
-          .where(inArray(screenshots.id, screenshotIds))
-          .run();
-      } catch (dbError) {
-        this.logger.warn(
-          { batchId: batch.batchId, error: dbError },
-          "Failed to mark screenshots as failed"
-        );
-      }
-
-      this.logger.error({ batchId: batch.batchId, error }, "VLM processing failed");
     }
   }
 }

@@ -60,10 +60,12 @@ export {
   TextLLMProcessor,
   textLLMProcessor,
   expandVLMIndexToNodes,
-  type EvidencePack,
   type ExpandResult,
   type MergeResult,
 } from "./text-llm-processor";
+
+// Export reconcile loop
+export { ReconcileLoop, reconcileLoop } from "./reconcile-loop";
 
 // Export screenshot processing module (orchestration facade)
 export {

@@ -1,0 +1,815 @@
+import { eq, and, or, lt, isNull, lte, desc, ne, inArray, asc, isNotNull } from "drizzle-orm";
+import { getDb } from "../../database";
+import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
+import { getLogger } from "../logger";
+import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
+import { batchBuilder } from "./batch-builder";
+import { contextGraphService } from "./context-graph-service";
+import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
+import { runVlmOnBatch } from "./vlm-processor";
+import type { VLMIndexResult } from "./schemas";
+import type {
+  AcceptedScreenshot,
+  Batch,
+  DetectedEntity,
+  ExpandedContextNode,
+  HistoryPack,
+  PendingRecord,
+  Shard,
+  SourceKey,
+} from "./types";
+import type { ContextNodeRecord } from "../../database/schema";
+
+const logger = getLogger("reconcile-loop");
+
+/**
+ * ReconcileLoop orchestrates background tasks like node merging and embedding generation.
+ * It ensures the system eventually reaches a consistent state by retrying failed operations
+ * and recovering from crashes using SQLite status fields.
+ */
+export class ReconcileLoop {
+  private timer: NodeJS.Timeout | null = null;
+  private isRunning = false;
+  private isProcessing = false;
+  private wakeScheduled = false;
+  private wakeRequested = false;
+
+  /**
+   * Start the reconcile loop
+   */
+  start(): void {
+    if (!reconcileConfig.enabled) {
+      logger.info("Reconcile loop disabled by config");
+      return;
+    }
+    if (this.isRunning) return;
+    this.isRunning = true;
+    logger.info("Reconcile loop started");
+
+    // Immediate run then periodic
+    this.run();
+    this.timer = setInterval(() => this.run(), reconcileConfig.scanIntervalMs);
+  }
+
+  private async enqueueOrphanScreenshots(): Promise<void> {
+    const db = getDb();
+    const now = Date.now();
+    const minAgeMs = batchConfig.batchTimeoutMs + 5000;
+    const cutoffCreatedAt = now - minAgeMs;
+
+    const existingBatchRows = db
+      .select({ id: batches.id, screenshotIds: batches.screenshotIds })
+      .from(batches)
+      .where(
+        and(
+          or(
+            eq(batches.status, "pending"),
+            eq(batches.status, "failed"),
+            eq(batches.status, "running")
+          ),
+          lt(batches.attempts, retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(desc(batches.updatedAt))
+      .limit(reconcileConfig.batchSize)
+      .all();
+
+    for (const row of existingBatchRows) {
+      try {
+        const ids = JSON.parse(row.screenshotIds) as number[];
+        if (ids.length === 0) continue;
+        db.update(screenshots)
+          .set({ enqueuedBatchId: row.id, updatedAt: now })
+          .where(and(inArray(screenshots.id, ids), isNull(screenshots.enqueuedBatchId)))
+          .run();
+      } catch {
+        continue;
+      }
+    }
+
+    const candidates = db
+      .select({
+        id: screenshots.id,
+        ts: screenshots.ts,
+        sourceKey: screenshots.sourceKey,
+        phash: screenshots.phash,
+        filePath: screenshots.filePath,
+        width: screenshots.width,
+        height: screenshots.height,
+        bytes: screenshots.bytes,
+        mime: screenshots.mime,
+        appHint: screenshots.appHint,
+        windowTitle: screenshots.windowTitle,
+      })
+      .from(screenshots)
+      .where(
+        and(
+          isNull(screenshots.enqueuedBatchId),
+          or(eq(screenshots.vlmStatus, "pending"), eq(screenshots.vlmStatus, "failed")),
+          lt(screenshots.vlmAttempts, retryConfig.maxAttempts),
+          lte(screenshots.createdAt, cutoffCreatedAt),
+          isNotNull(screenshots.filePath),
+          ne(screenshots.storageState, "deleted")
+        )
+      )
+      .orderBy(asc(screenshots.sourceKey), asc(screenshots.ts))
+      .limit(reconcileConfig.batchSize)
+      .all();
+
+    if (candidates.length === 0) {
+      return;
+    }
+
+    const bySource = new Map<SourceKey, typeof candidates>();
+    for (const row of candidates) {
+      const key = row.sourceKey as SourceKey;
+      const arr = bySource.get(key);
+      if (arr) {
+        arr.push(row);
+      } else {
+        bySource.set(key, [row]);
+      }
+    }
+
+    let createdBatches = 0;
+    for (const [sourceKey, rows] of bySource) {
+      for (let i = 0; i < rows.length; i += batchConfig.batchSize) {
+        const chunk = rows.slice(i, i + batchConfig.batchSize);
+        const accepted: AcceptedScreenshot[] = chunk.map((s) => ({
+          id: s.id,
+          ts: s.ts,
+          sourceKey,
+          phash: s.phash ?? "",
+          filePath: s.filePath!,
+          meta: {
+            appHint: s.appHint ?? undefined,
+            windowTitle: s.windowTitle ?? undefined,
+            width: s.width ?? undefined,
+            height: s.height ?? undefined,
+            bytes: s.bytes ?? undefined,
+            mime: s.mime ?? undefined,
+          },
+        }));
+
+        try {
+          const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, accepted);
+          createdBatches++;
+          logger.info(
+            { batchId: batch.batchId, sourceKey, screenshotCount: accepted.length },
+            "Enqueued orphan screenshots into batch"
+          );
+        } catch (error) {
+          logger.warn(
+            { sourceKey, error: error instanceof Error ? error.message : String(error) },
+            "Failed to enqueue orphan screenshots into batch"
+          );
+        }
+      }
+    }
+
+    if (createdBatches > 0) {
+      this.wakeRequested = true;
+    }
+  }
+
+  /**
+   * Stop the reconcile loop
+   */
+  stop(): void {
+    this.isRunning = false;
+    this.wakeScheduled = false;
+    this.wakeRequested = false;
+    if (this.timer) {
+      clearInterval(this.timer);
+      this.timer = null;
+    }
+    logger.info("Reconcile loop stopped");
+  }
+
+  /**
+   * Wake the reconcile loop to trigger an immediate run.
+   * Uses debouncing to avoid queuing many setImmediate calls.
+   */
+  wake(): void {
+    if (!this.isRunning) return;
+
+    // If we're already processing, just remember to run again after this cycle.
+    if (this.isProcessing) {
+      this.wakeRequested = true;
+      return;
+    }
+
+    if (this.wakeScheduled) return; // Already scheduled, skip
+    this.wakeScheduled = true;
+    setImmediate(() => this.run());
+  }
+
+  /**
+   * Main execution cycle
+   */
+  private async run(): Promise<void> {
+    // Check if loop was stopped (e.g., after stop() but before queued setImmediate runs)
+    if (!this.isRunning) {
+      this.wakeScheduled = false;
+      this.wakeRequested = false;
+      return;
+    }
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+    this.wakeScheduled = false; // Clear wake flag at start of run
+
+    try {
+      // 1. Recover stale 'running' states
+      await this.recoverStaleStates();
+
+      const records = await this.scanPendingRecords();
+      for (const record of records) {
+        await this.processRecord(record);
+      }
+      await this.enqueueOrphanScreenshots();
+    } catch (error) {
+      logger.error(
+        { error: error instanceof Error ? error.message : String(error) },
+        "Error in reconcile loop cycle"
+      );
+    } finally {
+      this.isProcessing = false;
+
+      // If new work arrived while we were processing, schedule another run ASAP.
+      if (this.wakeRequested) {
+        this.wakeRequested = false;
+        this.wake();
+      }
+    }
+  }
+
+  /**
+   * Resets records stuck in 'running' state for too long back to 'pending'
+   */
+  private async recoverStaleStates(): Promise<void> {
+    const db = getDb();
+    const staleThreshold = Date.now() - reconcileConfig.staleRunningThresholdMs;
+
+    const staleScreenshots = db
+      .update(screenshots)
+      .set({
+        vlmStatus: "pending",
+        vlmNextRunAt: null,
+        updatedAt: Date.now(),
+      })
+      .where(and(eq(screenshots.vlmStatus, "running"), lt(screenshots.updatedAt, staleThreshold)))
+      .run();
+
+    if (staleScreenshots.changes > 0) {
+      logger.info({ count: staleScreenshots.changes }, "Recovered stale VLM states in screenshots");
+    }
+
+    const staleBatches = db
+      .update(batches)
+      .set({
+        status: "pending",
+        nextRunAt: null,
+        updatedAt: Date.now(),
+      })
+      .where(and(eq(batches.status, "running"), lt(batches.updatedAt, staleThreshold)))
+      .run();
+
+    if (staleBatches.changes > 0) {
+      logger.info({ count: staleBatches.changes }, "Recovered stale states in batches");
+    }
+
+    // Recover context_nodes mergeStatus
+    const staleNodes = db
+      .update(contextNodes)
+      .set({
+        mergeStatus: "pending",
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(eq(contextNodes.mergeStatus, "running"), lt(contextNodes.updatedAt, staleThreshold))
+      )
+      .run();
+
+    if (staleNodes.changes > 0) {
+      logger.info({ count: staleNodes.changes }, "Recovered stale merge states in context_nodes");
+    }
+
+    // Recover context_nodes embeddingStatus
+    const staleEmbeddingNodes = db
+      .update(contextNodes)
+      .set({
+        embeddingStatus: "pending",
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(eq(contextNodes.embeddingStatus, "running"), lt(contextNodes.updatedAt, staleThreshold))
+      )
+      .run();
+
+    if (staleEmbeddingNodes.changes > 0) {
+      logger.info(
+        { count: staleEmbeddingNodes.changes },
+        "Recovered stale embedding states in context_nodes"
+      );
+    }
+
+    // Recover vector_documents
+    const staleDocs = db
+      .update(vectorDocuments)
+      .set({
+        embeddingStatus: "pending",
+        indexStatus: "pending",
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          or(
+            eq(vectorDocuments.embeddingStatus, "running"),
+            eq(vectorDocuments.indexStatus, "running")
+          ),
+          lt(vectorDocuments.updatedAt, staleThreshold)
+        )
+      )
+      .run();
+
+    if (staleDocs.changes > 0) {
+      logger.info({ count: staleDocs.changes }, "Recovered stale states in vector_documents");
+    }
+  }
+
+  private async scanPendingRecords(): Promise<PendingRecord[]> {
+    const db = getDb();
+    const now = Date.now();
+    const limit = reconcileConfig.batchSize;
+
+    // Note: We no longer scan screenshots directly.
+    // All screenshots are processed through batches.
+    // This avoids race conditions between screenshot-level and batch-level VLM processing.
+
+    const batchRows = db
+      .select({
+        id: batches.id,
+        status: batches.status,
+        attempts: batches.attempts,
+        nextRunAt: batches.nextRunAt,
+      })
+      .from(batches)
+      .where(
+        and(
+          or(eq(batches.status, "pending"), eq(batches.status, "failed")),
+          or(isNull(batches.nextRunAt), lte(batches.nextRunAt, now)),
+          lt(batches.attempts, retryConfig.maxAttempts)
+        )
+      )
+      .limit(limit)
+      .all();
+
+    const mergeRows = db
+      .select({
+        id: contextNodes.id,
+        status: contextNodes.mergeStatus,
+        attempts: contextNodes.mergeAttempts,
+        nextRunAt: contextNodes.mergeNextRunAt,
+      })
+      .from(contextNodes)
+      .where(
+        and(
+          or(eq(contextNodes.mergeStatus, "pending"), eq(contextNodes.mergeStatus, "failed")),
+          or(isNull(contextNodes.mergeNextRunAt), lte(contextNodes.mergeNextRunAt, now)),
+          lt(contextNodes.mergeAttempts, retryConfig.maxAttempts)
+        )
+      )
+      .limit(limit)
+      .all();
+
+    const embeddingRows = db
+      .select({
+        id: vectorDocuments.id,
+        status: vectorDocuments.embeddingStatus,
+        attempts: vectorDocuments.embeddingAttempts,
+        nextRunAt: vectorDocuments.embeddingNextRunAt,
+      })
+      .from(vectorDocuments)
+      .where(
+        and(
+          or(
+            eq(vectorDocuments.embeddingStatus, "pending"),
+            eq(vectorDocuments.embeddingStatus, "failed")
+          ),
+          or(
+            isNull(vectorDocuments.embeddingNextRunAt),
+            lte(vectorDocuments.embeddingNextRunAt, now)
+          ),
+          lt(vectorDocuments.embeddingAttempts, retryConfig.maxAttempts)
+        )
+      )
+      .limit(limit)
+      .all();
+
+    const batchesPending: PendingRecord[] = batchRows.map((r) => ({
+      id: r.id,
+      table: "batches",
+      status: r.status as "pending" | "failed",
+      attempts: r.attempts,
+      nextRunAt: r.nextRunAt ?? undefined,
+    }));
+
+    const mergesPending: PendingRecord[] = mergeRows.map((r) => ({
+      id: r.id,
+      table: "context_nodes",
+      status: r.status as "pending" | "failed",
+      attempts: r.attempts,
+      nextRunAt: r.nextRunAt ?? undefined,
+    }));
+
+    const embeddingsPending: PendingRecord[] = embeddingRows.map((r) => ({
+      id: r.id,
+      table: "vector_documents",
+      status: r.status as "pending" | "failed",
+      attempts: r.attempts,
+      nextRunAt: r.nextRunAt ?? undefined,
+    }));
+
+    return [...batchesPending, ...mergesPending, ...embeddingsPending];
+  }
+
+  private async processRecord(record: PendingRecord): Promise<void> {
+    switch (record.table) {
+      case "batches":
+        await this.processBatchRecord(record);
+        return;
+      case "context_nodes":
+        await this.processContextNodeMergeRecord(record);
+        return;
+      case "vector_documents":
+        await this.processVectorDocumentEmbeddingRecord(record);
+        return;
+    }
+  }
+
+  private async processBatchRecord(record: PendingRecord): Promise<void> {
+    const db = getDb();
+
+    const batchRecord = db.select().from(batches).where(eq(batches.id, record.id)).get();
+
+    if (!batchRecord) {
+      return;
+    }
+
+    if (batchRecord.status !== "pending" && batchRecord.status !== "failed") {
+      return;
+    }
+
+    if (batchRecord.attempts >= retryConfig.maxAttempts) {
+      return;
+    }
+
+    let screenshotIds: number[] = [];
+    try {
+      screenshotIds = JSON.parse(batchRecord.screenshotIds) as number[];
+    } catch {
+      screenshotIds = [];
+    }
+
+    try {
+      const now = Date.now();
+
+      db.update(batches)
+        .set({
+          status: "running",
+          errorMessage: null,
+          errorCode: null,
+          updatedAt: now,
+        })
+        .where(eq(batches.id, batchRecord.id))
+        .run();
+
+      if (screenshotIds.length > 0) {
+        db.update(screenshots)
+          .set({ vlmStatus: "running", enqueuedBatchId: batchRecord.id, updatedAt: now })
+          .where(
+            and(
+              inArray(screenshots.id, screenshotIds),
+              or(
+                isNull(screenshots.enqueuedBatchId),
+                eq(screenshots.enqueuedBatchId, batchRecord.id)
+              )
+            )
+          )
+          .run();
+      }
+
+      const shotRows = screenshotIds.length
+        ? db.select().from(screenshots).where(inArray(screenshots.id, screenshotIds)).all()
+        : [];
+
+      const missing = shotRows.find((s) => !s.filePath);
+      if (missing) {
+        throw new Error(`Missing filePath for screenshot ${missing.id}`);
+      }
+
+      const sourceKey = batchRecord.sourceKey as SourceKey;
+      const accepted: AcceptedScreenshot[] = shotRows.map((s) => ({
+        id: s.id,
+        ts: s.ts,
+        sourceKey,
+        phash: s.phash ?? "",
+        filePath: s.filePath!,
+        meta: {
+          appHint: s.appHint ?? undefined,
+          windowTitle: s.windowTitle ?? undefined,
+          width: s.width ?? undefined,
+          height: s.height ?? undefined,
+          bytes: s.bytes ?? undefined,
+          mime: s.mime ?? undefined,
+        },
+      }));
+
+      let historyPack: HistoryPack | undefined;
+      if (batchRecord.historyPack) {
+        try {
+          historyPack = JSON.parse(batchRecord.historyPack) as unknown as HistoryPack;
+        } catch {
+          historyPack = undefined;
+        }
+      }
+
+      const batch: Batch = {
+        batchId: batchRecord.batchId,
+        sourceKey,
+        screenshots: accepted,
+        status: batchRecord.status,
+        idempotencyKey: batchRecord.idempotencyKey,
+        tsStart: batchRecord.tsStart,
+        tsEnd: batchRecord.tsEnd,
+        historyPack: historyPack ?? batchBuilder.buildHistoryPack(sourceKey),
+      };
+
+      const shards: Shard[] = batchBuilder.splitIntoShards(batch);
+      const index = await runVlmOnBatch(batch, shards);
+
+      await this.persistVlmEvidenceAndFinalize(index, batch);
+
+      db.update(batches)
+        .set({
+          status: "succeeded",
+          indexJson: JSON.stringify(index),
+          errorMessage: null,
+          errorCode: null,
+          nextRunAt: null,
+          updatedAt: Date.now(),
+        })
+        .where(eq(batches.id, batchRecord.id))
+        .run();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const attempts = batchRecord.attempts + 1;
+      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
+      const updatedAt = Date.now();
+
+      db.update(batches)
+        .set({
+          status: isPermanent ? "failed_permanent" : "failed",
+          attempts,
+          nextRunAt: nextRun,
+          errorMessage: message,
+          updatedAt,
+        })
+        .where(eq(batches.id, batchRecord.id))
+        .run();
+
+      if (screenshotIds.length > 0) {
+        const shotRows = db
+          .select()
+          .from(screenshots)
+          .where(inArray(screenshots.id, screenshotIds))
+          .all();
+        for (const s of shotRows) {
+          const nextAttempts = s.vlmAttempts + 1;
+          const shotPermanent = nextAttempts >= retryConfig.maxAttempts;
+          const shotNextRun = shotPermanent ? null : this.calculateNextRun(nextAttempts);
+          db.update(screenshots)
+            .set({
+              vlmStatus: shotPermanent ? "failed_permanent" : "failed",
+              vlmAttempts: nextAttempts,
+              vlmNextRunAt: shotNextRun,
+              vlmErrorMessage: message,
+              updatedAt,
+            })
+            .where(eq(screenshots.id, s.id))
+            .run();
+        }
+      }
+    }
+  }
+
+  private async persistVlmEvidenceAndFinalize(index: VLMIndexResult, batch: Batch): Promise<void> {
+    const db = getDb();
+    const screenshotIds = batch.screenshots.map((s) => s.id);
+
+    const retentionTtlMs = 1 * 60 * 60 * 1000;
+    const retentionExpiresAt = Date.now() + retentionTtlMs;
+    const updatedAt = Date.now();
+
+    const shots = index.screenshots ?? [];
+    const shotsById = new Map(shots.map((s) => [s.screenshot_id, s] as const));
+    const detectedEntities: DetectedEntity[] = (index.entities ?? []).map((name: string) => ({
+      name,
+      entityType: "other",
+      confidence: 0.7,
+      source: "vlm",
+    }));
+    const detectedEntitiesJson = JSON.stringify(detectedEntities);
+
+    for (const screenshotId of screenshotIds) {
+      const shot = shotsById.get(screenshotId);
+      const setValues: Partial<typeof screenshots.$inferInsert> = {
+        vlmStatus: "succeeded",
+        vlmNextRunAt: null,
+        vlmErrorMessage: null,
+        vlmErrorCode: null,
+        retentionExpiresAt,
+        detectedEntities: detectedEntitiesJson,
+        ocrText: null,
+        uiTextSnippets: null,
+        updatedAt,
+      };
+
+      if (shot?.ocr_text != null) {
+        setValues.ocrText = String(shot.ocr_text).slice(0, evidenceConfig.maxOcrTextLength);
+      }
+
+      if (shot?.ui_text_snippets != null) {
+        const uiSnippets = (shot.ui_text_snippets as string[])
+          .slice(0, evidenceConfig.maxUiTextSnippets)
+          .map((s) => String(s).slice(0, 200));
+        setValues.uiTextSnippets = JSON.stringify(uiSnippets);
+      }
+
+      db.update(screenshots).set(setValues).where(eq(screenshots.id, screenshotId)).run();
+    }
+
+    try {
+      await expandVLMIndexToNodes(index, batch);
+    } catch (error) {
+      logger.warn(
+        { batchId: batch.batchId, error: error instanceof Error ? error.message : String(error) },
+        "Text LLM expansion failed; continuing without blocking VLM pipeline"
+      );
+    }
+  }
+
+  private async processContextNodeMergeRecord(record: PendingRecord): Promise<void> {
+    const db = getDb();
+    const node = db.select().from(contextNodes).where(eq(contextNodes.id, record.id)).get() as
+      | ContextNodeRecord
+      | undefined;
+
+    if (!node) {
+      return;
+    }
+
+    try {
+      db.update(contextNodes)
+        .set({ mergeStatus: "running", updatedAt: Date.now() })
+        .where(eq(contextNodes.id, node.id))
+        .run();
+
+      await this.handleSingleMerge(node);
+    } catch (error) {
+      const attempts = node.mergeAttempts + 1;
+      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
+
+      db.update(contextNodes)
+        .set({
+          mergeStatus: isPermanent ? "failed_permanent" : "failed",
+          mergeAttempts: attempts,
+          mergeNextRunAt: nextRun,
+          mergeErrorMessage: error instanceof Error ? error.message : String(error),
+          updatedAt: Date.now(),
+        })
+        .where(eq(contextNodes.id, node.id))
+        .run();
+    }
+  }
+
+  private async processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void> {
+    logger.debug({ vectorDocumentId: record.id }, "Embedding processing not implemented yet");
+  }
+
+  /**
+   * Logic for merging a single node into the graph
+   */
+  private async handleSingleMerge(nodeRecord: ContextNodeRecord): Promise<void> {
+    // 1. Convert DB record to ExpandedContextNode
+    const node: ExpandedContextNode = {
+      id: nodeRecord.id,
+      kind: nodeRecord.kind,
+      threadId: nodeRecord.threadId ?? undefined,
+      title: nodeRecord.title,
+      summary: nodeRecord.summary,
+      keywords: nodeRecord.keywords ? JSON.parse(nodeRecord.keywords) : [],
+      entities: nodeRecord.entities ? JSON.parse(nodeRecord.entities) : [],
+      importance: nodeRecord.importance,
+      confidence: nodeRecord.confidence,
+      eventTime: nodeRecord.eventTime ?? undefined,
+      screenshotIds: [], // Will be filled below
+      mergedFromIds: nodeRecord.mergedFromIds ? JSON.parse(nodeRecord.mergedFromIds) : [],
+    };
+
+    // 2. Fetch screenshot links
+    node.screenshotIds = contextGraphService.getLinkedScreenshots(nodeRecord.id.toString());
+
+    // If the node has no threadId, we can't safely find a merge target.
+    // Treat it as self-contained and mark merge as succeeded.
+    if (!node.threadId) {
+      await contextGraphService.updateNode(nodeRecord.id.toString(), {
+        mergeStatus: "succeeded",
+      });
+      return;
+    }
+
+    // 3. Find potential merge target (heuristic: same thread, same kind, latest succeeded node)
+    const targetRecord = getDb()
+      .select()
+      .from(contextNodes)
+      .where(
+        and(
+          eq(contextNodes.threadId, node.threadId),
+          eq(contextNodes.kind, node.kind),
+          eq(contextNodes.mergeStatus, "succeeded"),
+          ne(contextNodes.id, nodeRecord.id)
+        )
+      )
+      .orderBy(desc(contextNodes.eventTime))
+      .limit(1)
+      .get() as ContextNodeRecord | undefined;
+
+    if (!targetRecord) {
+      // No target found, just mark as succeeded (self-contained node)
+      await contextGraphService.updateNode(nodeRecord.id.toString(), {
+        mergeStatus: "succeeded",
+      });
+      return;
+    }
+
+    // 4. Perform merge
+    const target: ExpandedContextNode = {
+      id: targetRecord.id,
+      kind: targetRecord.kind,
+      threadId: targetRecord.threadId ?? undefined,
+      title: targetRecord.title,
+      summary: targetRecord.summary,
+      keywords: targetRecord.keywords ? JSON.parse(targetRecord.keywords) : [],
+      entities: targetRecord.entities ? JSON.parse(targetRecord.entities) : [],
+      importance: targetRecord.importance,
+      confidence: targetRecord.confidence,
+      eventTime: targetRecord.eventTime ?? undefined,
+      screenshotIds: contextGraphService.getLinkedScreenshots(targetRecord.id.toString()),
+      mergedFromIds: targetRecord.mergedFromIds ? JSON.parse(targetRecord.mergedFromIds) : [],
+    };
+
+    const mergeResult = await textLLMProcessor.executeMerge(node, target);
+
+    // 5. Update target node and mark current node as succeeded (or similar mechanism)
+    // In our design, we update the target node with merged content and mark the new node as succeeded
+    // AND we should track mergedFromIds to maintain the lineage.
+
+    // We update targetNode with mergeResult.mergedNode
+    await contextGraphService.updateNode(targetRecord.id.toString(), {
+      title: mergeResult.mergedNode.title,
+      summary: mergeResult.mergedNode.summary,
+      keywords: mergeResult.mergedNode.keywords,
+      entities: mergeResult.mergedNode.entities,
+      importance: mergeResult.mergedNode.importance,
+      confidence: mergeResult.mergedNode.confidence,
+      mergedFromIds: mergeResult.mergedFromIds,
+    });
+
+    // Link new node's screenshots to target node
+    for (const screenshotId of node.screenshotIds) {
+      await contextGraphService.linkScreenshot(targetRecord.id.toString(), screenshotId.toString());
+    }
+
+    // Finally mark the current node as succeeded (it has been merged into target)
+    await contextGraphService.updateNode(nodeRecord.id.toString(), {
+      mergeStatus: "succeeded",
+    });
+
+    logger.info({ sourceId: node.id, targetId: target.id }, "Merged node into target");
+  }
+
+  /**
+   * Calculates next run time with exponential backoff and jitter
+   */
+  private calculateNextRun(attempts: number): number {
+    const { backoffScheduleMs, jitterMs } = retryConfig;
+    const baseDelay = backoffScheduleMs[Math.min(attempts - 1, backoffScheduleMs.length - 1)];
+    const jitter = Math.random() * jitterMs;
+    return Date.now() + baseDelay + jitter;
+  }
+}
+
+export const reconcileLoop = new ReconcileLoop();

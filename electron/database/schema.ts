@@ -40,9 +40,27 @@ export const EDGE_TYPE_VALUES = [
   "event_suggests_plan",
   "event_uses_procedure",
 ] as const;
-export const MERGE_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
-export const EMBEDDING_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
-export const INDEX_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+export const MERGE_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
+export const EMBEDDING_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
+export const INDEX_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
 export const ALIAS_TYPE_VALUES = ["nickname", "abbr", "translation"] as const;
 export const ALIAS_SOURCE_VALUES = ["ocr", "vlm", "llm", "manual"] as const;
 export const DOC_TYPE_VALUES = ["context_node", "screenshot_snippet"] as const;
@@ -93,66 +111,6 @@ export const llmConfig = sqliteTable("llm_config", {
 // ============================================================================
 
 /**
- * Screenshots table
- * Stores captured screenshots with metadata, evidence, and processing status
- */
-export const screenshots = sqliteTable(
-  "screenshots",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-
-    // Source identification
-    sourceKey: text("source_key").notNull(), // format: screen:<id> or window:<id>
-    ts: integer("ts").notNull(), // capture timestamp in milliseconds
-
-    // File storage
-    filePath: text("file_path"),
-    storageState: text("storage_state", {
-      enum: STORAGE_STATE_VALUES,
-    })
-      .notNull()
-      .default("ephemeral"),
-    retentionExpiresAt: integer("retention_expires_at"),
-
-    // Image metadata
-    phash: text("phash"), // perceptual hash for deduplication
-    width: integer("width"),
-    height: integer("height"),
-    bytes: integer("bytes"),
-    mime: text("mime"),
-
-    // Evidence pack fields
-    appHint: text("app_hint"),
-    windowTitle: text("window_title"),
-    ocrText: text("ocr_text"), // limited to 8k characters
-    uiTextSnippets: text("ui_text_snippets"), // JSON array of high-value text snippets
-    detectedEntities: text("detected_entities"), // JSON array of detected entities
-    vlmIndexFragment: text("vlm_index_fragment"), // JSON fragment from VLM output
-
-    // VLM processing status
-    vlmStatus: text("vlm_status", {
-      enum: VLM_STATUS_VALUES,
-    })
-      .notNull()
-      .default("pending"),
-    vlmAttempts: integer("vlm_attempts").notNull().default(0),
-    vlmNextRunAt: integer("vlm_next_run_at"),
-    vlmErrorCode: text("vlm_error_code"),
-    vlmErrorMessage: text("vlm_error_message"),
-
-    // Timestamps
-    createdAt: integer("created_at").notNull(),
-    updatedAt: integer("updated_at").notNull(),
-  },
-  (table) => [
-    index("idx_screenshots_source_key").on(table.sourceKey),
-    index("idx_screenshots_ts").on(table.ts),
-    index("idx_screenshots_vlm_status").on(table.vlmStatus),
-    index("idx_screenshots_storage_state").on(table.storageState),
-  ]
-);
-
-/**
  * Batches table
  * Stores batch processing jobs for VLM analysis
  */
@@ -200,6 +158,68 @@ export const batches = sqliteTable(
 );
 
 /**
+ * Screenshots table
+ * Stores captured screenshots with metadata, evidence, and processing status
+ */
+export const screenshots = sqliteTable(
+  "screenshots",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+
+    // Source identification
+    sourceKey: text("source_key").notNull(), // format: screen:<id> or window:<id>
+    ts: integer("ts").notNull(), // capture timestamp in milliseconds
+
+    // File storage
+    filePath: text("file_path"),
+    storageState: text("storage_state", {
+      enum: STORAGE_STATE_VALUES,
+    })
+      .notNull()
+      .default("ephemeral"),
+    retentionExpiresAt: integer("retention_expires_at"),
+
+    // Image metadata
+    phash: text("phash"), // perceptual hash for deduplication
+    width: integer("width"),
+    height: integer("height"),
+    bytes: integer("bytes"),
+    mime: text("mime"),
+
+    // Evidence pack fields
+    appHint: text("app_hint"),
+    windowTitle: text("window_title"),
+    ocrText: text("ocr_text"), // limited to 8k characters
+    uiTextSnippets: text("ui_text_snippets"), // JSON array of high-value text snippets
+    detectedEntities: text("detected_entities"), // JSON array of detected entities
+    vlmIndexFragment: text("vlm_index_fragment"), // JSON fragment from VLM output
+
+    // VLM processing status
+    vlmStatus: text("vlm_status", {
+      enum: VLM_STATUS_VALUES,
+    })
+      .notNull()
+      .default("pending"),
+    vlmAttempts: integer("vlm_attempts").notNull().default(0),
+    vlmNextRunAt: integer("vlm_next_run_at"),
+    vlmErrorCode: text("vlm_error_code"),
+    vlmErrorMessage: text("vlm_error_message"),
+    enqueuedBatchId: integer("enqueued_batch_id").references(() => batches.id),
+
+    // Timestamps
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_screenshots_source_key").on(table.sourceKey),
+    index("idx_screenshots_ts").on(table.ts),
+    index("idx_screenshots_vlm_status").on(table.vlmStatus),
+    index("idx_screenshots_storage_state").on(table.storageState),
+    index("idx_screenshots_enqueued_batch_id").on(table.enqueuedBatchId),
+  ]
+);
+
+/**
  * Context Nodes table
  * Stores nodes in the context graph (events, knowledge, state, procedures, plans, entities)
  */
@@ -239,11 +259,19 @@ export const contextNodes = sqliteTable(
     })
       .notNull()
       .default("pending"),
+    mergeAttempts: integer("merge_attempts").notNull().default(0),
+    mergeNextRunAt: integer("merge_next_run_at"),
+    mergeErrorCode: text("merge_error_code"),
+    mergeErrorMessage: text("merge_error_message"),
     embeddingStatus: text("embedding_status", {
       enum: EMBEDDING_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
+    embeddingAttempts: integer("embedding_attempts").notNull().default(0),
+    embeddingNextRunAt: integer("embedding_next_run_at"),
+    embeddingErrorCode: text("embedding_error_code"),
+    embeddingErrorMessage: text("embedding_error_message"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
@@ -381,11 +409,15 @@ export const vectorDocuments = sqliteTable(
     })
       .notNull()
       .default("pending"),
+    embeddingAttempts: integer("embedding_attempts").notNull().default(0),
+    embeddingNextRunAt: integer("embedding_next_run_at"),
     indexStatus: text("index_status", {
       enum: INDEX_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
+    indexAttempts: integer("index_attempts").notNull().default(0),
+    indexNextRunAt: integer("index_next_run_at"),
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
 

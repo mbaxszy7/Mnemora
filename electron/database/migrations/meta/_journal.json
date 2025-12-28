@@ -36,6 +36,20 @@
       "when": 1766413160926,
       "tag": "0004_gray_toro",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1766911415110,
+      "tag": "0005_chemical_stranger",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1766938527161,
+      "tag": "0006_useful_namora",
+      "breakpoints": true
     }
   ]
 }

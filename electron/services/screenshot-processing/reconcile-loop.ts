@@ -2,6 +2,7 @@ import { eq, and, or, lt, isNull, lte, desc, ne, inArray, asc, isNotNull } from 
 import { getDb } from "../../database";
 import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
+import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import {
   batchConfig,
   evidenceConfig,
@@ -31,6 +32,10 @@ import type {
 import type { ContextNodeRecord } from "../../database/schema";
 
 const logger = getLogger("reconcile-loop");
+
+function getCanonicalAppCandidates(): string[] {
+  return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
+}
 
 /**
  * ReconcileLoop orchestrates background tasks like node merging and embedding generation.
@@ -679,6 +684,18 @@ export class ReconcileLoop {
     const db = getDb();
     const screenshotIds = batch.screenshots.map((s) => s.id);
 
+    const currentAppHintById = new Map<number, string | null>();
+    if (screenshotIds.length > 0) {
+      const rows = db
+        .select({ id: screenshots.id, appHint: screenshots.appHint })
+        .from(screenshots)
+        .where(inArray(screenshots.id, screenshotIds))
+        .all();
+      for (const r of rows) {
+        currentAppHintById.set(r.id, r.appHint ?? null);
+      }
+    }
+
     const retentionTtlMs = 1 * 60 * 60 * 1000;
     const retentionExpiresAt = Date.now() + retentionTtlMs;
     const updatedAt = Date.now();
@@ -693,8 +710,14 @@ export class ReconcileLoop {
     }));
     const detectedEntitiesJson = JSON.stringify(detectedEntities);
 
+    const canonicalApps = getCanonicalAppCandidates();
+    const canonicalByLower = new Map(
+      canonicalApps.map((name) => [name.toLowerCase(), name] as const)
+    );
+
     for (const screenshotId of screenshotIds) {
       const shot = shotsById.get(screenshotId);
+      const existingAppHint = currentAppHintById.get(screenshotId) ?? null;
       const setValues: Partial<typeof screenshots.$inferInsert> = {
         vlmStatus: "succeeded",
         vlmNextRunAt: null,
@@ -706,6 +729,23 @@ export class ReconcileLoop {
         uiTextSnippets: null,
         updatedAt,
       };
+
+      if (existingAppHint == null) {
+        const guess = shot?.app_guess;
+        const confidence = typeof guess?.confidence === "number" ? guess.confidence : null;
+        const rawName = typeof guess?.name === "string" ? guess.name.trim() : "";
+        const lower = rawName.toLowerCase();
+        const canonical = canonicalByLower.get(lower) ?? null;
+        if (
+          confidence != null &&
+          confidence >= 0.7 &&
+          canonical != null &&
+          lower !== "unknown" &&
+          lower !== "other"
+        ) {
+          setValues.appHint = canonical;
+        }
+      }
 
       if (shot?.ocr_text != null) {
         setValues.ocrText = String(shot.ocr_text).slice(0, evidenceConfig.maxOcrTextLength);

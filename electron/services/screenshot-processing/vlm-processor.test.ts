@@ -107,6 +107,10 @@ function createValidVLMResponse(options?: { segmentCount?: number; entityCount?:
   const entities = Array.from({ length: entityCount }, (_, i) => `Entity${i + 1}`);
   const screenshots = Array.from({ length: segmentCount }, (_, i) => ({
     screenshot_id: i + 1,
+    app_guess: {
+      name: "Google Chrome",
+      confidence: 0.8,
+    },
     ocr_text: `OCR text for screenshot ${i + 1}`,
     ui_text_snippets: [`Snippet ${i + 1}-1`, `Snippet ${i + 1}-2`],
   }));

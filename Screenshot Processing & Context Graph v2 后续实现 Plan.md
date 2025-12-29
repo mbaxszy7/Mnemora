@@ -268,7 +268,7 @@
 
 ---
 
-## Milestone 3 — IPC：Search / Traverse / Evidence 接入主功能（必须）
+## X Milestone 3 — IPC：Search / Traverse / Evidence 接入主功能（必须）
 
 ### 目的
 
@@ -306,6 +306,169 @@
   - `VectorIndexService.search(queryEmbedding, topK)` 返回 `docId[]`
   - 以 `docId == vector_documents.id` 回查 `vector_documents.refId`（context node id）
   - 再通过 `ContextGraphService` / SQL 拉取 node 与证据链
+
+### （拓展）Deep Search：LLM 增强（Query Understanding + Answer Synthesis）
+
+#### 背景与目标
+
+把“用户自然语言 query”变成更可控的检索，并把“检索结果（nodes/evidence）”进一步变成一个更理想的面向用户的答案。
+
+这一扩展能力在 UI 上只需要一个选项：`Deep Search`。
+
+- 未开启：沿用当前 search（embedding → 向量召回 → 结果级 filters）
+- 开启：在一次 search 内同时启用：
+  - Query Understanding（LLM 解析/格式化 query，产出 `SearchQueryPlan`）
+  - Answer Synthesis（LLM 基于 nodes/evidence 合成答案，产出 `SearchAnswer`）
+
+#### 简化的参数设计（避免复杂选项）
+
+扩展 `SearchQuery`（位于 `shared/context-types.ts`）增加一个可选字段：
+
+- `deepSearch?: boolean`
+
+不引入更多可选参数（timeout、裁剪数量等用服务内部默认值即可）。
+
+#### Query Understanding 输出
+
+新增 DTO（是否暴露给 renderer 取决于 UI 需要；建议暴露为 debug 能力）：
+
+- `SearchQueryPlan`
+  - `embeddingText`: string
+    - 用于实际 embedding 的文本（去冗余、规范化实体名、明确检索意图）
+  - `filtersPatch?`: Partial<SearchFilters>
+    - 从 query 中抽取出的结构化约束（推荐只包含：`timeRange/appHint/entities`），与原 filters 做 merge
+    - 注意：`threadId` 属于内部上下文过滤（UI 传入），用户不会在自然语言里给出，因此 LLM 不应抽取/生成 `threadId`
+  - `kindHint?`: "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile" | "any"
+    - 不改变召回逻辑（MVP 仍向量召回），但可用于排序/裁剪输入的增强
+  - `extractedEntities?`: string[]
+  - `timeRangeReasoning?`: string（可选，仅 debug；注意不要返回敏感内容）
+  - `confidence`: number（0~1，用于决定是否采纳 filtersPatch）
+
+#### Answer Synthesis 输出
+
+- `SearchAnswer`
+  - `answerTitle?`: string（可选）
+  - `answer`: string（面向用户的简洁回答/总结）
+  - `bullets?`: string[]（可选要点，≤8）
+  - `citations`: Array<{ nodeId?: number; screenshotId?: number; quote?: string }>
+    - `quote` 仅用于 UI 展示的简短依据（可选，建议 ≤80 chars，且不得包含敏感内容）
+  - `followUps?`: string[]（可选：建议追问）
+  - `confidence`: number（0~1）
+
+（可选）扩展 `SearchResult`：
+
+- `queryPlan?: SearchQueryPlan`
+- `answer?: SearchAnswer`
+
+#### 重要说明：prompt 必须专业设计（两段 schema 都一样重要）
+
+即使 schema 本身合理，如果 prompt 不够清晰，模型会：
+
+- 搞错字段含义（例如把 `filtersPatch` 当成强制过滤；把 `kindHint` 当成事实）
+- 产生不合规输出（非 JSON、字段缺失、超长文本、包含敏感信息）
+- 在 Answer Synthesis 中出现“看似合理但无证据”的幻觉
+
+因此必须在 prompt 中明确：
+
+- 每个字段的语义、可选性、限制（长度/枚举/必须引用）
+- 可用信息范围（只能使用输入 nodes/evidence，不得编造）
+- citations 的规则（至少 1 条；无 citations 则 `confidence` 降到很低）
+- 时间解析规则（提供 `nowTs/timezone`，要求输出绝对时间戳范围）
+
+并用 `zod` 对返回 JSON 强校验，失败即回退。
+
+#### 新增服务建议：单一 `DeepSearchService`
+
+- **新增文件（建议）**：`electron/services/screenshot-processing/deep-search-service.ts`
+- **职责**：
+  - `understandQuery(...) -> SearchQueryPlan`
+  - `synthesizeAnswer(...) -> SearchAnswer`
+  - 统一负责：prompt 设计、schema 校验、超时控制、失败回退策略
+
+#### 与现有 search 的集成方式（推荐数据流）
+
+在 `ContextSearchService.search()` 中：
+
+- 读取 `deepSearch`（来自 UI 的 `Deep Search` 选项）
+- 若未开启：完全走现有逻辑
+- 若开启：
+  - 尝试 `queryPlan = await deepSearchService.understandQuery(...)`（内部带超时；失败回退为不理解）
+  - `embeddingText = queryPlan?.embeddingText ?? queryText`
+  - `filtersMerged = merge(filters, queryPlan?.filtersPatch)`（白名单字段；不得覆盖 UI 传入的 `threadId`）
+  - 执行原有向量检索与 filtersMerged 过滤，得到 `SearchResult { nodes, relatedEvents, evidence }`
+  - 尝试 `answer = await deepSearchService.synthesizeAnswer(...)`（内部带超时；失败则无 answer）
+  - 返回 `SearchResult`（可选带上 `queryPlan/answer`）
+
+#### 输入打包策略（尽可能多信息，但有默认上限）
+
+目标：在 Deep Search 场景下尽可能把“有助于理解/合成答案”的信息传给 LLM，但必须设置**硬上限**，避免 tokens 与隐私风险失控。
+
+约定：不把这些上限做成对外参数；全部使用服务内部默认值（后续如需调参再引入设置项）。
+
+**默认硬上限（示例，按实现调优）**：
+
+- `maxNodes = 15`
+- `maxEvidence = 25`
+- `maxScreenshotIdsPerNode = 8`
+- `maxEntitiesPerNode = 8`
+- `maxKeywordsPerNode = 10`
+- `maxCharsPerNodeSummary = 600`（超出截断）
+- `maxCharsTotalPayload`：以“字符预算”作为最终硬上限（超过就按优先级截断/减项）
+
+**额外的全局摘要（低成本、高收益）**：
+
+在不显著增加 payload 体积的前提下，建议给 LLM 增加一个 compact 的“结果摘要区”，例如：
+
+- `resultTimeSpan`: `[minTs, maxTs]`
+- `topApps`: `[{ appHint, count }]`（从 evidence 统计）
+- `topEntities`: `string[]`（从 nodes.entities 聚合去重）
+- `kindsBreakdown`: `[{ kind, count }]`
+
+这样模型能更快建立全局图景，减少反复阅读全部 nodes。
+
+**传递给 LLM 的 nodes 信息（按优先级保留）**：
+
+- 必须：`id/kind/title/summary`
+- 尽可能保留：`eventTime/threadId/keywords/entities/screenshotIds`
+- 如有：可附加 `score`（向量距离/排序分数），帮助模型理解相关性强弱
+- `screenshotIds` 只传前 `maxScreenshotIdsPerNode` 个（按时间倒序或去重后顺序）
+- 所有长文本字段都要截断（以 `maxCharsPerNodeSummary` 为准）
+
+**传递给 LLM 的 evidence 信息（尽可能多，但脱敏）**：
+
+- 默认包含：`screenshotId/ts/appHint/windowTitle/storageState`
+- `filePath`：不传完整绝对路径。若确实需要给模型“文件线索”，只传脱敏后的 `fileName`（basename）或 `pathHint`（例如仅最后 1~2 段路径），并避免包含用户名/主目录等敏感信息
+- 高价值文本（在严格预算内尽可能提供）：
+  - `ocrText`：只传截断后的 `ocrTextExcerpt`（例如前 500~1500 chars，去除连续空白；超过截断）
+  - `uiTextSnippets`：只传 Top N（例如 10~20 条；每条截断到 80~120 chars；去重）
+  - `vlmIndexFragment`：只传关键字段或截断后的片段（避免整段 JSON 过大）
+- evidence 数量超过 `maxEvidence` 时，优先保留：
+  - 与 top nodes 关联度高的 screenshotId（出现在这些 nodes 的 screenshotIds 中）
+  - 时间更接近 queryPlan.timeRange 的证据（若存在）
+  - `ts` 更新的证据（fallback）
+
+**去重与裁剪策略（避免无节制）**：
+
+- 节点：按向量检索排序取前 `maxNodes`，必要时对同一 `threadId` 做轻量去重（避免全部来自同一个 thread）
+- 证据：对 screenshotId 去重
+- 最终以 `maxCharsTotalPayload` 做兜底：超出则按以下优先级裁剪：
+  - 先删 evidence 的可选文本：`vlmIndexFragment` → `uiTextSnippets` → `ocrTextExcerpt`
+  - 再减少 evidence 数量（保留与 top nodes 关联最强的）
+  - 再减少 nodes 数量（保留 top score 的）
+  - 最后再对 nodes.summary 做更激进的截断
+
+**不传的内容（MVP 默认）**：
+
+- 截图图像内容
+- OCR 原文的全量内容（只传 excerpt；且必须受字符预算控制）
+- 大段、不可控体量的原始文本（所有文本字段都必须截断/去重后再进入 payload）
+
+#### 风险与治理（保持简洁但必须明确）
+
+- **延迟**：Deep Search 会多 1~2 次 Text LLM 调用；必须允许超时回退。
+- **成本**：Deep Search 才产生额外 tokens；默认不开启。
+- **幻觉**：Answer 必须 citations；否则视为低可信。
+- **隐私**：严格最小化输入；不落库 prompt/response。
 
 ### 新增 IPC handlers
 
@@ -670,6 +833,11 @@ i18n：在 `shared/locales/en.json` 与 `zh-CN.json` 增加 `usage.*` 文案。
   - stale recovery：running 超时回滚 pending
 - `ContextSearchService`（单测或集成测试）
   - `search()`：mock embedding + 构造 index + 确认证据回溯正确
+  - （新增）`search(deepSearch=true)`：mock DeepSearchService 同时产出 `queryPlan + answer`，验证：
+    - `embeddingText` 生效
+    - `filtersPatch` 合并（且不会覆盖 UI 的 `threadId`）
+    - `answer + citations` 被透传
+  - （新增）DeepSearchService understand/synthesize 任一步骤失败：验证自动回退且不影响 nodes/evidence
 
 ---
 

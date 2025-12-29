@@ -19,6 +19,7 @@ import { getDb } from "../../database";
 import { screenshots } from "../../database/schema";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
+import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { vlmConfig } from "./config";
 import {
   VLMIndexResultSchema,
@@ -29,6 +30,10 @@ import {
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
 
 const logger = getLogger("vlm-processor");
+
+function getCanonicalAppCandidates(): string[] {
+  return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
+}
 
 // ============================================================================
 // Types
@@ -124,6 +129,7 @@ Subject identification:
   "screenshots": [
     {
       "screenshot_id": 123,
+      "app_guess": { "name": "Google Chrome", "confidence": 0.82 },
       "ocr_text": "...",
       "ui_text_snippets": ["..."]
     }
@@ -173,6 +179,9 @@ Subject identification:
 ## screenshots evidence rules
 - Include one entry for EVERY screenshot in the input metadata.
 - "screenshot_id" must exactly match the database id from the input metadata.
+- app_guess (optional): Identify the main application shown in the screenshot.
+  - name: MUST be one of the provided canonical candidate apps OR one of: "unknown", "other".
+  - confidence: 0..1. Use >= 0.7 only when you are fairly sure.
 - ocr_text (optional, <=8000 chars): copy visible text in reading order; remove obvious noise/repeated boilerplate.
 - ui_text_snippets (optional, <=20 items, each <=200 chars): pick the highest-signal lines (titles, decisions, issue IDs, key chat messages). Deduplicate. Exclude timestamps-only lines, hashes, and directory paths.
 
@@ -412,10 +421,7 @@ class VLMProcessor {
     const mergedEntities = Array.from(entitySet).slice(0, vlmConfig.maxEntitiesPerBatch);
 
     // Merge screenshots (dedupe by screenshot_id, keep first occurrence)
-    const mergedScreenshotsMap = new Map<
-      number,
-      { screenshot_id: number; ocr_text?: string; ui_text_snippets?: string[] }
-    >();
+    const mergedScreenshotsMap = new Map<number, VLMIndexResult["screenshots"][number]>();
     for (const result of results) {
       for (const shot of result.screenshots ?? []) {
         if (!mergedScreenshotsMap.has(shot.screenshot_id)) {
@@ -595,6 +601,8 @@ class VLMProcessor {
    */
   private buildUserPrompt(screenshotMeta: VLMScreenshotMeta[], historyPack: HistoryPack): string {
     const metaJson = JSON.stringify(screenshotMeta, null, 2);
+    const canonicalCandidates = getCanonicalAppCandidates();
+    const appCandidatesJson = JSON.stringify(canonicalCandidates, null, 2);
 
     let historySection = "";
     if (
@@ -630,6 +638,14 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
 
 ## Screenshot Metadata (order = screen_id)
 ${metaJson}
+
+## Canonical App Candidates (for app_guess.name)
+${appCandidatesJson}
+
+## App mapping rules (critical)
+- app_guess.name MUST be a canonical name from the list above.
+- If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
+- If you cannot confidently map to one canonical app, use "unknown" or "other" with low confidence.
 ${historySection}
 ## Field-by-field requirements
 - segments: max 4. Titles/summaries must be specific and human-readable. Keep confidence/importance on 0-10.
@@ -638,6 +654,7 @@ ${historySection}
 - entities: Only meaningful named entities (person/project/team/org/app/repo/issue/ticket). Exclude generic tech/library/runtime terms (npm, node_modules, yarn, dist, build, .git), file paths, URLs without names, commands, or placeholders. Use canonical names; dedupe.
 - screenshots: For each screenshot_id from the metadata:
   - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).
+  - app_guess: optional; if present must follow Canonical App Candidates + App mapping rules; confidence is 0..1.
   - ocr_text: full readable text in visible order, trimmed to 8000 chars; remove binary noise and repeated boilerplate.
   - ui_text_snippets: pick 5-15 high-signal sentences/phrases (chat bubbles, titles, decisions, issue IDs). Drop duplicates, timestamps-only lines, hashes, directory paths.
 - notes: optional; only if useful.

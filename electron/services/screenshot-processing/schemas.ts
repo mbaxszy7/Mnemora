@@ -156,6 +156,12 @@ export const VLMIndexResultSchema = z.object({
       z.object({
         /** Screenshot database ID (must match screenshot_id in the input metadata) */
         screenshot_id: z.number().int().positive(),
+        app_guess: z
+          .object({
+            name: z.string().min(1).max(100),
+            confidence: z.number().min(0).max(1),
+          })
+          .optional(),
         /** Full OCR text (trimmed, ≤8000 chars) */
         ocr_text: z.string().max(8000).optional(),
         /** High-value UI text snippets (≤20, each ≤200 chars) */

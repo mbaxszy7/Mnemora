@@ -13,6 +13,16 @@ import type {
   CapturePreferences,
   PreferencesResponse,
 } from "@shared/capture-source-types";
+import type { PermissionCheckResult } from "@shared/ipc-types";
+import type {
+  SearchQuery,
+  SearchResult,
+  ExpandedContextNode,
+  GraphTraversalResult,
+  ScreenshotEvidence,
+  EdgeType,
+} from "@shared/context-types";
+import type { SchedulerStatePayload } from "@shared/ipc-types";
 
 /**
  * VLM API exposed to renderer process
@@ -111,9 +121,6 @@ const llmConfigApi: LLMConfigApi = {
 
 contextBridge.exposeInMainWorld("llmConfigApi", llmConfigApi);
 
-// --------- Expose Permission API to the Renderer process ---------
-import type { PermissionCheckResult } from "@shared/ipc-types";
-
 export interface PermissionApi {
   check(): Promise<IPCResult<PermissionCheckResult>>;
   requestScreenRecording(): Promise<IPCResult<boolean>>;
@@ -145,9 +152,6 @@ const permissionApi: PermissionApi = {
 };
 
 contextBridge.exposeInMainWorld("permissionApi", permissionApi);
-
-// --------- Expose Screen Capture API to the Renderer process (TEMPORARY) ---------
-import type { SchedulerStatePayload } from "@shared/ipc-types";
 
 export interface ScreenCaptureApi {
   start(): Promise<IPCResult<void>>;
@@ -215,3 +219,37 @@ const captureSourceApi: CaptureSourceApi = {
 };
 
 contextBridge.exposeInMainWorld("captureSourceApi", captureSourceApi);
+export interface ContextGraphApi {
+  search(query: SearchQuery): Promise<IPCResult<SearchResult>>;
+  getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>>;
+  traverse(req: {
+    nodeId: string;
+    depth: number;
+    edgeTypes?: EdgeType[];
+  }): Promise<IPCResult<GraphTraversalResult>>;
+  getEvidence(nodeIds: number[]): Promise<IPCResult<ScreenshotEvidence[]>>;
+}
+
+const contextGraphApi: ContextGraphApi = {
+  async search(query: SearchQuery): Promise<IPCResult<SearchResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_SEARCH, query);
+  },
+
+  async getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET_THREAD, threadId);
+  },
+
+  async traverse(req: {
+    nodeId: string;
+    depth: number;
+    edgeTypes?: EdgeType[];
+  }): Promise<IPCResult<GraphTraversalResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_TRAVERSE, req);
+  },
+
+  async getEvidence(nodeIds: number[]): Promise<IPCResult<ScreenshotEvidence[]>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET_EVIDENCE, nodeIds);
+  },
+};
+
+contextBridge.exposeInMainWorld("contextGraphApi", contextGraphApi);

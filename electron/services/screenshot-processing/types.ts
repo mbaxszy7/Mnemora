@@ -14,9 +14,33 @@ import type {
   IndexStatus,
   StorageState,
 } from "../../database/schema";
+import type {
+  EntityRef,
+  ExpandedContextNode,
+  SearchQuery,
+  SearchFilters,
+  ScreenshotEvidence,
+  SearchResult,
+  GraphTraversalResult,
+} from "@shared/context-types";
 
-// Re-export schema types for convenience
-export type { ContextKind, EdgeType, VlmStatus, BatchStatus, EmbeddingStatus, IndexStatus };
+// Re-export common types
+export type {
+  ContextKind,
+  EdgeType,
+  VlmStatus,
+  BatchStatus,
+  EmbeddingStatus,
+  IndexStatus,
+  StorageState,
+  EntityRef,
+  ExpandedContextNode,
+  SearchQuery,
+  SearchFilters,
+  ScreenshotEvidence,
+  SearchResult,
+  GraphTraversalResult,
+};
 
 // ============================================================================
 // Source Key Types
@@ -195,21 +219,6 @@ export interface HistoryPack {
  * Entity types that can be detected
  */
 export type EntityType = string;
-
-/**
- * Reference to an entity
- */
-export interface EntityRef {
-  /** Entity ID (if matched to existing entity) */
-  entityId?: number;
-  /** Canonical name of the entity */
-  name: string;
-  /** Type of entity */
-  entityType?: EntityType;
-  /** Confidence score (0-1) */
-  confidence?: number;
-}
-
 /**
  * A detected entity from OCR/VLM
  */
@@ -266,119 +275,6 @@ export interface EvidencePack {
 // ============================================================================
 // Context Node Types
 // ============================================================================
-
-/**
- * Expanded context node with full details
- */
-export interface ExpandedContextNode {
-  /** Node ID */
-  id?: number;
-  /** Node type */
-  kind: ContextKind;
-  /** Thread identifier (for events) */
-  threadId?: string;
-  /** Node title (≤100 chars) */
-  title: string;
-  /** Node summary (≤200 chars) */
-  summary: string;
-  /** Keywords for search */
-  keywords: string[];
-  /** Entity references */
-  entities: EntityRef[];
-  /** Importance score (0-10) */
-  importance: number;
-  /** Confidence score (0-10) */
-  confidence: number;
-  /** IDs of nodes merged into this one */
-  mergedFromIds?: number[];
-  /** Screenshot IDs linked to this node */
-  screenshotIds: number[];
-  /** Event timestamp */
-  eventTime?: number;
-}
-
-// ============================================================================
-// Search Types
-// ============================================================================
-
-/**
- * Search query parameters
- */
-export interface SearchQuery {
-  /** Natural language query */
-  query: string;
-  /** Optional filters */
-  filters?: SearchFilters;
-  /** Number of results to return */
-  topK?: number;
-}
-
-/**
- * Search filters
- */
-export interface SearchFilters {
-  /** Time range filter */
-  timeRange?: {
-    start: number;
-    end: number;
-  };
-  /** Filter by application */
-  appHint?: string;
-  /** Filter by entities */
-  entities?: string[];
-  /** Filter by thread */
-  threadId?: string;
-}
-
-/**
- * Screenshot evidence in search results
- */
-export interface ScreenshotEvidence {
-  /** Screenshot ID */
-  screenshotId: number;
-  /** Capture timestamp */
-  ts: number;
-  /** File path (if available) */
-  filePath?: string;
-  /** Storage state */
-  storageState: StorageState;
-  /** Application hint */
-  appHint?: string;
-  /** Window title */
-  windowTitle?: string;
-}
-
-/**
- * Search result
- */
-export interface SearchResult {
-  /** Matched context nodes */
-  nodes: ExpandedContextNode[];
-  /** Related events for context */
-  relatedEvents: ExpandedContextNode[];
-  /** Screenshot evidence */
-  evidence: ScreenshotEvidence[];
-}
-
-// ============================================================================
-// Graph Traversal Types
-// ============================================================================
-
-/**
- * Result of graph traversal
- */
-export interface GraphTraversalResult {
-  /** Nodes found during traversal */
-  nodes: ExpandedContextNode[];
-  /** Edges traversed */
-  edges: Array<{
-    fromId: number;
-    toId: number;
-    edgeType: EdgeType;
-  }>;
-  /** Screenshot IDs found */
-  screenshotIds: number[];
-}
 
 // ============================================================================
 // Pending Record Types (for Reconcile Loop)

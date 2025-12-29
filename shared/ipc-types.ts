@@ -52,6 +52,11 @@ export const IPC_CHANNELS = {
   CAPTURE_SOURCES_GET_APPS: "capture-sources:get-apps",
   CAPTURE_SOURCES_GET_PREFERENCES: "capture-sources:get-preferences",
   CAPTURE_SOURCES_SET_PREFERENCES: "capture-sources:set-preferences",
+  // Context Graph channels
+  CONTEXT_SEARCH: "context:search",
+  CONTEXT_GET_THREAD: "context:get-thread",
+  CONTEXT_TRAVERSE: "context:traverse",
+  CONTEXT_GET_EVIDENCE: "context:get-evidence",
 } as const;
 
 /**

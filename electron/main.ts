@@ -11,6 +11,7 @@ import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
 import { registerPermissionHandlers } from "./ipc/permission-handlers";
 import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
+import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -167,6 +168,7 @@ function registerIPCHandlers(): void {
   registerScreenCaptureHandlers();
   registerPermissionHandlers();
   registerCaptureSourceSettingsHandlers();
+  registerContextGraphHandlers();
   logger.info("IPC handlers registered");
 }
 

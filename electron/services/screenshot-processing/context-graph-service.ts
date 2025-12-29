@@ -635,6 +635,7 @@ export class ContextGraphService {
    */
   recordToExpandedNode(record: ContextNodeRecord): ExpandedContextNode {
     return {
+      id: record.id,
       kind: record.kind,
       threadId: record.threadId ?? undefined,
       title: record.title,

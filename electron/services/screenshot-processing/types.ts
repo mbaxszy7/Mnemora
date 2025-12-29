@@ -403,4 +403,6 @@ export interface PendingRecord {
   attempts: number;
   /** Next scheduled run time */
   nextRunAt?: number;
+  /** Subtask type for tables with multiple disjoint separate processes (e.g. vector_documents) */
+  subtask?: "embedding" | "index";
 }

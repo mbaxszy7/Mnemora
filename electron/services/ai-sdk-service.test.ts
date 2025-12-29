@@ -185,8 +185,7 @@ describe("AISDKService Initialization", () => {
 });
 
 /**
- * Feature: llm-configuration, Property 7: Client type separation
- * Validates: Requirements 8.4
+ *
  */
 describe("AISDKService Client Type Separation", () => {
   beforeEach(() => {

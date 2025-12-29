@@ -518,10 +518,19 @@ VLM Index 出来后，交给 Text LLM 完成：
 
 #### 方案 B（可替换）：独立本地向量索引
 
-- 使用 HNSW（如 voyager/hnswlib）存储向量索引文件；索引是 **SQLite 权威数据的派生物**（可重建）。
+- 使用 HNSW（如 `hnswlib-node`）存储向量索引文件；索引是 **SQLite 权威数据的派生物**（可重建）。
 - SQLite 仍存权威数据；建议同时存 `embedding` 以便：
   - 索引文件损坏/升级时可重建
   - 做一致性校验与离线重算
+
+实现要点（以 `hnswlib-node` 为例）：
+
+- 索引对象：`new HierarchicalNSW(space, numDimensions)`
+- 初始化：`initIndex(maxElements)` 需要提前给定容量上限
+- 写入：`addPoint(vector, label)`，其中 `label` 建议使用数值型（例如 `vector_documents.id`）
+- 查询：`searchKnn(queryVector, k)`
+- 持久化：`writeIndexSync(path)` / `readIndexSync(path)`（或 async 版本）
+- 扩容策略：当 `vector_documents` 数量超过 `maxElements` 时，触发全量重建索引（从 SQLite 扫描所有已成功 index 的 embedding 重新 build）
 
 **向量库需要存什么（推荐最小集合）**：
 

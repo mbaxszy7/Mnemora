@@ -7,8 +7,7 @@ import {
 } from "@shared/i18n-types";
 
 /**
- * **Feature: electron-i18n, Property 6: Language Persistence Round-Trip**
- * **Validates: Requirements 5.1, 5.2**
+ *
  *
  * _For any_ supported language, saving to storage and then restoring
  * SHALL return the same language value.

@@ -10,8 +10,7 @@ import {
 import { LLMEndpointConfig, LLMValidationErrorCode } from "./llm-config-types";
 
 /**
- * Feature: llm-configuration, Property 1: Configuration completeness validation
- * Validates: Requirements 1.4, 2.2, 2.3
+ *
  *
  * For any LLMEndpointConfig object, the validation function SHALL return true
  * if and only if baseUrl is a non-empty valid URL, apiKey is a non-empty string,
@@ -89,8 +88,7 @@ describe("Property 1: Configuration completeness validation", () => {
 });
 
 /**
- * Feature: llm-configuration, Property 2: URL format validation
- * Validates: Requirements 2.4
+ *
  *
  * For any string input to the URL validation function, it SHALL return true
  * if and only if the string is a valid HTTP or HTTPS URL format.
@@ -141,8 +139,7 @@ describe("Property 2: URL format validation", () => {
 });
 
 /**
- * Feature: llm-configuration, Property 5: Error message mapping
- * Validates: Requirements 4.5, 4.6, 4.7
+ *
  *
  * For any validation error with a specific error code, the error key function
  * SHALL return a valid i18n key that correctly identifies the error type.
@@ -192,8 +189,7 @@ describe("Property 5: Error message mapping", () => {
 });
 
 /**
- * Feature: llm-configuration, Property 6: API key encoding round-trip
- * Validates: Requirements 5.3
+ *
  *
  * For any valid API key string, encoding then decoding SHALL produce the original string.
  */

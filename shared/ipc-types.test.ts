@@ -4,8 +4,7 @@ import { ErrorCode, ServiceError } from "./errors";
 import { IPCError, IPCResult, toIPCError } from "./ipc-types";
 
 /**
- * **Feature: ai-sdk-refactor, Property 3: JSON Serialization Round-Trip**
- * **Validates: Requirements 1.4**
+ *
  *
  * _For any_ valid IPCResult<T>, IPCError, or VLMResponse object,
  * JSON.parse(JSON.stringify(obj)) SHALL produce an object deeply equal to the original.

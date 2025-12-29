@@ -3,8 +3,7 @@ import * as fc from "fast-check";
 import { VLMResponseSchema, VLMResponse, SUPPORTED_IMAGE_TYPES, MAX_IMAGE_SIZE } from "./vlm-types";
 
 /**
- * **Feature: ai-sdk-refactor, Property 2: VLMResponse Schema Validation**
- * **Validates: Requirements 1.3, 4.1**
+ *
  *
  * _For any_ object, if it conforms to the VLMResponse structure (has title, description,
  * objects array, optional text array, confidence 0-100), VLMResponseSchema.safeParse()

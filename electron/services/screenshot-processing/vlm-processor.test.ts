@@ -3,8 +3,8 @@
  *
  * Tests for VLMProcessor including:
  * - Unit tests for core functionality
- * - CP-5: Screenshot metadata completeness
- * - CP-7: Zod schema validation
+ * - Screenshot metadata completeness
+ * - Zod schema validation
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -310,19 +310,9 @@ describe("VLMProcessor", () => {
 
 describe("VLMProcessor Property Tests", () => {
   /**
-   * CP-5: Screenshot metadata completeness
    *
-   * Property: For any VLM request, each screenshot must include:
-   * - screenshot_id (non-null)
-   * - captured_at (non-null, valid ISO string)
-   * - source_key (non-null)
-   * - app_hint (null or string, never fabricated)
-   * - window_title (null or string, never fabricated)
-   *
-   * **Feature: screenshot-processing, Property 5: Metadata completeness**
-   * **Validates: Requirements 15.1, 15.3**
    */
-  describe("CP-5: Screenshot metadata completeness", () => {
+  describe("Screenshot metadata completeness", () => {
     it("should include all required metadata fields for each screenshot", () => {
       fc.assert(
         fc.property(
@@ -413,10 +403,14 @@ describe("VLMProcessor Property Tests", () => {
             const text = (textContent as { type: "text"; text: string }).text;
 
             // Parse the JSON metadata from the text to verify values
-            const metaMatch = text.match(/## Screenshot Metadata\n(\[[\s\S]*?\])/);
-            expect(metaMatch).toBeDefined();
+            const metaMatch = text.match(
+              /## Screenshot Metadata \(order = screen_id\)\n(\[[\s\S]*?\])/
+            );
+            if (!metaMatch) {
+              throw new Error(`Could not find metadata in prompt:\n${text}`);
+            }
 
-            const metadata = JSON.parse(metaMatch![1]);
+            const metadata = JSON.parse(metaMatch[1]);
             expect(metadata[0].app_hint).toBe(appHint);
             expect(metadata[0].window_title).toBe(windowTitle);
           }
@@ -427,17 +421,9 @@ describe("VLMProcessor Property Tests", () => {
   });
 
   /**
-   * CP-7: Zod schema validation
    *
-   * Property: VLM response parsing must:
-   * - Accept valid JSON matching the schema
-   * - Reject invalid JSON or schema violations
-   * - Throw VLMParseError with appropriate code
-   *
-   * **Feature: screenshot-processing, Property 7: Schema validation**
-   * **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5**
    */
-  describe("CP-7: Zod schema validation", () => {
+  describe("Zod schema validation", () => {
     it("should accept valid VLM responses", () => {
       fc.assert(
         fc.property(

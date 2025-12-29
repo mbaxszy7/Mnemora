@@ -30,7 +30,6 @@ export class AutoRefreshCache<T> implements IAutoRefreshCache<T> {
     this.interval = options.interval ?? DEFAULT_CACHE_INTERVAL;
     this.onError = options.onError;
 
-    // Requirement 2.1: Fetch immediately if immediate mode is enabled
     if (options.immediate !== false) {
       // Start the initial fetch and schedule the refresh loop
       // Use .finally() to ensure refresh loop starts even if initial fetch fails
@@ -87,7 +86,6 @@ export class AutoRefreshCache<T> implements IAutoRefreshCache<T> {
       );
       return data;
     } catch (error) {
-      // Requirement 2.3: Retain previous cached data on error
       logger.error({ error }, "Cache refresh failed");
       if (this.onError) {
         this.onError(error instanceof Error ? error : new Error(String(error)));

@@ -119,9 +119,9 @@ export class ContextGraphService {
   /**
    * Create a new context node
    *
-   * - Automatically sets embedding_status to 'pending' (CP-9)
+   * - Automatically sets embedding_status to 'pending'
    * - For derived nodes (knowledge/state/procedure/plan), sourceEventId is REQUIRED
-   *   and an edge is automatically created from the source event (CP-8)
+   *   and an edge is automatically created from the source event
    * - For event nodes with threadId, automatically creates event_next edge to previous event
    *
    * @param input - Node creation input
@@ -131,7 +131,7 @@ export class ContextGraphService {
     const db = getDb();
     const now = Date.now();
 
-    // Enforce: derived nodes must have sourceEventId (CP-8 enforcement)
+    // Enforce: derived nodes must have sourceEventId
     if (DERIVED_KINDS.includes(input.kind)) {
       if (!input.sourceEventId) {
         throw new Error(`Derived node of kind '${input.kind}' requires sourceEventId`);
@@ -152,7 +152,7 @@ export class ContextGraphService {
       mergedFromIds: input.mergedFromIds ? JSON.stringify(input.mergedFromIds) : null,
       payloadJson: input.payloadJson,
       mergeStatus: "pending",
-      embeddingStatus: "pending", // CP-9: Always set to pending on creation
+      embeddingStatus: "pending", // Always set to pending on creation
       createdAt: now,
       updatedAt: now,
     };
@@ -168,7 +168,7 @@ export class ContextGraphService {
     const nodeId = inserted.id;
     logger.debug({ nodeId, kind: input.kind, title: input.title }, "Created context node");
 
-    // CP-8: For derived nodes, automatically create edge to source event
+    // For derived nodes, automatically create edge to source event
     if (DERIVED_KINDS.includes(input.kind) && input.sourceEventId) {
       const edgeType = DERIVED_KIND_TO_EDGE_TYPE[input.kind];
       if (edgeType) {

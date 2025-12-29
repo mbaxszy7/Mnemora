@@ -1,8 +1,7 @@
 /**
  * Property-Based Tests for App Selector Search Functionality
  *
- * **Feature: capture-source-settings, Property 9: 搜索功能显示条件**
- * **Validates: Requirements 8.2**
+ *
  *
  * For any app list, the search functionality should be visible
  * if and only if the app count exceeds 10.
@@ -16,7 +15,10 @@ import { AppInfo } from "@shared/capture-source-types";
 
 // Generator for AppInfo objects (icon/isPopular computed on frontend using findPopularApp)
 const appInfoArb = fc.record({
+  id: fc.string({ minLength: 1, maxLength: 30 }),
   name: fc.string({ minLength: 1, maxLength: 50 }).filter((s) => s.trim().length > 0),
+  type: fc.constant("window" as const),
+  appIcon: fc.string({ minLength: 0, maxLength: 100 }),
   windowCount: fc.integer({ min: 1, max: 100 }),
 });
 
@@ -30,8 +32,7 @@ function shouldShowSearch(apps: AppInfo[]): boolean {
 
 describe("App Selector Property Tests", () => {
   /**
-   * **Feature: capture-source-settings, Property 9: 搜索功能显示条件**
-   * **Validates: Requirements 8.2**
+   *
    *
    * For any app list, the search functionality should be visible
    * if and only if the app count exceeds 10.

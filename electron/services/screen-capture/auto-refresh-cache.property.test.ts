@@ -1,10 +1,3 @@
-/**
- * Property-Based Tests for AutoRefreshCache
- *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
- */
-
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as fc from "fast-check";
 import { AutoRefreshCache } from "./auto-refresh-cache";
@@ -14,13 +7,6 @@ describe("AutoRefreshCache Property Tests", () => {
     vi.useRealTimers();
   });
 
-  /**
-   * **Feature: screen-capture-scheduler, Property 3: Cache Refresh Updates Data**
-   * **Validates: Requirements 2.2**
-   *
-   * For any data returned by the fetch function, after a refresh cycle completes,
-   * the cache SHALL contain that exact data.
-   */
   it("Property 3: Cache refresh updates data - after refresh, cache contains the fetched data", async () => {
     await fc.assert(
       fc.asyncProperty(
@@ -67,13 +53,6 @@ describe("AutoRefreshCache Property Tests", () => {
     );
   });
 
-  /**
-   * **Feature: screen-capture-scheduler, Property 4: Cache Error Resilience**
-   * **Validates: Requirements 2.3**
-   *
-   * For any previous cached data and any error thrown by the fetch function,
-   * the cache SHALL retain the previous data unchanged.
-   */
   it("Property 4: Cache error resilience - on fetch error, previous data is retained", async () => {
     await fc.assert(
       fc.asyncProperty(

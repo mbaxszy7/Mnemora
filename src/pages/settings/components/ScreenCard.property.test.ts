@@ -1,8 +1,7 @@
 /**
  * Property-Based Tests for Screen Card and Primary Display Uniqueness
  *
- * **Feature: capture-source-settings, Property 8: 主显示器标注唯一性**
- * **Validates: Requirements 7.1**
+ *
  *
  * For any screen list, there should be exactly one screen marked as primary.
  */
@@ -16,8 +15,13 @@ const screenInfoArb = fc.record({
   id: fc.string({ minLength: 1, maxLength: 30 }),
   name: fc.string({ minLength: 1, maxLength: 50 }),
   thumbnail: fc.string({ minLength: 0, maxLength: 100 }),
-  width: fc.integer({ min: 800, max: 7680 }),
-  height: fc.integer({ min: 600, max: 4320 }),
+  type: fc.constant("screen" as const),
+  bounds: fc.record({
+    x: fc.constant(0),
+    y: fc.constant(0),
+    width: fc.integer({ min: 800, max: 7680 }),
+    height: fc.integer({ min: 600, max: 4320 }),
+  }),
   isPrimary: fc.boolean(),
   displayId: fc.string({ minLength: 1, maxLength: 20 }),
 });
@@ -60,8 +64,7 @@ function ensureSinglePrimary(screens: ScreenInfo[]): ScreenInfo[] {
 
 describe("Screen Card Property Tests", () => {
   /**
-   * **Feature: capture-source-settings, Property 8: 主显示器标注唯一性**
-   * **Validates: Requirements 7.1**
+   *
    *
    * For any screen list, there should be exactly one screen marked as primary.
    */
@@ -138,8 +141,8 @@ describe("Screen Card Property Tests", () => {
             expect(normalized[i].id).toBe(screens[i].id);
             expect(normalized[i].name).toBe(screens[i].name);
             expect(normalized[i].thumbnail).toBe(screens[i].thumbnail);
-            expect(normalized[i].width).toBe(screens[i].width);
-            expect(normalized[i].height).toBe(screens[i].height);
+            expect(normalized[i].bounds.width).toBe(screens[i].bounds.width);
+            expect(normalized[i].bounds.height).toBe(screens[i].bounds.height);
             expect(normalized[i].displayId).toBe(screens[i].displayId);
           }
 

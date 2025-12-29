@@ -41,14 +41,15 @@ function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
- * **Feature: electron-i18n, Property 2: Missing Translation Fallback**
- * **Validates: Requirements 1.3**
+ *
  *
  * _For any_ translation key that does not exist in the current language resource,
  * the translation function SHALL return the English fallback text instead of the key.
  */
 describe("Missing Translation Fallback", () => {
   let i18nInstance: i18n;
+  const translate = (key: string) =>
+    (i18nInstance as unknown as { t: (k: string) => string }).t(key);
 
   beforeAll(async () => {
     // Create a test i18next instance with fallback configured
@@ -77,7 +78,7 @@ describe("Missing Translation Fallback", () => {
   it("Property 2: Valid keys return translated values, not the key itself", () => {
     fc.assert(
       fc.property(fc.constantFrom(...allEnglishKeys), (key) => {
-        const result = i18nInstance.t(key);
+        const result = translate(key);
         const englishValue = getNestedValue(enTranslations as Record<string, unknown>, key);
 
         // The result should be a string (either translated or fallback)
@@ -101,7 +102,7 @@ describe("Missing Translation Fallback", () => {
 
         // When zh-CN has the key, it should return zh-CN value
         // When zh-CN doesn't have the key, it should fall back to English
-        const result = i18nInstance.t(key);
+        const result = translate(key);
 
         if (zhCNValue !== undefined) {
           expect(result).toBe(zhCNValue);
@@ -123,7 +124,7 @@ describe("Missing Translation Fallback", () => {
 
     fc.assert(
       fc.property(nonExistentKeyArb, (key) => {
-        const result = i18nInstance.t(key);
+        const result = translate(key);
 
         // For completely non-existent keys, i18next returns the key itself
         // This is expected behavior when there's no fallback available

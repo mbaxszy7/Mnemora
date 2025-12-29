@@ -72,14 +72,13 @@ describe("useViewTransition Hook", () => {
   });
 
   /**
-   * **Feature: view-transition, Property 3: Reduced motion preference controls animation behavior**
-   * **Validates: Requirements 2.1, 2.2**
+   *
    *
    * For any navigation request, if `prefers-reduced-motion` is enabled,
    * the navigation should occur without calling `startViewTransition`;
    * otherwise, `startViewTransition` should be called.
    */
-  test("**Feature: view-transition, Property 3: Reduced motion preference controls animation behavior**", async () => {
+  test("Reduced motion preference controls animation behavior", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),
@@ -163,14 +162,13 @@ describe("useViewTransition Hook", () => {
   });
 
   /**
-   * **Feature: view-transition, Property 4: Transition state lifecycle**
-   * **Validates: Requirements 3.2, 3.3**
+   *
    *
    * For any navigation with animation, the transition state should change from
    * 'idle' to 'transitioning' when navigation starts, and back to 'idle'
    * when the transition completes.
    */
-  test("**Feature: view-transition, Property 4: Transition state lifecycle**", async () => {
+  test("Transition state lifecycle", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),

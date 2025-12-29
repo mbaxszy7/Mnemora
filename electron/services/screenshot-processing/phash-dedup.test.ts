@@ -2,7 +2,7 @@
  * pHash Deduplication Tests
  *
  * Unit tests and property-based tests for the pHash deduplication module.
- * Covers CP-1 (cross-source isolation) and CP-2 (threshold correctness).
+ * Covers cross-source isolation and threshold correctness.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -174,13 +174,9 @@ describe("PHashDedup Unit Tests", () => {
 
 describe("PHashDedup Property Tests", () => {
   /**
-   * **Feature: screenshot-processing, Property CP-1: Cross-Source Isolation**
-   * **Validates: Requirements 1.2**
    *
-   * For any two screenshots from different sources, they should NEVER be
-   * considered duplicates of each other, even if they have identical pHash values.
    */
-  it("CP-1: Cross-source isolation - different sources never consider each other duplicates", () => {
+  it("Cross-source isolation - different sources never consider each other duplicates", () => {
     fc.assert(
       fc.property(differentSourceKeysArb, hexHashArb, ([sourceKey1, sourceKey2], hash) => {
         const windows = new Map<string, string>();
@@ -200,12 +196,9 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property CP-1 (additional): Same source can detect duplicates**
-   * **Validates: Requirements 1.2**
    *
-   * For the same source, identical hashes should be detected as duplicates.
    */
-  it("CP-1 (additional): Same source detects identical hashes as duplicates", () => {
+  it("Same source detects identical hashes as duplicates", () => {
     fc.assert(
       fc.property(sourceKeyArb, hexHashArb, (sourceKey, hash) => {
         const windows = new Map<string, string>();
@@ -224,13 +217,9 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property CP-2: Threshold Correctness**
-   * **Validates: Requirements 1.3**
    *
-   * For any two hashes with Hamming distance < threshold, they should be
-   * considered duplicates. For distance >= threshold, they should not.
    */
-  it("CP-2: Threshold correctness - distance < threshold means duplicate", () => {
+  it("Threshold correctness - distance < threshold means duplicate", () => {
     fc.assert(
       fc.property(
         sourceKeyArb,
@@ -257,12 +246,9 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property CP-2: Threshold Correctness (boundary)**
-   * **Validates: Requirements 1.3**
    *
-   * For distance >= threshold, hashes should NOT be considered duplicates.
    */
-  it("CP-2: Threshold correctness - distance >= threshold means not duplicate", () => {
+  it("Threshold correctness - distance >= threshold means not duplicate", () => {
     fc.assert(
       fc.property(
         sourceKeyArb,
@@ -289,10 +275,7 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property: Hamming distance symmetry**
-   * **Validates: Requirements 1.3**
    *
-   * Hamming distance should be symmetric: d(a, b) = d(b, a)
    */
   it("Hamming distance is symmetric", () => {
     fc.assert(
@@ -308,10 +291,7 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property: Hamming distance range**
-   * **Validates: Requirements 1.3**
    *
-   * Hamming distance should always be in range [0, 64] for 64-bit hashes.
    */
   it("Hamming distance is in valid range [0, 64]", () => {
     fc.assert(
@@ -327,10 +307,7 @@ describe("PHashDedup Property Tests", () => {
   });
 
   /**
-   * **Feature: screenshot-processing, Property: Window isolation**
-   * **Validates: Requirements 1.2**
    *
-   * Clearing one source's window should not affect other sources.
    */
   it("Clearing window for one source does not affect others", () => {
     fc.assert(

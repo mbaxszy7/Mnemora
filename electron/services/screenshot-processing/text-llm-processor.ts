@@ -8,8 +8,6 @@
  * - Merging nodes while preserving evidence links
  * - Writing to ContextGraphService in a single transaction
  *
- * Design reference: screenshot-process-v2.md Section 4.5 Text LLM 阶段
- * Requirements: Task 8 - Text LLM 处理器
  */
 
 import crypto from "node:crypto";

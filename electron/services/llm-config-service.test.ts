@@ -1,7 +1,7 @@
 /**
  * LLMConfigService Unit Tests
  * Tests for configuration loading, saving, and error code mapping
- * Requirements: 5.1, 5.2, 4.5
+ * Tests for configuration loading, saving, and error code mapping
  */
 
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -95,7 +95,7 @@ describe("LLMConfigService", () => {
 describe("Error Code Mapping", () => {
   /**
    * Test error code mapping logic
-   * Requirements: 4.5, 4.6, 4.7
+   * Test error code mapping logic
    */
 
   // Access private method via prototype for testing

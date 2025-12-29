@@ -8,7 +8,6 @@
  *
  * Public interface: add(), get(), refresh()
  *
- * Design reference: screenshot-process-v2.md Section 3.3
  */
 
 import { EventEmitter } from "events";

@@ -2,11 +2,21 @@ import { eq, and, or, lt, isNull, lte, desc, ne, inArray, asc, isNotNull } from 
 import { getDb } from "../../database";
 import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
-import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
+import {
+  batchConfig,
+  evidenceConfig,
+  reconcileConfig,
+  retryConfig,
+  vectorStoreConfig,
+} from "./config";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
+import { vectorDocumentService } from "./vector-document-service";
 import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
 import { runVlmOnBatch } from "./vlm-processor";
+import { embeddingService } from "./embedding-service";
+import { vectorIndexService } from "./vector-index-service";
+
 import type { VLMIndexResult } from "./schemas";
 import type {
   AcceptedScreenshot,
@@ -314,26 +324,41 @@ export class ReconcileLoop {
     }
 
     // Recover vector_documents
-    const staleDocs = db
+    const now = Date.now();
+
+    const staleVectorEmbeddings = db
       .update(vectorDocuments)
       .set({
         embeddingStatus: "pending",
-        indexStatus: "pending",
-        updatedAt: Date.now(),
+        embeddingNextRunAt: null,
+        updatedAt: now,
       })
       .where(
         and(
-          or(
-            eq(vectorDocuments.embeddingStatus, "running"),
-            eq(vectorDocuments.indexStatus, "running")
-          ),
+          eq(vectorDocuments.embeddingStatus, "running"),
           lt(vectorDocuments.updatedAt, staleThreshold)
         )
       )
       .run();
 
-    if (staleDocs.changes > 0) {
-      logger.info({ count: staleDocs.changes }, "Recovered stale states in vector_documents");
+    const staleVectorIndexes = db
+      .update(vectorDocuments)
+      .set({
+        indexStatus: "pending",
+        indexNextRunAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(vectorDocuments.indexStatus, "running"),
+          lt(vectorDocuments.updatedAt, staleThreshold)
+        )
+      )
+      .run();
+
+    const staleDocCount = staleVectorEmbeddings.changes + staleVectorIndexes.changes;
+    if (staleDocCount > 0) {
+      logger.info({ count: staleDocCount }, "Recovered stale states in vector_documents");
     }
   }
 
@@ -382,12 +407,34 @@ export class ReconcileLoop {
       .limit(limit)
       .all();
 
-    const embeddingRows = db
+    // Note: We separated embedding/index scanning below, so removed the generic embeddingRows query block.
+
+    const batchesPending: PendingRecord[] = batchRows.map((r) => ({
+      id: r.id,
+      table: "batches",
+      status: r.status as "pending" | "failed",
+      attempts: r.attempts,
+      nextRunAt: r.nextRunAt ?? undefined,
+    }));
+
+    const mergesPending: PendingRecord[] = mergeRows.map((r) => ({
+      id: r.id,
+      table: "context_nodes",
+      status: r.status as "pending" | "failed",
+      attempts: r.attempts,
+      nextRunAt: r.nextRunAt ?? undefined,
+    }));
+
+    const embeddingsPending: PendingRecord[] = [];
+
+    // 1. Subtask: Embedding
+    // embeddingStatus in ('pending','failed')
+    const embeddingTasks = db
       .select({
         id: vectorDocuments.id,
-        status: vectorDocuments.embeddingStatus,
-        attempts: vectorDocuments.embeddingAttempts,
-        nextRunAt: vectorDocuments.embeddingNextRunAt,
+        embeddingStatus: vectorDocuments.embeddingStatus,
+        embeddingAttempts: vectorDocuments.embeddingAttempts,
+        embeddingNextRunAt: vectorDocuments.embeddingNextRunAt,
       })
       .from(vectorDocuments)
       .where(
@@ -406,29 +453,48 @@ export class ReconcileLoop {
       .limit(limit)
       .all();
 
-    const batchesPending: PendingRecord[] = batchRows.map((r) => ({
-      id: r.id,
-      table: "batches",
-      status: r.status as "pending" | "failed",
-      attempts: r.attempts,
-      nextRunAt: r.nextRunAt ?? undefined,
-    }));
+    for (const r of embeddingTasks) {
+      embeddingsPending.push({
+        id: r.id,
+        table: "vector_documents",
+        status: r.embeddingStatus as "pending" | "failed",
+        attempts: r.embeddingAttempts,
+        nextRunAt: r.embeddingNextRunAt ?? undefined,
+        subtask: "embedding",
+      });
+    }
 
-    const mergesPending: PendingRecord[] = mergeRows.map((r) => ({
-      id: r.id,
-      table: "context_nodes",
-      status: r.status as "pending" | "failed",
-      attempts: r.attempts,
-      nextRunAt: r.nextRunAt ?? undefined,
-    }));
+    // 2. Subtask: Indexing
+    // indexStatus in ('pending','failed') AND embeddingStatus='succeeded'
+    const indexTasks = db
+      .select({
+        id: vectorDocuments.id,
+        indexStatus: vectorDocuments.indexStatus,
+        indexAttempts: vectorDocuments.indexAttempts,
+        indexNextRunAt: vectorDocuments.indexNextRunAt,
+      })
+      .from(vectorDocuments)
+      .where(
+        and(
+          eq(vectorDocuments.embeddingStatus, "succeeded"), // prerequisite
+          or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
+          or(isNull(vectorDocuments.indexNextRunAt), lte(vectorDocuments.indexNextRunAt, now)),
+          lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
+        )
+      )
+      .limit(limit)
+      .all();
 
-    const embeddingsPending: PendingRecord[] = embeddingRows.map((r) => ({
-      id: r.id,
-      table: "vector_documents",
-      status: r.status as "pending" | "failed",
-      attempts: r.attempts,
-      nextRunAt: r.nextRunAt ?? undefined,
-    }));
+    for (const r of indexTasks) {
+      embeddingsPending.push({
+        id: r.id,
+        table: "vector_documents",
+        status: r.indexStatus as "pending" | "failed",
+        attempts: r.indexAttempts,
+        nextRunAt: r.indexNextRunAt ?? undefined,
+        subtask: "index",
+      });
+    }
 
     return [...batchesPending, ...mergesPending, ...embeddingsPending];
   }
@@ -442,7 +508,12 @@ export class ReconcileLoop {
         await this.processContextNodeMergeRecord(record);
         return;
       case "vector_documents":
-        await this.processVectorDocumentEmbeddingRecord(record);
+        if (record.subtask === "index") {
+          await this.processVectorDocumentIndexRecord(record);
+        } else {
+          // Default to embedding if undefined or explicitly "embedding"
+          await this.processVectorDocumentEmbeddingRecord(record);
+        }
         return;
     }
   }
@@ -651,7 +722,28 @@ export class ReconcileLoop {
     }
 
     try {
-      await expandVLMIndexToNodes(index, batch);
+      const expandResult = await expandVLMIndexToNodes(index, batch);
+
+      // Milestone 1 integration: Sync vector documents for new nodes
+      // We do this inside the batch flow so it's consistent.
+      if (expandResult.success && expandResult.nodeIds.length > 0) {
+        let upsertCount = 0;
+        for (const nodeIdStr of expandResult.nodeIds) {
+          try {
+            const nodeId = parseInt(nodeIdStr, 10);
+            if (!isNaN(nodeId)) {
+              await vectorDocumentService.upsertForContextNode(nodeId);
+              upsertCount++;
+            }
+          } catch (err) {
+            logger.warn(
+              { nodeIdStr, error: String(err) },
+              "Failed to upsert vector doc for new node"
+            );
+          }
+        }
+        logger.info({ upsertCount }, "Upserted vector documents for new nodes");
+      }
     } catch (error) {
       logger.warn(
         { batchId: batch.batchId, error: error instanceof Error ? error.message : String(error) },
@@ -696,7 +788,140 @@ export class ReconcileLoop {
   }
 
   private async processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void> {
-    logger.debug({ vectorDocumentId: record.id }, "Embedding processing not implemented yet");
+    const db = getDb();
+    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+
+    if (!doc) return;
+
+    // Check if we already succeeded (race condition or redundant queue)
+    if (doc.embeddingStatus === "succeeded") return;
+
+    try {
+      // 1. Mark running
+      db.update(vectorDocuments)
+        .set({ embeddingStatus: "running", updatedAt: Date.now() })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+
+      // 2. Get text content
+      if (!doc.refId) {
+        throw new Error("Vector document missing refId");
+      }
+
+      // We assume refId points to contextNodes based on our current usage
+      const text = await vectorDocumentService.buildTextForNode(doc.refId);
+
+      // 3. Generate embedding
+      const vector = await embeddingService.embed(text);
+
+      if (vector.length !== vectorStoreConfig.numDimensions) {
+        throw new Error(
+          `Embedding dimension mismatch: expected ${vectorStoreConfig.numDimensions}, got ${vector.length}`
+        );
+      }
+
+      // 4. Save embedding blob
+      const buffer = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
+
+      db.update(vectorDocuments)
+        .set({
+          embedding: buffer,
+          embeddingStatus: "succeeded",
+          embeddingNextRunAt: null,
+          errorMessage: null,
+          errorCode: null,
+          // Trigger indexing next
+          indexStatus: "pending",
+          indexAttempts: 0,
+          indexNextRunAt: null,
+          updatedAt: Date.now(),
+        })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+
+      logger.debug({ docId: doc.id }, "Generated embedding for vector document");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const attempts = doc.embeddingAttempts + 1;
+      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
+
+      db.update(vectorDocuments)
+        .set({
+          embeddingStatus: isPermanent ? "failed_permanent" : "failed",
+          embeddingAttempts: attempts,
+          embeddingNextRunAt: nextRun,
+          errorMessage: message,
+          updatedAt: Date.now(),
+        })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+    }
+  }
+
+  private async processVectorDocumentIndexRecord(record: PendingRecord): Promise<void> {
+    const db = getDb();
+    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+
+    if (!doc) return;
+
+    // Must have embedding succeeded first
+    if (doc.embeddingStatus !== "succeeded" || !doc.embedding) {
+      // Should not happen if scan logic is correct, but safety check
+      return;
+    }
+
+    try {
+      // 1. Mark running
+      db.update(vectorDocuments)
+        .set({ indexStatus: "running", updatedAt: Date.now() })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+
+      // 2. Convert BLOB -> Float32Array
+      const buffer = doc.embedding as Buffer;
+      const vector = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
+
+      if (vector.length !== vectorStoreConfig.numDimensions) {
+        throw new Error(
+          `Indexing dimension mismatch: expected ${vectorStoreConfig.numDimensions}, got ${vector.length}`
+        );
+      }
+
+      // 3. Upsert into HNSW index
+      // Use vector_documents.id as numerical ID for HNSW
+      await vectorIndexService.upsert(doc.id, vector);
+      await vectorIndexService.flush();
+
+      // 4. Mark succeeded
+      db.update(vectorDocuments)
+        .set({
+          indexStatus: "succeeded",
+          indexNextRunAt: null,
+          errorMessage: null,
+          updatedAt: Date.now(),
+        })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+
+      logger.debug({ docId: doc.id }, "Indexed vector document");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const attempts = doc.indexAttempts + 1;
+      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
+
+      db.update(vectorDocuments)
+        .set({
+          indexStatus: isPermanent ? "failed_permanent" : "failed",
+          indexAttempts: attempts,
+          indexNextRunAt: nextRun,
+          errorMessage: message,
+          updatedAt: Date.now(),
+        })
+        .where(eq(vectorDocuments.id, doc.id))
+        .run();
+    }
   }
 
   /**
@@ -797,6 +1022,16 @@ export class ReconcileLoop {
     await contextGraphService.updateNode(nodeRecord.id.toString(), {
       mergeStatus: "succeeded",
     });
+
+    // Milestone 1 integration: Sync vector document for the updated target node
+    try {
+      await vectorDocumentService.upsertForContextNode(targetRecord.id);
+    } catch (err) {
+      logger.warn(
+        { targetId: targetRecord.id, error: String(err) },
+        "Failed to upsert vector doc for merged target node"
+      );
+    }
 
     logger.info({ sourceId: node.id, targetId: target.id }, "Merged node into target");
   }

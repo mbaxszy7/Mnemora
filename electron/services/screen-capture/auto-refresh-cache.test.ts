@@ -1,10 +1,3 @@
-/**
- * Unit Tests for AutoRefreshCache
- *
- * Tests for immediate fetch, dispose behavior, and synchronous get
- * Requirements: 2.1, 2.4, 2.5
- */
-
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { AutoRefreshCache } from "./auto-refresh-cache";
 
@@ -18,9 +11,6 @@ describe("AutoRefreshCache Unit Tests", () => {
   });
 
   describe("Immediate fetch on construction", () => {
-    /**
-     * Requirement 2.1: When immediate mode is enabled, fetch data immediately
-     */
     it("should fetch immediately when immediate is true (default)", async () => {
       const testData = { id: 1, name: "test" };
       const fetchFn = vi.fn().mockResolvedValue(testData);
@@ -58,9 +48,6 @@ describe("AutoRefreshCache Unit Tests", () => {
   });
 
   describe("Dispose stops refresh cycle", () => {
-    /**
-     * Requirement 2.5: Stop all refresh timers and release resources
-     */
     it("should stop refresh cycle when disposed", async () => {
       const fetchFn = vi.fn().mockResolvedValue("data");
 
@@ -103,9 +90,6 @@ describe("AutoRefreshCache Unit Tests", () => {
   });
 
   describe("Synchronous get returns cached data", () => {
-    /**
-     * Requirement 2.4: Return most recently fetched data synchronously
-     */
     it("should return null when no data has been fetched", () => {
       const fetchFn = vi.fn().mockResolvedValue("data");
 

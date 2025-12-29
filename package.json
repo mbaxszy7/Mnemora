@@ -16,7 +16,7 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"electron/**/*.ts\"",
     "prepare": "husky",
-    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:sqlite": "electron-rebuild -f -w better-sqlite3,hnswlib-node",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "echo 'Migrations run automatically at app startup. Use pnpm db:generate to create new migrations.'",
     "db:studio": "drizzle-kit studio"
@@ -63,6 +63,7 @@
     "embla-carousel-react": "^8.6.0",
     "fast-check": "^4.3.0",
     "framer-motion": "^12.23.25",
+    "hnswlib-node": "^3.0.0",
     "i18next": "^25.7.1",
     "i18next-fs-backend": "^2.6.1",
     "input-otp": "^1.4.2",
@@ -126,7 +127,8 @@
   "main": "dist-electron/main.js",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3"
+      "better-sqlite3",
+      "hnswlib-node"
     ]
   }
 }

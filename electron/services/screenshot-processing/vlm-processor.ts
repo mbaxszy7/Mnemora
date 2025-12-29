@@ -9,8 +9,6 @@
  * - Repairing malformed JSON responses
  * - Updating screenshot vlm_status on success
  *
- * Design reference: design.md Section 4.4 VLM 处理
- * Requirements: CP-5 (元信息完整性), CP-7 (Zod 验证)
  */
 
 import fs from "node:fs/promises";
@@ -210,8 +208,7 @@ class VLMProcessor {
   /**
    * Build VLM request from a shard
    *
-   * Ensures CP-5: Each screenshot includes required metadata
-   * (screenshot_id, captured_at, source_key, app_hint, window_title)
+   *
    *
    * @param shard - Shard with screenshots and history pack
    * @returns VLM request ready for AI SDK
@@ -445,7 +442,7 @@ class VLMProcessor {
   /**
    * Parse VLM response text into structured result
    *
-   * Ensures CP-7: Uses Zod validation for schema compliance
+   *
    *
    * @param rawText - Raw text response from VLM
    * @returns Parsed and validated VLM index result
@@ -580,7 +577,7 @@ class VLMProcessor {
 
   /**
    * Build screenshot metadata for VLM prompt
-   * Ensures CP-5: All required fields are present
+   *
    */
   private buildScreenshotMeta(screenshots: ScreenshotWithData[]): VLMScreenshotMeta[] {
     return screenshots.map((s, index) => ({

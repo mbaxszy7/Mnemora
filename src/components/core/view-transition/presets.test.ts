@@ -20,13 +20,12 @@ const animatedTransitionTypes: TransitionType[] = [
 
 describe("View Transition Presets", () => {
   /**
-   * **Feature: view-transition, Property 1: Transition type maps to correct CSS animation**
-   * **Validates: Requirements 1.4, 4.2**
+   *
    *
    * For any valid transition type, when a navigation is triggered with that type,
    * the system should inject CSS that contains the corresponding keyframe animation.
    */
-  test("**Feature: view-transition, Property 1: Transition type maps to correct CSS animation**", () => {
+  test("Transition type maps to correct CSS animation", () => {
     fc.assert(
       fc.property(fc.constantFrom(...animatedTransitionTypes), (type: TransitionType) => {
         const css = getTransitionCSS(type, 300);
@@ -72,13 +71,12 @@ describe("View Transition Presets", () => {
   });
 
   /**
-   * **Feature: view-transition, Property 2: Duration is applied to CSS animation**
-   * **Validates: Requirements 1.5**
+   *
    *
    * For any positive duration value, when a navigation is triggered with that duration,
    * the injected CSS should contain the duration value in the --transition-duration CSS variable.
    */
-  test("**Feature: view-transition, Property 2: Duration is applied to CSS animation**", () => {
+  test("Duration is applied to CSS animation", () => {
     fc.assert(
       fc.property(
         fc.constantFrom(...animatedTransitionTypes),

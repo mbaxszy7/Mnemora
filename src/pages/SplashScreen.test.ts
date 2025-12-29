@@ -3,8 +3,6 @@ import * as fc from "fast-check";
 import { getNavigationTarget } from "./SplashScreen";
 
 /**
- * Feature: llm-configuration, Property 3: Navigation target determination
- * Validates: Requirements 1.2, 1.3, 5.4, 8.3
  *
  * For any configuration check result, the navigation function SHALL return
  * '/llm-config' when configured is false, and '/' when configured is true.

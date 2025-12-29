@@ -3,8 +3,7 @@ import * as fc from "fast-check";
 import { detectLanguageFromLocale } from "./i18n-utils";
 
 /**
- * **Feature: electron-i18n, Property 1: Locale Detection Correctness**
- * **Validates: Requirements 1.1, 1.4**
+ *
  *
  * _For any_ system locale string, the locale detection function SHALL return
  * 'zh-CN' if the locale starts with 'zh', otherwise return 'en'.

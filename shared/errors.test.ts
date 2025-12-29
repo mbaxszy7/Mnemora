@@ -3,8 +3,7 @@ import * as fc from "fast-check";
 import { ErrorCode, ERROR_MESSAGES, getErrorMessage, ServiceError } from "./errors";
 
 /**
- * **Feature: ai-sdk-refactor, Property 4: Error System Consistency**
- * **Validates: Requirements 4.1, 4.3, 4.4, 3.3**
+ *
  *
  * _For any_ ErrorCode value, getErrorMessage() SHALL return a non-empty user-friendly string.
  * _For any_ ServiceError or Error, toIPCError() SHALL produce a valid IPCError with a code from ErrorCode enum.

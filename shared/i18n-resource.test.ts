@@ -54,8 +54,7 @@ function interpolate(template: string, variables: Record<string, string | number
 }
 
 /**
- * **Feature: electron-i18n, Property 3: Translation Resource Round-Trip**
- * **Validates: Requirements 2.4, 2.5**
+ *
  *
  * _For any_ valid translation resource object, serializing to JSON and then
  * parsing back SHALL produce an equivalent object.
@@ -98,8 +97,7 @@ describe("Translation Resource Round-Trip", () => {
 });
 
 /**
- * **Feature: electron-i18n, Property 4: Nested Key Resolution**
- * **Validates: Requirements 2.3**
+ *
  *
  * _For any_ nested translation key (e.g., "common.buttons.save"), the translation
  * function SHALL correctly traverse the nested structure and return the corresponding value.
@@ -160,8 +158,7 @@ describe("Nested Key Resolution", () => {
 });
 
 /**
- * **Feature: electron-i18n, Property 5: Variable Interpolation**
- * **Validates: Requirements 3.3**
+ *
  *
  * _For any_ translation string containing interpolation placeholders ({{variable}}),
  * the translation function SHALL replace all placeholders with the provided values.

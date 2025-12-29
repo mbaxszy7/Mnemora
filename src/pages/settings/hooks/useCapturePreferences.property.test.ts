@@ -1,8 +1,7 @@
 /**
  * Property-Based Tests for useCapturePreferences Hook
  *
- * **Feature: capture-source-settings, Property 5: 全选/全不选操作正确性**
- * **Validates: Requirements 10.1, 10.2**
+ *
  *
  * These tests verify the correctness properties for the select all/deselect all
  * functionality defined in the design document.

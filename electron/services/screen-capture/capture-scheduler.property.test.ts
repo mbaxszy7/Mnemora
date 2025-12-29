@@ -6,12 +6,16 @@ import type {
   CaptureStartEvent,
   CaptureCompleteEvent,
   SchedulerStateEvent,
+  CaptureResult,
 } from "./types";
+
+type CaptureResultWithScreenId = CaptureResult & { screenId: string };
+
+const dummyCaptureTask = async (): Promise<CaptureResult[]> => [];
 
 describe("ScreenCaptureScheduler Property Tests", () => {
   /**
-   * **Feature: screen-capture-scheduler, Property 1: Delay Calculation with Minimum Bound**
-   * **Validates: Requirements 1.2, 1.3**
+   *
    *
    * For any execution time and configured interval, the calculated next delay
    * SHALL equal max(INTERVAL - executionTime, minDelay).
@@ -99,8 +103,7 @@ describe("ScreenCaptureScheduler Property Tests", () => {
   });
 
   /**
-   * **Feature: screen-capture-scheduler, Property 5: Custom Interval Configuration**
-   * **Validates: Requirements 3.1**
+   *
    *
    * For any valid interval value provided at construction, the scheduler
    * SHALL use that interval for scheduling captures.
@@ -112,7 +115,7 @@ describe("ScreenCaptureScheduler Property Tests", () => {
           fc.integer({ min: 1000, max: 60000 }), // custom interval
           fc.integer({ min: 50, max: 500 }), // custom minDelay
           (interval, minDelay) => {
-            const scheduler = new ScreenCaptureScheduler({ interval, minDelay });
+            const scheduler = new ScreenCaptureScheduler({ interval, minDelay }, dummyCaptureTask);
             // Verify scheduler was created successfully
             const state = scheduler.getState();
             scheduler.stop();
@@ -129,7 +132,7 @@ describe("ScreenCaptureScheduler Property Tests", () => {
           fc.integer({ min: 1000, max: 60000 }), // initial interval
           fc.integer({ min: 50, max: 500 }), // new minDelay
           (interval, newMinDelay) => {
-            const scheduler = new ScreenCaptureScheduler({ interval });
+            const scheduler = new ScreenCaptureScheduler({ interval }, dummyCaptureTask);
             // Verify updateConfig doesn't throw
             scheduler.updateConfig({ minDelay: newMinDelay });
             scheduler.stop();
@@ -146,7 +149,10 @@ describe("ScreenCaptureScheduler Property Tests", () => {
           fc.integer({ min: 1000, max: 30000 }), // initial interval
           fc.integer({ min: 1000, max: 30000 }), // new interval
           (initialInterval, newInterval) => {
-            const scheduler = new ScreenCaptureScheduler({ interval: initialInterval });
+            const scheduler = new ScreenCaptureScheduler(
+              { interval: initialInterval },
+              dummyCaptureTask
+            );
             // Verify updateConfig doesn't throw
             scheduler.updateConfig({ interval: newInterval });
             scheduler.stop();
@@ -159,8 +165,7 @@ describe("ScreenCaptureScheduler Property Tests", () => {
   });
 
   /**
-   * **Feature: screen-capture-scheduler, Property 2: Error Tolerance Continues Scheduling**
-   * **Validates: Requirements 1.4**
+   *
    *
    * For any error thrown during a capture task, the scheduler SHALL schedule
    * the next capture without terminating the loop.
@@ -182,12 +187,13 @@ describe("ScreenCaptureScheduler Property Tests", () => {
                 if (callCount <= errorCount) {
                   throw new Error(errorMessage);
                 }
-                return {
+                const captureResult: CaptureResultWithScreenId = {
                   buffer: Buffer.from([]),
                   timestamp: Date.now(),
                   source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
                   screenId: "0",
                 };
+                return [captureResult];
               }
             );
 
@@ -216,12 +222,13 @@ describe("ScreenCaptureScheduler Property Tests", () => {
             if (errorThrowCount <= expectedErrors) {
               throw new Error(`Error ${errorThrowCount}`);
             }
-            return {
+            const captureResult: CaptureResultWithScreenId = {
               buffer: Buffer.from([]),
               timestamp: Date.now(),
               source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
               screenId: "0",
             };
+            return [captureResult];
           });
 
           scheduler.start();
@@ -265,8 +272,7 @@ describe("ScreenCaptureScheduler Property Tests", () => {
 
 describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
   /**
-   * **Feature: screen-capture-scheduler, Property 7: Event Emission Consistency**
-   * **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
+   *
    *
    * For any scheduler operation (start capture, complete capture, error, state change),
    * the corresponding event SHALL be emitted with correct event type and payload data.
@@ -277,12 +283,15 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
         fc.asyncProperty(fc.integer({ min: 1, max: 3 }), async (captureCount) => {
           const startEvents: Array<{ type: string; timestamp: number; captureId: string }> = [];
 
-          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
-            buffer: Buffer.from([]),
-            timestamp: Date.now(),
-            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-            screenId: "0",
-          }));
+          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => {
+            const captureResult: CaptureResultWithScreenId = {
+              buffer: Buffer.from([]),
+              timestamp: Date.now(),
+              source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+              screenId: "0",
+            };
+            return [captureResult];
+          });
 
           scheduler.on<CaptureStartEvent>("capture:start", (event) => {
             startEvents.push({
@@ -315,12 +324,15 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
         fc.asyncProperty(fc.integer({ min: 1, max: 3 }), async (runCount) => {
           const completeEvents: CaptureCompleteEvent[] = [];
 
-          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
-            buffer: Buffer.from([]),
-            timestamp: Date.now(),
-            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-            screenId: "0",
-          }));
+          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => {
+            const captureResult: CaptureResultWithScreenId = {
+              buffer: Buffer.from([]),
+              timestamp: Date.now(),
+              source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+              screenId: "0",
+            };
+            return [captureResult];
+          });
 
           scheduler.on<CaptureCompleteEvent>("capture:complete", (event) => {
             completeEvents.push(event);
@@ -338,8 +350,8 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             typeof event.captureId === "string" &&
             typeof event.executionTime === "number" &&
             event.executionTime >= 0 &&
-            event.result.screenId === "0" &&
-            event.result.source.type === "screen"
+            (event.result[0] as CaptureResultWithScreenId).screenId === "0" &&
+            event.result[0].source.type === "screen"
           );
         }),
         { numRuns: 20 }
@@ -355,7 +367,10 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             currentState: string;
           }> = [];
 
-          const scheduler = new ScreenCaptureScheduler({ interval: 100, minDelay: 10 });
+          const scheduler = new ScreenCaptureScheduler(
+            { interval: 100, minDelay: 10 },
+            dummyCaptureTask
+          );
 
           scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
             stateEvents.push({
@@ -400,12 +415,15 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
         fc.asyncProperty(fc.integer({ min: 1, max: 2 }), async (captureCount) => {
           const eventOrder: string[] = [];
 
-          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => ({
-            buffer: Buffer.from([]),
-            timestamp: Date.now(),
-            source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-            screenId: "0",
-          }));
+          const scheduler = new ScreenCaptureScheduler({ interval: 15, minDelay: 5 }, async () => {
+            const captureResult: CaptureResultWithScreenId = {
+              buffer: Buffer.from([]),
+              timestamp: Date.now(),
+              source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+              screenId: "0",
+            };
+            return [captureResult];
+          });
 
           scheduler.on("capture:start", () => eventOrder.push("start"));
           scheduler.on("capture:complete", () => eventOrder.push("complete"));

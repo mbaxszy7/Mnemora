@@ -3,7 +3,7 @@
  *
  * Tests for BatchBuilder including:
  * - Unit tests for core functionality
- * - Property tests for CP-4 (time order preservation) and CP-6 (HistoryPack consistency)
+ * - Property tests for time order preservation and HistoryPack consistency
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
@@ -220,16 +220,9 @@ describe("BatchBuilder", () => {
 
 describe("BatchBuilder Property Tests", () => {
   /**
-   * CP-4: Shard splitting preserves time order
    *
-   * Property: For any batch split into shards:
-   * 1. Screenshots within each shard are in ascending timestamp order
-   * 2. All timestamps in shard N are <= all timestamps in shard N+1
-   *
-   * **Feature: screenshot-processing, Property 4: Time order preservation**
-   * **Validates: Requirements 2.2, 2.6**
    */
-  describe("CP-4: Shard splitting preserves time order", () => {
+  describe("Shard splitting preserves time order", () => {
     it("should maintain chronological order within each shard", () => {
       fc.assert(
         fc.property(
@@ -342,14 +335,9 @@ describe("BatchBuilder Property Tests", () => {
   });
 
   /**
-   * CP-6: HistoryPack consistency across shards
    *
-   * Property: All shards from the same batch must share the exact same HistoryPack reference
-   *
-   * **Feature: screenshot-processing, Property 6: HistoryPack consistency**
-   * **Validates: Requirements 2.5, 14.2**
    */
-  describe("CP-6: HistoryPack consistency across shards", () => {
+  describe("HistoryPack consistency across shards", () => {
     it("should share the same HistoryPack across all shards", () => {
       fc.assert(
         fc.property(

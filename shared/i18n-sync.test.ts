@@ -3,8 +3,7 @@ import * as fc from "fast-check";
 import { SUPPORTED_LANGUAGES, type SupportedLanguage, isSupportedLanguage } from "./i18n-types";
 
 /**
- * **Feature: electron-i18n, Property 7: Language Sync Between Processes**
- * **Validates: Requirements 7.1, 7.2**
+ *
  *
  * _For any_ language change in the Renderer Process, the Main Process
  * SHALL update its internal state to match the new language.

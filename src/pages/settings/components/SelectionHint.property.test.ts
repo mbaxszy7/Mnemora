@@ -1,8 +1,7 @@
 /**
  * Property-Based Tests for Empty Selection Default Behavior
  *
- * **Feature: capture-source-settings, Property 10: 空选择默认行为**
- * **Validates: Requirements 1.4, 2.4**
+ *
  *
  * For any screen/app list, when selection is empty, the system should
  * behave as "capture all" mode.
@@ -17,15 +16,23 @@ const screenInfoArb = fc.record({
   id: fc.string({ minLength: 1, maxLength: 30 }),
   name: fc.string({ minLength: 1, maxLength: 50 }),
   thumbnail: fc.string({ minLength: 0, maxLength: 100 }),
-  width: fc.integer({ min: 800, max: 7680 }),
-  height: fc.integer({ min: 600, max: 4320 }),
+  type: fc.constant("screen" as const),
+  bounds: fc.record({
+    x: fc.constant(0),
+    y: fc.constant(0),
+    width: fc.integer({ min: 800, max: 7680 }),
+    height: fc.integer({ min: 600, max: 4320 }),
+  }),
   isPrimary: fc.boolean(),
   displayId: fc.string({ minLength: 1, maxLength: 20 }),
 });
 
 // Generator for AppInfo objects (icon/isPopular computed on frontend using findPopularApp)
 const appInfoArb = fc.record({
+  id: fc.string({ minLength: 1, maxLength: 30 }),
   name: fc.string({ minLength: 1, maxLength: 50 }).filter((s) => s.trim().length > 0),
+  type: fc.constant("window" as const),
+  appIcon: fc.string({ minLength: 0, maxLength: 100 }),
   windowCount: fc.integer({ min: 1, max: 100 }),
 });
 
@@ -72,8 +79,7 @@ function getEffectiveApps(apps: AppInfo[], selectedAppNames: string[]): AppInfo[
 
 describe("Selection Hint Property Tests", () => {
   /**
-   * **Feature: capture-source-settings, Property 10: 空选择默认行为**
-   * **Validates: Requirements 1.4, 2.4**
+   *
    *
    * For any screen/app list, when selection is empty, the system should
    * behave as "capture all" mode.

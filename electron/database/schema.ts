@@ -428,7 +428,7 @@ export const vectorDocuments = sqliteTable(
   (table) => [
     index("idx_vector_documents_embedding_status").on(table.embeddingStatus),
     index("idx_vector_documents_index_status").on(table.indexStatus),
-    uniqueIndex("idx_vector_documents_text_hash").on(table.textHash),
+    index("idx_vector_documents_text_hash").on(table.textHash),
   ]
 );
 

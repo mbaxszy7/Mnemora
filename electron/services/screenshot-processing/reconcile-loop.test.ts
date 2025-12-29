@@ -122,7 +122,14 @@ describe("ReconcileLoop", () => {
           { id: 12, status: "failed", attempts: 1, nextRunAt: null },
         ]) // batches
         .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]) // context_nodes
-        .mockReturnValueOnce([{ id: 31, status: "failed", attempts: 1, nextRunAt: null }]); // vector_documents
+        .mockReturnValueOnce([
+          {
+            id: 31,
+            embeddingStatus: "failed",
+            embeddingAttempts: 1,
+            embeddingNextRunAt: null,
+          },
+        ]); // vector_documents (embedding)
 
       const records = await (
         reconcileLoop as unknown as { scanPendingRecords: () => Promise<unknown[]> }

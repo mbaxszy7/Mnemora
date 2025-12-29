@@ -8,7 +8,6 @@
  * - Splitting batches into shards for parallel processing
  * - Persisting batches to SQLite
  *
- * Design reference: design.md Section 4.3 批次构建
  */
 
 import crypto from "node:crypto";
@@ -207,7 +206,7 @@ export class BatchBuilder {
       shards.push({
         shardIndex,
         screenshots: screenshotsWithData,
-        historyPack, // Same history pack for all shards (CP-6)
+        historyPack, // Same history pack for all shards
       });
 
       shardIndex++;

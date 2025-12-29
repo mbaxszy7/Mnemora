@@ -1,8 +1,7 @@
 /**
  * Property-Based Tests for WindowFilter
  *
- * These tests verify the correctness properties defined in the design document
- * using fast-check for property-based testing.
+ * These tests verify the correctness properties using fast-check for property-based testing.
  */
 
 import { describe, it, expect } from "vitest";
@@ -10,6 +9,10 @@ import * as fc from "fast-check";
 import { windowFilter } from "./window-filter";
 import type { CaptureSource } from "./types";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
+
+const normalizeAppNameForTest = (
+  windowFilter as unknown as { normalizeAppName: (name: string) => string }
+).normalizeAppName;
 
 // Generator for CaptureSource
 const captureSourceArb = (type: "screen" | "window" = "window"): fc.Arbitrary<CaptureSource> =>
@@ -36,13 +39,9 @@ const screenSourceArb = captureSourceArb("screen");
 
 describe("WindowFilter Property Tests", () => {
   /**
-   * **Feature: screen-capture-scheduler, Property 10: System Window Exclusion**
-   * **Validates: Requirements 7.1**
    *
-   * For any list of capture sources containing system windows (from the configured list),
-   * the filter SHALL exclude all system windows from the result.
    */
-  it("Property 10: System window exclusion - all system windows are excluded from result", () => {
+  it("System window exclusion - all system windows are excluded from result", () => {
     fc.assert(
       fc.property(
         // Generate a list of regular windows
@@ -93,12 +92,9 @@ describe("WindowFilter Property Tests", () => {
   });
 
   /**
-   * **Feature: screen-capture-scheduler, Property 12: App Name Normalization**
-   * **Validates: Requirements 7.3**
    *
-   * For any known app alias, the normalization function SHALL return the canonical app name.
    */
-  it("Property 12: App name normalization - aliases resolve to canonical names", () => {
+  it("App name normalization - aliases resolve to canonical names", () => {
     // Build all alias -> canonical pairs from config
     const aliasPairs: Array<{ alias: string; canonical: string }> = [];
     for (const [canonical, aliases] of Object.entries(DEFAULT_WINDOW_FILTER_CONFIG.appAliases)) {
@@ -118,7 +114,7 @@ describe("WindowFilter Property Tests", () => {
           const testAlias = useUpperCase ? alias.toUpperCase() : alias.toLowerCase();
 
           // Normalize the alias
-          const normalized = windowFilter.normalizeAppName(testAlias);
+          const normalized = normalizeAppNameForTest(testAlias);
 
           // Property: The normalized name should equal the canonical name
           expect(normalized).toBe(canonical);
@@ -133,7 +129,7 @@ describe("WindowFilter Property Tests", () => {
   /**
    * Additional property: Non-alias names should be returned unchanged
    */
-  it("Property 12 (additional): Non-alias names are returned unchanged", () => {
+  it("Non-alias names are returned unchanged", () => {
     // Get all known aliases
     const allAliases = new Set<string>();
     for (const aliases of Object.values(DEFAULT_WINDOW_FILTER_CONFIG.appAliases)) {
@@ -148,7 +144,7 @@ describe("WindowFilter Property Tests", () => {
         fc.string({ minLength: 1, maxLength: 30 }).filter((s) => !allAliases.has(s.toLowerCase())),
         (nonAliasName) => {
           // Normalize the non-alias name
-          const normalized = windowFilter.normalizeAppName(nonAliasName);
+          const normalized = normalizeAppNameForTest(nonAliasName);
 
           // Property: Non-alias names should be returned unchanged
           expect(normalized).toBe(nonAliasName);

@@ -8,7 +8,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-import type { ContextKind, EdgeType } from "../../database/schema";
+import type { ContextKind, EdgeType, ContextNodeRecord } from "../../database/schema";
 import { ContextGraphService, type CreateNodeInput } from "./context-graph-service";
 
 // ============================================================================
@@ -25,8 +25,12 @@ let insertReturnId = 1;
 vi.mock("../../database", () => ({
   getDb: () => ({
     insert: vi.fn(() => ({
-      values: vi.fn((values: Record<string, unknown>) => {
-        insertCalls.push({ values });
+      values: vi.fn((values: Record<string, unknown> | Record<string, unknown>[]) => {
+        if (Array.isArray(values)) {
+          values.forEach((v) => insertCalls.push({ values: v }));
+        } else {
+          insertCalls.push({ values });
+        }
         return {
           returning: vi.fn(() => ({
             all: vi.fn(() => [{ id: insertReturnId++ }]),
@@ -117,6 +121,37 @@ function findLinkInserts() {
   return insertCalls.filter(
     (c) => c.values.screenshotId !== undefined && c.values.nodeId !== undefined
   );
+}
+
+function buildRecord(overrides: Partial<ContextNodeRecord> = {}): ContextNodeRecord {
+  const now = Date.now();
+  return {
+    id: 1,
+    kind: "event",
+    threadId: null,
+    title: "Test Event",
+    summary: "Test summary",
+    keywords: null,
+    entities: null,
+    importance: 5,
+    confidence: 5,
+    eventTime: null,
+    mergedFromIds: null,
+    payloadJson: null,
+    mergeStatus: "pending",
+    mergeAttempts: 0,
+    mergeNextRunAt: null,
+    mergeErrorCode: null,
+    mergeErrorMessage: null,
+    embeddingStatus: "pending",
+    embeddingAttempts: 0,
+    embeddingNextRunAt: null,
+    embeddingErrorCode: null,
+    embeddingErrorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  };
 }
 
 // ============================================================================
@@ -543,24 +578,16 @@ describe("ContextGraphService", () => {
 
   describe("recordToExpandedNode", () => {
     it("should convert record to expanded node", () => {
-      const record = {
-        id: 1,
-        kind: "event" as ContextKind,
+      const record = buildRecord({
+        kind: "event",
         threadId: "thread_1",
-        title: "Test Event",
-        summary: "Test summary",
         keywords: JSON.stringify(["test", "event"]),
         entities: JSON.stringify([{ name: "Entity1" }]),
         importance: 7,
         confidence: 8,
         eventTime: 1234567890,
         mergedFromIds: JSON.stringify([10, 11]),
-        payloadJson: null,
-        mergeStatus: "pending" as const,
-        embeddingStatus: "pending" as const,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+      });
       const expanded = service.recordToExpandedNode(record);
       expect(expanded.kind).toBe("event");
       expect(expanded.threadId).toBe("thread_1");
@@ -575,24 +602,15 @@ describe("ContextGraphService", () => {
     });
 
     it("should handle null JSON fields with safe parsing", () => {
-      const record = {
-        id: 1,
-        kind: "event" as ContextKind,
+      const record = buildRecord({
         threadId: null,
         title: "Test",
         summary: "Summary",
         keywords: null,
         entities: null,
-        importance: 5,
-        confidence: 5,
         eventTime: null,
         mergedFromIds: null,
-        payloadJson: null,
-        mergeStatus: "pending" as const,
-        embeddingStatus: "pending" as const,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+      });
       const expanded = service.recordToExpandedNode(record);
       expect(expanded.threadId).toBeUndefined();
       expect(expanded.keywords).toEqual([]);
@@ -602,24 +620,15 @@ describe("ContextGraphService", () => {
     });
 
     it("should handle malformed JSON with safe parsing fallback", () => {
-      const record = {
-        id: 1,
-        kind: "event" as ContextKind,
+      const record = buildRecord({
         threadId: null,
         title: "Test",
         summary: "Summary",
         keywords: "not valid json",
         entities: "{broken",
-        importance: 5,
-        confidence: 5,
         eventTime: null,
         mergedFromIds: null,
-        payloadJson: null,
-        mergeStatus: "pending" as const,
-        embeddingStatus: "pending" as const,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
+      });
       const expanded = service.recordToExpandedNode(record);
       expect(expanded.keywords).toEqual([]);
       expect(expanded.entities).toEqual([]);

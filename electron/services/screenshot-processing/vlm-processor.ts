@@ -629,6 +629,16 @@ class VLMProcessor {
     const canonicalCandidates = getCanonicalAppCandidates();
     const appCandidatesJson = JSON.stringify(canonicalCandidates, null, 2);
 
+    const now = new Date();
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const utcOffsetMinutes = -now.getTimezoneOffset();
+    const offsetSign = utcOffsetMinutes >= 0 ? "+" : "-";
+    const offsetAbs = Math.abs(utcOffsetMinutes);
+    const offsetHours = String(Math.floor(offsetAbs / 60)).padStart(2, "0");
+    const offsetMins = String(offsetAbs % 60).padStart(2, "0");
+    const utcOffset = `UTC${offsetSign}${offsetHours}:${offsetMins}`;
+    const localTime = now.toLocaleString("sv-SE", { timeZone, hour12: false });
+
     let historySection = "";
     if (
       historyPack.recentThreads.length > 0 ||
@@ -660,6 +670,12 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
     }
 
     return `Analyze the following ${screenshotMeta.length} screenshots and produce the structured JSON described in the system prompt.
+
+## Current User Time Context (for relative time interpretation)
+- local_time: ${localTime}
+- time_zone: ${timeZone}
+- utc_offset: ${utcOffset}
+- now_utc: ${now.toISOString()}
 
 ## Screenshot Metadata (order = screen_id)
 ${metaJson}

@@ -10,6 +10,8 @@ export enum ErrorCode {
   IMAGE_TOO_LARGE = "IMAGE_TOO_LARGE",
   INVALID_IMAGE_TYPE = "INVALID_IMAGE_TYPE",
 
+  CANCELLED = "CANCELLED",
+
   // General
   UNKNOWN = "UNKNOWN",
 }
@@ -22,6 +24,7 @@ export const ERROR_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.VALIDATION_ERROR]: "Response format error",
   [ErrorCode.IMAGE_TOO_LARGE]: "Image too large, please select an image smaller than 20MB",
   [ErrorCode.INVALID_IMAGE_TYPE]: "Unsupported image format",
+  [ErrorCode.CANCELLED]: "Cancelled",
   [ErrorCode.UNKNOWN]: "An unknown error occurred, please try again",
 };
 

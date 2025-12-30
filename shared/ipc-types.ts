@@ -54,6 +54,7 @@ export const IPC_CHANNELS = {
   CAPTURE_SOURCES_SET_PREFERENCES: "capture-sources:set-preferences",
   // Context Graph channels
   CONTEXT_SEARCH: "context:search",
+  CONTEXT_SEARCH_CANCEL: "context:search:cancel",
   CONTEXT_GET_THREAD: "context:get-thread",
   CONTEXT_TRAVERSE: "context:traverse",
   CONTEXT_GET_EVIDENCE: "context:get-evidence",

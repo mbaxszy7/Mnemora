@@ -119,6 +119,7 @@ interface Window {
     ): Promise<
       import("../shared/ipc-types").IPCResult<import("../shared/context-types").SearchResult>
     >;
+    cancelSearch(requestId: string): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     getThread(
       threadId: string
     ): Promise<

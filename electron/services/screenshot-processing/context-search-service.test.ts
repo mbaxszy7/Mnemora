@@ -110,7 +110,7 @@ describe("ContextSearchService", () => {
 
       const result = await contextSearchService.search({ query: "find something" });
 
-      expect(embeddingService.embed).toHaveBeenCalledWith("find something");
+      expect(embeddingService.embed).toHaveBeenCalledWith("find something", undefined);
       expect(vectorIndexService.search).toHaveBeenCalled();
 
       // Should be sorted by score: 101 first, then 102
@@ -193,6 +193,8 @@ describe("ContextSearchService", () => {
       });
       expect(resultMatch.nodes).toHaveLength(1);
       expect(resultMatch.nodes[0].screenshotIds).toEqual([200]);
+
+      expect(embeddingService.embed).toHaveBeenCalledWith("test", undefined);
     });
   });
 

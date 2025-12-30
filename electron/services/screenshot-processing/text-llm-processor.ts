@@ -453,6 +453,16 @@ export class TextLLMProcessor {
     const segmentsJson = JSON.stringify(vlmIndex.segments, null, 2);
     const evidenceJson = JSON.stringify(evidencePacks, null, 2);
 
+    const now = new Date();
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const utcOffsetMinutes = -now.getTimezoneOffset();
+    const offsetSign = utcOffsetMinutes >= 0 ? "+" : "-";
+    const offsetAbs = Math.abs(utcOffsetMinutes);
+    const offsetHours = String(Math.floor(offsetAbs / 60)).padStart(2, "0");
+    const offsetMins = String(offsetAbs % 60).padStart(2, "0");
+    const utcOffset = `UTC${offsetSign}${offsetHours}:${offsetMins}`;
+    const localTime = now.toLocaleString("sv-SE", { timeZone, hour12: false });
+
     // Build screenshot ID mapping (screen_id -> database ID)
     const screenshotMapping = batch.screenshots.map((s, idx) => ({
       screen_id: idx + 1,
@@ -464,6 +474,12 @@ export class TextLLMProcessor {
     }));
 
     return `Please expand the following VLM Index into storable context nodes.
+
+## Current User Time Context (for relative time interpretation)
+- local_time: ${localTime}
+- time_zone: ${timeZone}
+- utc_offset: ${utcOffset}
+- now_utc: ${now.toISOString()}
 
 ## VLM Segments
 ${segmentsJson}

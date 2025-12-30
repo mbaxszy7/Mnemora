@@ -14,6 +14,8 @@ import { getLogger } from "../services/logger";
 
 const logger = getLogger("context-graph-handlers");
 
+const inFlightSearchControllers = new Map<string, AbortController>();
+
 /**
  * Handle semantic search
  */
@@ -22,10 +24,57 @@ async function handleSearch(
   query: SearchQuery
 ): Promise<IPCResult<SearchResult>> {
   try {
-    const result = await contextSearchService.search(query);
-    return { success: true, data: result };
+    const requestId = query.requestId?.trim();
+
+    if (!requestId) {
+      const result = await contextSearchService.search(query);
+      return { success: true, data: result };
+    }
+
+    const previous = inFlightSearchControllers.get(requestId);
+    if (previous) {
+      previous.abort();
+      inFlightSearchControllers.delete(requestId);
+    }
+
+    const controller = new AbortController();
+    inFlightSearchControllers.set(requestId, controller);
+
+    try {
+      const result = await contextSearchService.search(query, controller.signal);
+      return { success: true, data: result };
+    } finally {
+      inFlightSearchControllers.delete(requestId);
+    }
   } catch (error) {
     logger.error({ error, query }, "IPC handleSearch failed");
+    return { success: false, error: toIPCError(error) };
+  }
+}
+
+/**
+ * Handle cancelling an in-flight search
+ */
+async function handleSearchCancel(
+  _event: IpcMainInvokeEvent,
+  requestId: string
+): Promise<IPCResult<boolean>> {
+  try {
+    const id = requestId?.trim();
+    if (!id) {
+      return { success: true, data: false };
+    }
+
+    const controller = inFlightSearchControllers.get(id);
+    if (!controller) {
+      return { success: true, data: false };
+    }
+
+    controller.abort();
+    inFlightSearchControllers.delete(id);
+    return { success: true, data: true };
+  } catch (error) {
+    logger.error({ error, requestId }, "IPC handleSearchCancel failed");
     return { success: false, error: toIPCError(error) };
   }
 }
@@ -84,6 +133,7 @@ async function handleGetEvidence(
 export function registerContextGraphHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
   registry.registerHandler(IPC_CHANNELS.CONTEXT_SEARCH, handleSearch);
+  registry.registerHandler(IPC_CHANNELS.CONTEXT_SEARCH_CANCEL, handleSearchCancel);
   registry.registerHandler(IPC_CHANNELS.CONTEXT_GET_THREAD, handleGetThread);
   registry.registerHandler(IPC_CHANNELS.CONTEXT_TRAVERSE, handleTraverse);
   registry.registerHandler(IPC_CHANNELS.CONTEXT_GET_EVIDENCE, handleGetEvidence);

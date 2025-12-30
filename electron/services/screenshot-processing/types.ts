@@ -22,6 +22,9 @@ import type {
   ScreenshotEvidence,
   SearchResult,
   GraphTraversalResult,
+  SearchQueryPlan,
+  SearchAnswer,
+  SearchAnswerCitation,
 } from "@shared/context-types";
 
 // Re-export common types
@@ -40,6 +43,9 @@ export type {
   ScreenshotEvidence,
   SearchResult,
   GraphTraversalResult,
+  SearchQueryPlan,
+  SearchAnswer,
+  SearchAnswerCitation,
 };
 
 // ============================================================================

@@ -221,6 +221,7 @@ const captureSourceApi: CaptureSourceApi = {
 contextBridge.exposeInMainWorld("captureSourceApi", captureSourceApi);
 export interface ContextGraphApi {
   search(query: SearchQuery): Promise<IPCResult<SearchResult>>;
+  cancelSearch(requestId: string): Promise<IPCResult<boolean>>;
   getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>>;
   traverse(req: {
     nodeId: string;
@@ -233,6 +234,10 @@ export interface ContextGraphApi {
 const contextGraphApi: ContextGraphApi = {
   async search(query: SearchQuery): Promise<IPCResult<SearchResult>> {
     return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_SEARCH, query);
+  },
+
+  async cancelSearch(requestId: string): Promise<IPCResult<boolean>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_SEARCH_CANCEL, requestId);
   },
 
   async getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>> {

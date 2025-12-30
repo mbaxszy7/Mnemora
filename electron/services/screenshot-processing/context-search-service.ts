@@ -6,10 +6,12 @@ import {
   screenshots,
   contextScreenshotLinks,
 } from "../../database/schema";
+import { ErrorCode, ServiceError } from "@shared/errors";
 import { getLogger } from "../logger";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
 import { contextGraphService } from "./context-graph-service";
+import { deepSearchService } from "./deep-search-service";
 import type {
   SearchQuery,
   SearchResult,
@@ -17,25 +19,74 @@ import type {
   ScreenshotEvidence,
   GraphTraversalResult,
   EdgeType,
+  SearchFilters,
+  SearchQueryPlan,
 } from "./types";
 
 const logger = getLogger("context-search-service");
 
 export class ContextSearchService {
+  private isAbortError(error: unknown): boolean {
+    return (
+      (error instanceof Error && error.name === "AbortError") ||
+      (error instanceof Error && error.message.toLowerCase().includes("abort"))
+    );
+  }
+
   /**
    * Perform semantic search across context nodes
+   * With optional Deep Search: LLM query understanding + answer synthesis
    */
-  async search(query: SearchQuery): Promise<SearchResult> {
-    const { query: queryText, filters, topK = 20 } = query;
+  async search(query: SearchQuery, abortSignal?: AbortSignal): Promise<SearchResult> {
+    const { query: queryText, filters, topK = 20, deepSearch = false } = query;
 
     try {
+      let queryPlan: SearchQueryPlan | null = null;
+      let embeddingText = queryText;
+      let effectiveFilters = filters;
+
+      // Deep Search: Query Understanding
+      if (deepSearch) {
+        logger.debug({ queryText }, "Deep Search enabled, understanding query");
+        const nowTs = Date.now();
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+        queryPlan = await deepSearchService.understandQuery(
+          queryText,
+          nowTs,
+          timezone,
+          abortSignal
+        );
+
+        if (queryPlan) {
+          // Use optimized embedding text
+          embeddingText = queryPlan.embeddingText;
+          // Merge filters (respects user's threadId)
+          effectiveFilters = deepSearchService.mergeFilters(filters, queryPlan);
+
+          logger.debug(
+            {
+              originalQuery: queryText,
+              embeddingText,
+              confidence: queryPlan.confidence,
+            },
+            "Query understanding completed"
+          );
+        }
+      }
+
       // 1. Generate query embedding
-      const queryEmbedding = await embeddingService.embed(queryText);
+      const queryEmbedding = await embeddingService.embed(embeddingText, abortSignal);
 
       // 2. Search vector index
       const matches = await vectorIndexService.search(queryEmbedding, topK);
       if (matches.length === 0) {
-        return { nodes: [], relatedEvents: [], evidence: [] };
+        return {
+          nodes: [],
+          relatedEvents: [],
+          evidence: [],
+          queryPlan: queryPlan ?? undefined,
+        };
       }
 
       // Map docId to its match info (score)
@@ -63,7 +114,12 @@ export class ContextSearchService {
 
       const nodeIds = Array.from(nodeScoreMap.keys());
       if (nodeIds.length === 0) {
-        return { nodes: [], relatedEvents: [], evidence: [] };
+        return {
+          nodes: [],
+          relatedEvents: [],
+          evidence: [],
+          queryPlan: queryPlan ?? undefined,
+        };
       }
 
       // 4. Fetch context nodes
@@ -75,51 +131,7 @@ export class ContextSearchService {
       let nodes = nodeRecords.map((record) => contextGraphService.recordToExpandedNode(record));
 
       // 5. Apply filters (MVP filtering at result level)
-      if (filters) {
-        nodes = nodes.filter((node) => {
-          // Time range filter
-          if (filters.timeRange) {
-            if (!node.eventTime) return false;
-            if (
-              node.eventTime < filters.timeRange.start ||
-              node.eventTime > filters.timeRange.end
-            ) {
-              return false;
-            }
-          }
-
-          // Thread ID filter
-          if (filters.threadId && node.threadId !== filters.threadId) {
-            return false;
-          }
-
-          return true;
-        });
-
-        // App Hint filter (requires checking linked screenshots)
-        if (filters.appHint && nodes.length > 0) {
-          const filteredNodeIds = nodes
-            .map((n) => n.id)
-            .filter((id): id is number => id !== undefined);
-
-          // JOIN query to find nodes that have at least one linked screenshot with the matching appHint
-          const nodeIdsWithAppHint = db
-            .select({ nodeId: contextScreenshotLinks.nodeId })
-            .from(contextScreenshotLinks)
-            .innerJoin(screenshots, eq(contextScreenshotLinks.screenshotId, screenshots.id))
-            .where(
-              and(
-                inArray(contextScreenshotLinks.nodeId, filteredNodeIds),
-                eq(screenshots.appHint, filters.appHint)
-              )
-            )
-            .all()
-            .map((r) => r.nodeId);
-
-          const nodeIdSet = new Set(nodeIdsWithAppHint);
-          nodes = nodes.filter((n) => n.id && nodeIdSet.has(n.id));
-        }
-      }
+      nodes = this.applyFilters(nodes, effectiveFilters, db);
 
       // 6. Sort results by score (distance, ascending)
       nodes.sort((a, b) => {
@@ -149,15 +161,97 @@ export class ContextSearchService {
       // 8. Fetch related events
       const relatedEvents = nodes.filter((n) => n.kind === "event");
 
+      // Deep Search: Answer Synthesis
+      let answer = undefined;
+      if (deepSearch && nodes.length > 0) {
+        logger.debug({ nodeCount: nodes.length }, "Synthesizing answer");
+        answer =
+          (await deepSearchService.synthesizeAnswer(queryText, nodes, evidence, abortSignal)) ??
+          undefined;
+      }
+
       return {
         nodes,
         relatedEvents,
         evidence,
+        queryPlan: queryPlan ?? undefined,
+        answer,
       };
     } catch (error) {
+      if (abortSignal?.aborted || this.isAbortError(error)) {
+        logger.debug({ query: queryText }, "Semantic search cancelled");
+        throw new ServiceError(ErrorCode.CANCELLED, "Cancelled");
+      }
+
       logger.error({ error, query: queryText }, "Semantic search failed");
       throw error;
     }
+  }
+
+  /**
+   * Apply filters to nodes
+   */
+  private applyFilters(
+    nodes: ExpandedContextNode[],
+    filters: SearchFilters | undefined,
+    db: ReturnType<typeof getDb>
+  ): ExpandedContextNode[] {
+    if (!filters) return nodes;
+
+    let result = nodes.filter((node) => {
+      // Time range filter
+      if (filters.timeRange) {
+        if (!node.eventTime) return false;
+        if (node.eventTime < filters.timeRange.start || node.eventTime > filters.timeRange.end) {
+          return false;
+        }
+      }
+
+      // Thread ID filter
+      if (filters.threadId && node.threadId !== filters.threadId) {
+        return false;
+      }
+
+      // Entities filter (match if node mentions at least one entity)
+      if (filters.entities && filters.entities.length > 0) {
+        const wanted = filters.entities
+          .map((e) => e.trim().toLowerCase())
+          .filter((e) => e.length > 0);
+        if (wanted.length > 0) {
+          const nodeEntities = node.entities.map((e) => e.name.trim().toLowerCase());
+          const matched = wanted.some((w) => nodeEntities.includes(w));
+          if (!matched) return false;
+        }
+      }
+
+      return true;
+    });
+
+    // App Hint filter (requires checking linked screenshots)
+    if (filters.appHint && result.length > 0) {
+      const filteredNodeIds = result
+        .map((n) => n.id)
+        .filter((id): id is number => id !== undefined);
+
+      // JOIN query to find nodes that have at least one linked screenshot with the matching appHint
+      const nodeIdsWithAppHint = db
+        .select({ nodeId: contextScreenshotLinks.nodeId })
+        .from(contextScreenshotLinks)
+        .innerJoin(screenshots, eq(contextScreenshotLinks.screenshotId, screenshots.id))
+        .where(
+          and(
+            inArray(contextScreenshotLinks.nodeId, filteredNodeIds),
+            eq(screenshots.appHint, filters.appHint)
+          )
+        )
+        .all()
+        .map((r) => r.nodeId);
+
+      const nodeIdSet = new Set(nodeIdsWithAppHint);
+      result = result.filter((n) => n.id && nodeIdSet.has(n.id));
+    }
+
+    return result;
   }
 
   private getScreenshotIdsByNodeIds(nodeIds: number[]): Map<number, number[]> {

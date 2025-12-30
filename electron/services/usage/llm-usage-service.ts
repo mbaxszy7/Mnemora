@@ -41,31 +41,7 @@ export class LLMUsageService {
     let sig = "";
     if (config.mode === "unified") {
       sig = `unified:${config.config.baseUrl}:${config.config.model}`;
-      // Note: we do NOT include API Key in the hash to avoid security issues,
-      // but if the user changes API key for the same endpoint, we consider it the same "config"
-      // for usage tracking purposes? Or should we?
-      // The requirement says: "mode + endpointRole + baseUrl + model".
-      // Let's stick to that. Changing API key usually means same Account, so typically we want to Reset if Account changes?
-      // But we can't easily detect Account change without Key change.
-      // However, including Key in hash might be sensitive if the hash is leaked?
-      // Hash is one-way. But MD5/SHA256 of Key is essentially a Key fingerprint.
-      // Let's include a partial key or just rely on Url/Model.
-      // Requirement: "configHash (string; used for config change reset ... e.g. mode + endpointRole + baseUrl + model)"
-      // It didn't mention API Key. So I will skip API Key to be safe and simple.
     } else {
-      // Separate mode: simplified hash that changes if ANY of the 3 capabilities changes
-      // This might be too aggressive (resets ALL stats if just embedding changes?),
-      // but "configHash" is per-event in the schema!
-      // Wait, the schema has `configHash` column in `llm_usage_events`.
-      // So each event is tagged with the config active AT THAT MOMENT.
-      // The UI filter will likely select "Current Config Hash" to show stats.
-      // So if I change Embedding model, Text stats shouldn't disappear?
-      // The requirement says: "UI default only shows 'latest configHash'".
-      // If I have a global "latest configHash", it implies one hash for the whole system.
-      // If I change Embedding, the global hash changes, so Text stats (which didn't change provider) would also "reset" in the UI?
-      // That seems suboptimal but compliant with "UI default only shows latest configHash".
-      // Let's implement global hash for now for simplicity.
-
       sig =
         `separate` +
         `|vlm:${config.vlm.baseUrl}:${config.vlm.model}` +
@@ -117,7 +93,7 @@ export class LLMUsageService {
     }
 
     // Aggregations
-    const result = await db
+    const result = db
       .select({
         totalTokens: sql<number>`sum(${llmUsageEvents.totalTokens})`,
         requestCount: sql<number>`count(*)`,

@@ -38,10 +38,7 @@
 ### 可回溯证据
 
 - 任意搜索结果（node）可获取其关联截图证据（至少包含：`screenshotId/ts/storageState/filePath?`）。
-- 通过实体（entity）可反查：
-  - 输入一个名字/缩写/别名
-  - 返回相关 `event`（以及可选的 thread 聚合）
-  - 并可继续回溯到 `screenshots` 证据
+- Entities 归一化完成后，可作为后续 Deep Search（见 Milestone 3 拓展）中的一个集成点，用于增强检索的召回/排序；MVP 不要求实现“从 query 抽取 entities 并用于检索”的能力。
 
 ---
 
@@ -344,6 +341,9 @@
   - `timeRangeReasoning?`: string（可选，仅 debug；注意不要返回敏感内容）
   - `confidence`: number（0~1，用于决定是否采纳 filtersPatch）
 
+> 说明：`extractedEntities` 的主要用途之一是作为 entity-aware search 的输入（例如对 event 做 boost/扩召回）。
+> 该能力依赖 Milestone 4 的 Entities 归一化（`entity_profile + entity_aliases + event_mentions_entity`），但不属于 MVP；在 Deep Search 未实现前可忽略此字段。
+
 #### Answer Synthesis 输出
 
 - `SearchAnswer`
@@ -486,16 +486,19 @@
 
 ---
 
-## Milestone 4 — Entities 归一化：entity_profile + aliases + event_mentions_entity（必须）
+## X Milestone 4 — Entities 归一化：entity_profile + aliases + event_mentions_entity（必须）
 
 ### 目标
 
-让 “entities” 从当前的 JSON 字段（`screenshots.detectedEntities` / `context_nodes.entities`）升级为**可索引、可消歧、可反查**的能力。
+让 “entities” 从当前的 JSON 字段（`screenshots.detectedEntities` / `context_nodes.entities`）升级为**可索引、可消歧**的结构化能力。
 
-核心要求：最终你能通过一个 entity（例如人名/项目名/工单号/产品名）反查到：
+核心要求（MVP）：对 `context_nodes(kind='event')` 中的 `entities`（以及可选的 VLM 候选）完成归一化落库：
 
-- 相关 `event`（时间线）
-- 相关 `screenshot`（证据）
+- 以 `context_nodes.kind = entity_profile` 作为 canonical entity
+- 以 `entity_aliases` 存 alias -> entity_profile 映射
+- 以 `context_edges.edge_type = event_mentions_entity` 建立 `event -> entity_profile` 结构化关联
+
+备注：后续若要将 query 中抽取的 entities 用于检索增强，属于 Milestone 3（拓展）Deep Search 的集成点。
 
 ### 设计决策（建议推翻“把 VLM/LLM entities 合并进 event JSON 就够了”的想法）
 
@@ -531,19 +534,6 @@
     - `INSERT OR IGNORE` 写入 `context_edges(eventNodeId -> entityId, edge_type='event_mentions_entity')`
     - 回写 event 节点 `entities`：为每个 ref 补齐 `entityId`
 
-#### 2) `EntityQueryService`（实体反查）
-
-- **新增文件**：`electron/services/screenshot-processing/entity-query-service.ts`
-- **职责**：
-  - `findEntities(query: string)`：根据 alias/title 做匹配，返回候选 entity_profile
-  - `getEventsByEntity(entityId: number, options?: { limit?: number; timeRange?: [number, number] }): Promise<ContextNodeRecord[]>`
-  - `getEvidenceByEntity(entityId: number): Promise<ScreenshotEvidence[]>`
-
-- **实现要点（SQL）**：
-  - `entity_aliases(alias=normalized(query)) -> entityId[]`
-  - `context_edges(where edge_type='event_mentions_entity' and to_node_id in entityId[]) -> from_node_id(eventId)`
-  - `context_screenshot_links(where node_id in eventIds) -> screenshotIds`
-
 ### 必须改动的现有代码路径
 
 #### 1) Text LLM 输入侧：把 VLM 的 entity 候选显式传入
@@ -569,16 +559,6 @@
 - **改动点**：`handleSingleMerge(...)` 更新 target node 后追加：
   - `EntityService.syncEventEntityMentions(targetId, mergedEntities, 'llm')`
 - **原因**：merge 会改变 event 的 `entities` JSON，如果不同步 `event_mentions_entity` 边，entity 反查会缺漏。
-
-#### 4) IPC：暴露实体反查接口（用于产品目标）
-
-- **改动文件**：`shared/ipc-types.ts`
-- **新增 channels（建议）**：
-  - `CONTEXT_FIND_ENTITIES: "context:find-entities"`
-  - `CONTEXT_GET_EVENTS_BY_ENTITY: "context:get-events-by-entity"`
-  - `CONTEXT_GET_EVIDENCE_BY_ENTITY: "context:get-evidence-by-entity"`
-- **新增 handler**：`electron/ipc/entity-handlers.ts`
-- **main 注册**：`electron/main.ts`
 
 ### 兼容与回填（必须，避免“旧数据不可反查”）
 
@@ -610,7 +590,7 @@
 
 ---
 
-## Milestone 5 — LLM 用量统计（按模型）+ Settings 页面展示 + Tray 展示（必须）
+## X Milestone 5 — LLM 用量统计（按模型）+ Settings 页面展示 + Tray 展示（必须）
 
 ### 目的
 

@@ -88,12 +88,15 @@ export interface SearchFilters {
  * Search query parameters
  */
 export interface SearchQuery {
+  requestId?: string;
   /** Natural language query */
   query: string;
   /** Optional filters */
   filters?: SearchFilters;
   /** Number of results to return */
   topK?: number;
+  /** Enable Deep Search (LLM-enhanced query understanding + answer synthesis) */
+  deepSearch?: boolean;
 }
 
 /**
@@ -114,6 +117,59 @@ export interface ScreenshotEvidence {
   windowTitle?: string;
 }
 
+// ============================================================================
+// Deep Search Types (LLM-enhanced search)
+// ============================================================================
+
+/**
+ * Query understanding result from LLM
+ * Produces optimized embedding text and structured filters from natural language
+ */
+export interface SearchQueryPlan {
+  /** Optimized text for embedding (normalized entities, clear intent) */
+  embeddingText: string;
+  /** Extracted filter constraints to merge with user-provided filters */
+  filtersPatch?: Partial<SearchFilters>;
+  /** Hint for result kind (used for ranking, not filtering) */
+  kindHint?: "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile";
+  /** Entities extracted from query */
+  extractedEntities?: string[];
+  /** Reasoning for time range extraction (debug only) */
+  timeRangeReasoning?: string;
+  /** Confidence score (0-1), low confidence = skip filtersPatch */
+  confidence: number;
+}
+
+/**
+ * Citation in a search answer
+ */
+export interface SearchAnswerCitation {
+  /** Referenced node ID */
+  nodeId?: number;
+  /** Referenced screenshot ID */
+  screenshotId?: number;
+  /** Short quote/evidence (≤80 chars, no sensitive content) */
+  quote?: string;
+}
+
+/**
+ * Synthesized answer from LLM based on search results
+ */
+export interface SearchAnswer {
+  /** Optional title for the answer */
+  answerTitle?: string;
+  /** Main answer text */
+  answer: string;
+  /** Key bullet points (≤8) */
+  bullets?: string[];
+  /** Citations referencing nodes/screenshots */
+  citations: SearchAnswerCitation[];
+  /** Suggested follow-up questions */
+  followUps?: string[];
+  /** Confidence score (0-1) */
+  confidence: number;
+}
+
 /**
  * Search result
  */
@@ -124,6 +180,10 @@ export interface SearchResult {
   relatedEvents: ExpandedContextNode[];
   /** Screenshot evidence */
   evidence: ScreenshotEvidence[];
+  /** Query understanding result (Deep Search only) */
+  queryPlan?: SearchQueryPlan;
+  /** Synthesized answer (Deep Search only) */
+  answer?: SearchAnswer;
 }
 
 /**

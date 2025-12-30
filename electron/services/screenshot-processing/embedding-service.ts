@@ -9,7 +9,7 @@ export class EmbeddingService {
   /**
    * Generate embedding for text using the configured embedding model
    */
-  async embed(text: string): Promise<Float32Array> {
+  async embed(text: string, abortSignal?: AbortSignal): Promise<Float32Array> {
     const embeddingClient = AISDKService.getInstance().getEmbeddingClient();
 
     try {
@@ -17,10 +17,11 @@ export class EmbeddingService {
       const result = await embed({
         model: embeddingClient,
         value: text,
+        abortSignal,
       });
 
       // Log usage
-      const safeUsage = result.usage;
+
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "embedding",
@@ -28,8 +29,8 @@ export class EmbeddingService {
         status: "succeeded",
         model: AISDKService.getInstance().getEmbeddingModelName(),
         provider: "openai_compatible",
-        totalTokens: safeUsage?.tokens ?? 0,
-        usageStatus: safeUsage ? "present" : "missing",
+        totalTokens: result.usage?.tokens ?? 0,
+        usageStatus: result.usage ? "present" : "missing",
       });
 
       return new Float32Array(result.embedding);

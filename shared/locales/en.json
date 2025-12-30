@@ -41,6 +41,8 @@
   },
   "tray": {
     "show": "Show Window",
+    "usageToday": "Tokens Today: {{count}}",
+    "tooltipWithUsage": "Mnemora - {{status}} ({{tokens}} tokens today)",
     "startRecording": "Start Recording",
     "stopRecording": "Stop Recording",
     "quit": "Quit",
@@ -199,6 +201,33 @@
       "saveSuccess": "Configuration saved successfully!",
       "saveFailed": "Failed to save configuration.",
       "loadFailed": "Failed to load configuration."
+    }
+  },
+  "usage": {
+    "title": "Usage Statistics",
+    "description": "Track your LLM token usage and costs",
+    "button": {
+      "title": "Usage Statistics",
+      "description": "View token usage and estimated costs"
+    },
+    "refresh": "Refresh",
+    "summary": {
+      "totalTokens": "Total Tokens",
+      "totalRequests": "Total Requests",
+      "last30Days": "Last 30 days"
+    },
+    "charts": {
+      "dailyTokenUsage": "Daily Token Usage",
+      "tokens": "Tokens"
+    },
+    "breakdown": {
+      "title": "Usage Breakdown",
+      "table": {
+        "model": "Model",
+        "capability": "Capability",
+        "tokens": "Tokens",
+        "requests": "Requests"
+      }
     }
   }
 }

@@ -11,6 +11,7 @@ import {
   VLMDemoPage,
   SplashScreen,
   LLMConfigPage,
+  UsagePage,
 } from "@/pages";
 import { ViewTransitionProvider } from "@/components/core/view-transition";
 
@@ -53,6 +54,10 @@ export const router = createHashRouter([
           {
             path: "settings/capture-sources",
             element: <CaptureSourceSettingsPage />,
+          },
+          {
+            path: "settings/usage",
+            element: <UsagePage />,
           },
           {
             path: "about",

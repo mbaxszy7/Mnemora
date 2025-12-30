@@ -18,6 +18,7 @@ import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
 import { entityService } from "./entity-service";
+import { llmUsageService } from "../usage/llm-usage-service";
 import { parseTextLLMExpandResult } from "./schemas";
 
 import type { VLMIndexResult, VLMSegment, DerivedItem, TextLLMExpandResult } from "./schemas";
@@ -949,7 +950,7 @@ Return the JSON now:`;
 
     const prompt = this.buildExpandPrompt(vlmIndex, batch, evidencePacks);
 
-    const { text: rawText } = await generateText({
+    const { text: rawText, usage } = await generateText({
       model: aiService.getTextClient(),
       system: TEXT_LLM_SYSTEM_PROMPT,
       messages: [
@@ -958,6 +959,17 @@ Return the JSON now:`;
           content: prompt,
         },
       ],
+    });
+
+    llmUsageService.logEvent({
+      ts: Date.now(),
+      capability: "text",
+      operation: "text_expand",
+      status: "succeeded",
+      model: aiService.getTextModelName(),
+      provider: "openai_compatible",
+      totalTokens: usage?.totalTokens ?? 0,
+      usageStatus: usage ? "present" : "missing",
     });
 
     // Parse response
@@ -1028,7 +1040,7 @@ Return the JSON object now:`;
     }
 
     const prompt = this.buildMergePrompt(existingNode, newNode);
-    const { text: rawText } = await generateText({
+    const { text: rawText, usage } = await generateText({
       model: aiService.getTextClient(),
       system: TEXT_LLM_MERGE_SYSTEM_PROMPT,
       messages: [
@@ -1037,6 +1049,18 @@ Return the JSON object now:`;
           content: prompt,
         },
       ],
+    });
+
+    // Log usage
+    llmUsageService.logEvent({
+      ts: Date.now(),
+      capability: "text",
+      operation: "text_merge",
+      status: "succeeded",
+      model: aiService.getTextModelName(),
+      provider: "openai_compatible",
+      totalTokens: usage?.totalTokens ?? 0,
+      usageStatus: usage ? "present" : "missing",
     });
 
     const parsed = this.parseTextLLMResponse(rawText);

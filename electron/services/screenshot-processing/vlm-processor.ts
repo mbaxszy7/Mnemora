@@ -28,6 +28,7 @@ import {
   type VLMScreenshotMeta,
 } from "./schemas";
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
+import { llmUsageService } from "../usage/llm-usage-service";
 
 const logger = getLogger("vlm-processor");
 
@@ -271,7 +272,7 @@ class VLMProcessor {
 
     try {
       // Call VLM
-      const { text: rawText } = await generateText({
+      const { text: rawText, usage } = await generateText({
         model: aiService.getVLMClient(),
         system: request.system,
         messages: [
@@ -280,6 +281,18 @@ class VLMProcessor {
             content: request.userContent,
           },
         ],
+      });
+
+      // Log usage
+      llmUsageService.logEvent({
+        ts: Date.now(),
+        capability: "vlm",
+        operation: "vlm_analyze_shard",
+        status: "succeeded",
+        model: aiService.getVLMModelName(),
+        provider: "openai_compatible",
+        totalTokens: usage?.totalTokens ?? 0,
+        usageStatus: usage ? "present" : "missing",
       });
 
       // Parse response
@@ -296,6 +309,18 @@ class VLMProcessor {
 
       return result;
     } catch (error) {
+      // Log failure usage (unknown tokens)
+      llmUsageService.logEvent({
+        ts: Date.now(),
+        capability: "vlm",
+        operation: "vlm_analyze_shard",
+        status: "failed",
+        errorCode: error instanceof Error ? error.name : "UNKNOWN",
+        model: aiService.getVLMModelName(),
+        provider: "openai_compatible",
+        usageStatus: "missing",
+      });
+
       logger.error(
         {
           shardIndex: shard.shardIndex,

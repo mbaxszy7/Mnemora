@@ -64,6 +64,20 @@
       "when": 1767073000365,
       "tag": "0008_blue_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1767075741578,
+      "tag": "0009_uneven_sue_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1767081399617,
+      "tag": "0010_pretty_william_stryker",
+      "breakpoints": true
     }
   ]
 }

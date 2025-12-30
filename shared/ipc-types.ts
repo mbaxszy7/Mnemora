@@ -57,7 +57,42 @@ export const IPC_CHANNELS = {
   CONTEXT_GET_THREAD: "context:get-thread",
   CONTEXT_TRAVERSE: "context:traverse",
   CONTEXT_GET_EVIDENCE: "context:get-evidence",
+  // Usage channels
+  USAGE_GET_SUMMARY: "usage:get-summary",
+  USAGE_GET_DAILY: "usage:get-daily", // For heatmap/daily chart
+  USAGE_GET_BREAKDOWN: "usage:get-breakdown", // By model/capability
+  // App navigation
+  APP_NAVIGATE: "app:navigate",
 } as const;
+
+/**
+ * Usage IPC Types
+ */
+export interface UsageTimeRangePayload {
+  fromTs: number;
+  toTs: number;
+  configHash?: string;
+}
+
+export interface UsageSummaryResult {
+  totalTokens: number;
+  requestCount: number;
+  succeededCount: number;
+  failedCount: number;
+}
+
+export interface UsageBreakdownItem {
+  model: string;
+  capability: string;
+  requestCount: number;
+  totalTokens: number;
+  succeededCount: number;
+}
+
+export interface UsageDailyItem {
+  date: string;
+  totalTokens: number;
+}
 
 /**
  * i18n IPC Payload Types

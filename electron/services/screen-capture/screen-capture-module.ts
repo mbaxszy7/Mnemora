@@ -154,6 +154,14 @@ export class ScreenCaptureModule {
     }
   }
 
+  async isCapturePrepared(): Promise<boolean> {
+    const llmConfig = await llmConfigService.loadConfiguration();
+    const hasPermissions =
+      permissionService.hasScreenRecordingPermission() &&
+      permissionService.hasAccessibilityPermission();
+    return !!hasPermissions && !!llmConfig;
+  }
+
   // ============================================================================
   // System Event Handlers
   // ============================================================================

@@ -66,6 +66,10 @@ export const ALIAS_SOURCE_VALUES = ["ocr", "vlm", "llm", "manual"] as const;
 export const DOC_TYPE_VALUES = ["context_node", "screenshot_snippet"] as const;
 export const SUMMARY_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
 
+export const LLM_USAGE_CAPABILITY_VALUES = ["vlm", "text", "embedding"] as const;
+export const LLM_USAGE_STATUS_VALUES = ["succeeded", "failed"] as const;
+export const LLM_TOKEN_USAGE_STATUS_VALUES = ["present", "missing"] as const;
+
 /**
  * LLM Configuration table
  * Stores LLM API configuration for unified or separate mode
@@ -471,6 +475,68 @@ export const activitySummaries = sqliteTable(
   ]
 );
 
+/**
+ * LLM Usage Events table
+ * Records individual LLM invocations for tracking and auditing
+ */
+export const llmUsageEvents = sqliteTable(
+  "llm_usage_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ts: integer("ts").notNull(), // timestamp in ms
+
+    // Context
+    capability: text("capability", { enum: LLM_USAGE_CAPABILITY_VALUES }).notNull(),
+    operation: text("operation").notNull(), // e.g. vlm_analyze_shard, text_expand, text_merge, embedding_node
+
+    // Status
+    status: text("status", { enum: LLM_USAGE_STATUS_VALUES }).notNull(),
+    errorCode: text("error_code"), // High-level error code/category, not full stack trace
+
+    // Model & Config
+    model: text("model").notNull(),
+    provider: text("provider"), // e.g. openai_compatible
+    configHash: text("config_hash").notNull(), // Hash of critical config params to detect backend changes
+
+    // Usage Stats (allow null if provider doesn't support them)
+    totalTokens: integer("total_tokens"),
+
+    // Metadata about whether usage was actually returned
+    usageStatus: text("usage_status", { enum: LLM_TOKEN_USAGE_STATUS_VALUES }).notNull(),
+  },
+  (table) => [
+    index("idx_llm_usage_ts").on(table.ts),
+    index("idx_llm_usage_model_ts").on(table.model, table.ts),
+    index("idx_llm_usage_capability_ts").on(table.capability, table.ts),
+  ]
+);
+
+/**
+ * LLM Usage Daily Rollups table
+ * pre-aggregated daily stats to speed up charts/reports
+ */
+export const llmUsageDailyRollups = sqliteTable(
+  "llm_usage_daily_rollups",
+  {
+    day: text("day").notNull(), // YYYY-MM-DD
+    model: text("model").notNull(),
+    capability: text("capability").notNull(),
+
+    // Counts
+    requestCountSucceeded: integer("request_count_succeeded").notNull().default(0),
+    requestCountFailed: integer("request_count_failed").notNull().default(0),
+
+    // Tokens
+    totalTokensSum: integer("total_tokens_sum").notNull().default(0),
+
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    // Composite unique index for upserting
+    uniqueIndex("idx_heatmap_unique").on(table.day, table.model, table.capability),
+  ]
+);
+
 // ============================================================================
 // Type Exports
 // ============================================================================
@@ -511,6 +577,13 @@ export type NewVectorDocumentRecord = typeof vectorDocuments.$inferInsert;
 export type ActivitySummaryRecord = typeof activitySummaries.$inferSelect;
 export type NewActivitySummaryRecord = typeof activitySummaries.$inferInsert;
 
+// LLM Usage types
+export type LLMUsageEventRecord = typeof llmUsageEvents.$inferSelect;
+export type NewLLMUsageEventRecord = typeof llmUsageEvents.$inferInsert;
+
+export type LLMUsageDailyRollupRecord = typeof llmUsageDailyRollups.$inferSelect;
+export type NewLLMUsageDailyRollupRecord = typeof llmUsageDailyRollups.$inferInsert;
+
 // ============================================================================
 // Enum Type Exports (for use in other modules)
 // ============================================================================
@@ -527,3 +600,7 @@ export type AliasType = (typeof ALIAS_TYPE_VALUES)[number];
 export type AliasSource = (typeof ALIAS_SOURCE_VALUES)[number];
 export type DocType = (typeof DOC_TYPE_VALUES)[number];
 export type SummaryStatus = (typeof SUMMARY_STATUS_VALUES)[number];
+
+export type LLMUsageCapability = (typeof LLM_USAGE_CAPABILITY_VALUES)[number];
+export type LLMUsageStatus = (typeof LLM_USAGE_STATUS_VALUES)[number];
+export type LLMTokenUsageStatus = (typeof LLM_TOKEN_USAGE_STATUS_VALUES)[number];

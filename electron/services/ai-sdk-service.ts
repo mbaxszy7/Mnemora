@@ -144,4 +144,34 @@ export class AISDKService {
     }
     return this.embeddingClient.provider.textEmbeddingModel(this.embeddingClient.model);
   }
+
+  /**
+   * Get VLM Model Name
+   */
+  getVLMModelName(): string {
+    if (!this._initialized || !this.vlmClient) {
+      return "unknown";
+    }
+    return this.vlmClient.model;
+  }
+
+  /**
+   * Get Text LLM Model Name
+   */
+  getTextModelName(): string {
+    if (!this._initialized || !this.textClient) {
+      return "unknown";
+    }
+    return this.textClient.model;
+  }
+
+  /**
+   * Get Embedding Model Name
+   */
+  getEmbeddingModelName(): string {
+    if (!this._initialized || !this.embeddingClient) {
+      return "unknown";
+    }
+    return this.embeddingClient.model;
+  }
 }

@@ -4,6 +4,8 @@ import { getScreenCaptureModule, ScreenCaptureModule } from "./screen-capture";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from "../main";
+import { llmUsageService } from "./usage/llm-usage-service";
+import { IPC_CHANNELS } from "@shared/ipc-types";
 
 export interface TrayServiceConfig {
   /**
@@ -26,9 +28,11 @@ export class TrayService {
   private tray: Tray | null = null;
   private readonly logger = getLogger("tray-service");
   private config: TrayServiceConfig | null = null;
+  private todayTokens: number = 0;
+  private updateInterval: NodeJS.Timeout | null = null;
+
   private readonly handleSchedulerEventBound = () => {
-    this.refreshMenu();
-    this.refreshTooltip();
+    this.updateUsageDisplay();
   };
 
   private constructor() {
@@ -72,23 +76,56 @@ export class TrayService {
     const resolvedIconPath = path.resolve(this.getIconPath());
     const icon = nativeImage.createFromPath(resolvedIconPath);
     this.tray = new Tray(icon);
+
+    // Initial display
     this.refreshTooltip();
 
     this.tray.on("click", this.handleShowMainWindow);
     this.tray.on("double-click", this.handleShowMainWindow);
 
-    this.refreshMenu();
+    this.updateUsageDisplay(); // Fetch usage and refresh menu
     this.subscribeScheduler();
+
+    // Update usage stats every 5 minutes
+    this.updateInterval = setInterval(
+      () => {
+        this.updateUsageDisplay();
+      },
+      5 * 60 * 1000
+    );
+
     this.logger.info({ icon: resolvedIconPath }, "Tray initialized");
   }
 
   dispose(): void {
     if (!this.tray) return;
     this.unsubscribeScheduler();
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+    }
     this.tray.removeAllListeners();
     this.tray.destroy();
     this.tray = null;
     this.logger.info("Tray disposed");
+  }
+
+  private async updateUsageDisplay() {
+    try {
+      const now = Date.now();
+      const startOfDay = new Date(now).setHours(0, 0, 0, 0);
+
+      const summary = await llmUsageService.getUsageSummary({
+        fromTs: startOfDay,
+        toTs: now,
+      });
+
+      this.todayTokens = summary.totalTokens;
+      this.refreshMenu();
+      this.refreshTooltip();
+    } catch (error) {
+      this.logger.warn({ error }, "Failed to update usage display");
+    }
   }
 
   private refreshMenu(): void {
@@ -98,6 +135,18 @@ export class TrayService {
     const isRunning = captureModule.getState().status === "running";
 
     const menu = Menu.buildFromTemplate([
+      {
+        label: mainI18n.t("tray.usageToday", "", {
+          count: this.todayTokens.toLocaleString(),
+        } as Record<string, string>),
+        click: () => {
+          const mainWindow = this.handleShowMainWindow();
+          if (mainWindow) {
+            mainWindow.webContents.send(IPC_CHANNELS.APP_NAVIGATE, "/settings/usage");
+          }
+        },
+      },
+      { type: "separator" },
       {
         label: mainI18n.t("tray.show"),
         click: this.handleShowMainWindow,
@@ -135,11 +184,11 @@ export class TrayService {
     }
   }
 
-  private handleShowMainWindow = (): void => {
+  private handleShowMainWindow = (): BrowserWindow | null => {
     try {
       if (!this.config) {
         this.logger.warn("TrayService not configured");
-        return;
+        return null;
       }
       let mainWindow = this.config.getMainWindow();
       if (!mainWindow) {
@@ -150,8 +199,10 @@ export class TrayService {
       }
       mainWindow.show();
       mainWindow.focus();
+      return mainWindow;
     } catch (error) {
       this.logger.error({ error }, "Failed to show main window from tray");
+      return null;
     }
   };
 

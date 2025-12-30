@@ -310,6 +310,25 @@ export default function SettingsPage() {
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
 
+        {/* Usage Statistics */}
+        <button
+          onClick={() => navigate("/settings/usage", { type: "slide-left", duration: 300 })}
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <span className="h-4 w-4 flex items-center justify-center font-bold text-xs border rounded-full border-current">
+                $
+              </span>
+              {t("usage.button.title", "Usage Statistics")}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t("usage.button.description", "View token usage and estimated costs")}
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
+
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="autoStart">Launch at Startup</Label>

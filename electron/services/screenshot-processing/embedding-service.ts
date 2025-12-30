@@ -1,6 +1,7 @@
 import { embed } from "ai";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
+import { llmUsageService } from "../usage/llm-usage-service";
 
 const logger = getLogger("embedding-service");
 
@@ -16,6 +17,19 @@ export class EmbeddingService {
       const result = await embed({
         model: embeddingClient,
         value: text,
+      });
+
+      // Log usage
+      const safeUsage = result.usage;
+      llmUsageService.logEvent({
+        ts: Date.now(),
+        capability: "embedding",
+        operation: "embedding_node",
+        status: "succeeded",
+        model: AISDKService.getInstance().getEmbeddingModelName(),
+        provider: "openai_compatible",
+        totalTokens: safeUsage?.tokens ?? 0,
+        usageStatus: safeUsage ? "present" : "missing",
       });
 
       return new Float32Array(result.embedding);

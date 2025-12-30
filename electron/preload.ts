@@ -253,3 +253,52 @@ const contextGraphApi: ContextGraphApi = {
 };
 
 contextBridge.exposeInMainWorld("contextGraphApi", contextGraphApi);
+
+export interface UsageApi {
+  getSummary(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageSummaryResult>>;
+  getDaily(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageDailyItem[]>>;
+  getBreakdown(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageBreakdownItem[]>>;
+}
+
+const usageApi: UsageApi = {
+  async getSummary(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageSummaryResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USAGE_GET_SUMMARY, range);
+  },
+
+  async getDaily(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageDailyItem[]>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USAGE_GET_DAILY, range);
+  },
+
+  async getBreakdown(
+    range: import("@shared/ipc-types").UsageTimeRangePayload
+  ): Promise<IPCResult<import("@shared/ipc-types").UsageBreakdownItem[]>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USAGE_GET_BREAKDOWN, range);
+  },
+};
+
+export interface AppApi {
+  onNavigate(callback: (path: string) => void): () => void;
+}
+
+const appApi: AppApi = {
+  onNavigate(callback: (path: string) => void) {
+    const subscription = (_event: unknown, path: string) => callback(path);
+    ipcRenderer.on(IPC_CHANNELS.APP_NAVIGATE, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.APP_NAVIGATE, subscription);
+    };
+  },
+};
+
+contextBridge.exposeInMainWorld("appApi", appApi);
+contextBridge.exposeInMainWorld("usageApi", usageApi);

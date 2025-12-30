@@ -54,7 +54,11 @@ interface Window {
     };
     screenshots: {
       getAll(options?: { limit?: number; offset?: number }): Promise<unknown[]>;
-      create(data: unknown): Promise<unknown>;
+      getDaily: (
+        range: import("../shared/ipc-types").UsageTimeRangePayload
+      ) => Promise<
+        import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").UsageDailyItem[]>
+      >;
     };
   };
   llmConfigApi: {
@@ -138,5 +142,25 @@ interface Window {
         import("../shared/context-types").ScreenshotEvidence[]
       >
     >;
+  };
+  usageApi: {
+    getSummary(
+      range: import("../shared/ipc-types").UsageTimeRangePayload
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").UsageSummaryResult>
+    >;
+    getDaily(
+      range: import("../shared/ipc-types").UsageTimeRangePayload
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").UsageDailyItem[]>
+    >;
+    getBreakdown(
+      range: import("../shared/ipc-types").UsageTimeRangePayload
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").UsageBreakdownItem[]>
+    >;
+  };
+  appApi: {
+    onNavigate(callback: (path: string) => void): () => void;
   };
 }

@@ -6,12 +6,12 @@ import { AISDKService } from "./services/ai-sdk-service";
 import { LLMConfigService } from "./services/llm-config-service";
 import { registerVLMHandlers } from "./ipc/vlm-handlers";
 import { registerI18nHandlers } from "./ipc/i18n-handlers";
-
 import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
 import { registerPermissionHandlers } from "./ipc/permission-handlers";
 import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
 import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
+import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -169,6 +169,7 @@ function registerIPCHandlers(): void {
   registerPermissionHandlers();
   registerCaptureSourceSettingsHandlers();
   registerContextGraphHandlers();
+  registerUsageHandlers();
   logger.info("IPC handlers registered");
 }
 

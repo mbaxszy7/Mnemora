@@ -375,6 +375,7 @@ export const entityAliases = sqliteTable(
   (table) => [
     index("idx_entity_aliases_entity").on(table.entityId),
     index("idx_entity_aliases_alias").on(table.alias),
+    uniqueIndex("idx_entity_aliases_entity_alias_unique").on(table.entityId, table.alias),
   ]
 );
 

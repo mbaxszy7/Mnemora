@@ -17,7 +17,9 @@ import { z } from "zod";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
+import { entityService } from "./entity-service";
 import { parseTextLLMExpandResult } from "./schemas";
+
 import type { VLMIndexResult, VLMSegment, DerivedItem, TextLLMExpandResult } from "./schemas";
 import type {
   Batch,
@@ -476,6 +478,9 @@ ${evidenceJson}
 - Source Key: ${batch.sourceKey}
 - Time Range: ${new Date(batch.tsStart).toISOString()} to ${new Date(batch.tsEnd).toISOString()}
 
+## VLM Entities (batch-level candidates)
+${JSON.stringify(vlmIndex.entities ?? [], null, 2)}
+
 ## Instructions
 1. Produce at least one event node for each segment.
 2. For each derived item (knowledge/state/procedure/plan), create a separate node and an edge from its source event.
@@ -890,6 +895,15 @@ Return the JSON now:`;
         const nodeId = await contextGraphService.createNode(input);
         nodeIds.push(nodeId);
         nodeIdByIndex.set(i, nodeId);
+
+        // Sync entity mentions for event nodes
+        if (node.kind === "event") {
+          try {
+            await entityService.syncEventEntityMentions(parseInt(nodeId, 10), node.entities, "llm");
+          } catch (err) {
+            logger.warn({ nodeId, error: String(err) }, "Failed to sync entity mentions for node");
+          }
+        }
 
         logger.debug(
           {

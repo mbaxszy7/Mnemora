@@ -13,7 +13,9 @@ import {
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
 import { vectorDocumentService } from "./vector-document-service";
+import { entityService } from "./entity-service";
 import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
+
 import { runVlmOnBatch } from "./vlm-processor";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
@@ -1052,6 +1054,22 @@ export class ReconcileLoop {
       confidence: mergeResult.mergedNode.confidence,
       mergedFromIds: mergeResult.mergedFromIds,
     });
+
+    // Milestone 4 integration: Sync entity mentions for the updated target node (only if it's an event)
+    if (targetRecord.kind === "event") {
+      try {
+        await entityService.syncEventEntityMentions(
+          targetRecord.id,
+          mergeResult.mergedNode.entities,
+          "llm"
+        );
+      } catch (err) {
+        logger.warn(
+          { targetId: targetRecord.id, error: String(err) },
+          "Failed to sync entity mentions for merged target node"
+        );
+      }
+    }
 
     // Link new node's screenshots to target node
     for (const screenshotId of node.screenshotIds) {

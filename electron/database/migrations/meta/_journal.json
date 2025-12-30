@@ -57,6 +57,13 @@
       "when": 1766992081233,
       "tag": "0007_swift_goliath",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1767073000365,
+      "tag": "0008_blue_sentry",
+      "breakpoints": true
     }
   ]
 }

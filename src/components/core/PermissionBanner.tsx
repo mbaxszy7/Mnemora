@@ -27,6 +27,11 @@ export function PermissionBanner() {
   const [isRequesting, setIsRequesting] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
   const isGrantedRef = useRef(false);
+  const permissionsRef = useRef<PermissionState | null>(null);
+
+  useEffect(() => {
+    permissionsRef.current = permissions;
+  }, [permissions]);
 
   const allGranted = useCallback(
     (p?: PermissionState | null) =>
@@ -37,12 +42,13 @@ export function PermissionBanner() {
   // Check permission status on mount and periodically (until granted)
   const checkPermission = useCallback(async () => {
     // Skip calling IPC if we already know everything is granted
-    if (isGrantedRef.current || allGranted(permissions)) {
+    if (isGrantedRef.current || allGranted(permissionsRef.current)) {
       return;
     }
     try {
       const result = await window.permissionApi.check();
       if (result.success && result.data) {
+        permissionsRef.current = result.data;
         setPermissions(result.data);
 
         // If all permissions just became granted, notify parent
@@ -56,22 +62,44 @@ export function PermissionBanner() {
     } finally {
       setIsLoading(false);
     }
-  }, [allGranted, initServices, permissions]);
+  }, [allGranted, initServices]);
 
   useEffect(() => {
-    checkPermission();
+    void checkPermission();
 
-    // Poll for permission changes every 2 seconds only until granted
-    if (isGrantedRef.current || allGranted(permissions)) {
-      return;
-    }
+    const unsubscribePermissionChanged =
+      typeof window.permissionApi.onStatusChanged === "function"
+        ? window.permissionApi.onStatusChanged((payload) => {
+            permissionsRef.current = payload;
+            setPermissions(payload);
 
-    const interval = setInterval(() => {
-      checkPermission();
-    }, 2000);
+            const granted = allGranted(payload);
+            isGrantedRef.current = granted;
+            if (granted) {
+              initServices();
+            }
+          })
+        : null;
 
-    return () => clearInterval(interval);
-  }, [allGranted, checkPermission, permissions]);
+    const handleFocus = () => {
+      void checkPermission();
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        void checkPermission();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      unsubscribePermissionChanged?.();
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [allGranted, checkPermission, initServices]);
 
   // Handle grant permission button click
   const handleGrantPermission = async () => {

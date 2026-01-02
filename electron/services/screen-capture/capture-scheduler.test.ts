@@ -387,12 +387,14 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
     it("increments captureCount on successful capture", async () => {
       vi.useRealTimers();
 
-      const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => ({
-        buffer: Buffer.from([]),
-        timestamp: Date.now(),
-        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-        screenId: "0",
-      }));
+      const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => [
+        {
+          buffer: Buffer.from([]),
+          timestamp: Date.now(),
+          source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+          screenId: "0",
+        },
+      ]);
 
       expect(scheduler.getState().captureCount).toBe(0);
 
@@ -410,12 +412,14 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
     it("updates lastCaptureTime after capture", async () => {
       vi.useRealTimers();
 
-      const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => ({
-        buffer: Buffer.from([]),
-        timestamp: Date.now(),
-        source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
-        screenId: "0",
-      }));
+      const scheduler = new ScreenCaptureScheduler({ interval: 20, minDelay: 5 }, async () => [
+        {
+          buffer: Buffer.from([]),
+          timestamp: Date.now(),
+          source: { id: "screen:0:0", name: "Display 0", type: "screen" as const },
+          screenId: "0",
+        },
+      ]);
 
       expect(scheduler.getState().lastCaptureTime).toBeNull();
 

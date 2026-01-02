@@ -64,7 +64,13 @@ export const INDEX_STATUS_VALUES = [
 export const ALIAS_TYPE_VALUES = ["nickname", "abbr", "translation"] as const;
 export const ALIAS_SOURCE_VALUES = ["ocr", "vlm", "llm", "manual"] as const;
 export const DOC_TYPE_VALUES = ["context_node", "screenshot_snippet"] as const;
-export const SUMMARY_STATUS_VALUES = ["pending", "succeeded", "failed"] as const;
+export const SUMMARY_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
 
 export const LLM_USAGE_CAPABILITY_VALUES = ["vlm", "text", "embedding"] as const;
 export const LLM_USAGE_STATUS_VALUES = ["succeeded", "failed"] as const;
@@ -439,7 +445,7 @@ export const vectorDocuments = sqliteTable(
 
 /**
  * Activity Summaries table
- * Stores periodic activity summaries for time windows
+ * Stores periodic activity summaries for time windows (20 min each)
  */
 export const activitySummaries = sqliteTable(
   "activity_summaries",
@@ -453,9 +459,11 @@ export const activitySummaries = sqliteTable(
     // Idempotency
     idempotencyKey: text("idempotency_key").notNull().unique(),
 
-    // Summary content
-    summary: text("summary").notNull(),
-    metadata: text("metadata"), // JSON: {nodeCount, threadIds, topEntities}
+    // Summary content (extended for Milestone 6)
+    title: text("title"), // One-line title for timeline block display
+    summary: text("summary").notNull(), // Markdown content
+    highlights: text("highlights"), // JSON: string[] - key highlights
+    stats: text("stats"), // JSON: { topApps[], topEntities[], nodeCount, screenshotCount, threadCount }
 
     // Processing status
     status: text("status", {
@@ -464,6 +472,9 @@ export const activitySummaries = sqliteTable(
       .notNull()
       .default("pending"),
     attempts: integer("attempts").notNull().default(0),
+    nextRunAt: integer("next_run_at"), // For retry scheduling
+    errorCode: text("error_code"),
+    errorMessage: text("error_message"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
@@ -472,6 +483,69 @@ export const activitySummaries = sqliteTable(
   (table) => [
     index("idx_activity_summaries_window").on(table.windowStart, table.windowEnd),
     index("idx_activity_summaries_status").on(table.status),
+  ]
+);
+
+export const ACTIVITY_EVENT_STATUS_VALUES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "failed_permanent",
+] as const;
+
+/**
+ * Activity Events table
+ * Stores cross-window event sessions for Activity Monitor
+ * - Events can span multiple 20-min windows
+ * - isLong is computed from durationMs >= 30min (backend rule)
+ */
+export const activityEvents = sqliteTable(
+  "activity_events",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+
+    // Event identification (unique session key for idempotency)
+    eventKey: text("event_key").notNull().unique(),
+
+    // Time range
+    startTs: integer("start_ts").notNull(),
+    endTs: integer("end_ts").notNull(),
+    durationMs: integer("duration_ms").notNull(), // Computed: endTs - startTs
+
+    // Event metadata
+    title: text("title").notNull(),
+    kind: text("kind").notNull(), // e.g. focus/work/meeting/break/browse/coding
+    confidence: integer("confidence").notNull().default(5), // 0-10
+    importance: integer("importance").notNull().default(5), // 0-10
+
+    // Associations
+    threadId: text("thread_id"), // From context_nodes.threadId for cross-window aggregation
+    nodeIds: text("node_ids"), // JSON: number[] - associated context_nodes.id
+
+    // Long event marker (computed from durationMs >= 30min)
+    isLong: integer("is_long", { mode: "boolean" }).notNull().default(false),
+
+    // Event details (on-demand LLM generation)
+    details: text("details"), // Markdown content
+    detailsStatus: text("details_status", {
+      enum: ACTIVITY_EVENT_STATUS_VALUES,
+    })
+      .notNull()
+      .default("pending"),
+    detailsAttempts: integer("details_attempts").notNull().default(0),
+    detailsNextRunAt: integer("details_next_run_at"),
+    detailsErrorCode: text("details_error_code"),
+    detailsErrorMessage: text("details_error_message"),
+
+    // Timestamps
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_activity_events_time").on(table.startTs, table.endTs),
+    index("idx_activity_events_thread").on(table.threadId, table.startTs),
+    index("idx_activity_events_is_long").on(table.isLong, table.startTs),
   ]
 );
 
@@ -577,6 +651,10 @@ export type NewVectorDocumentRecord = typeof vectorDocuments.$inferInsert;
 export type ActivitySummaryRecord = typeof activitySummaries.$inferSelect;
 export type NewActivitySummaryRecord = typeof activitySummaries.$inferInsert;
 
+// Activity Event types
+export type ActivityEventRecord = typeof activityEvents.$inferSelect;
+export type NewActivityEventRecord = typeof activityEvents.$inferInsert;
+
 // LLM Usage types
 export type LLMUsageEventRecord = typeof llmUsageEvents.$inferSelect;
 export type NewLLMUsageEventRecord = typeof llmUsageEvents.$inferInsert;
@@ -600,6 +678,7 @@ export type AliasType = (typeof ALIAS_TYPE_VALUES)[number];
 export type AliasSource = (typeof ALIAS_SOURCE_VALUES)[number];
 export type DocType = (typeof DOC_TYPE_VALUES)[number];
 export type SummaryStatus = (typeof SUMMARY_STATUS_VALUES)[number];
+export type ActivityEventStatus = (typeof ACTIVITY_EVENT_STATUS_VALUES)[number];
 
 export type LLMUsageCapability = (typeof LLM_USAGE_CAPABILITY_VALUES)[number];
 export type LLMUsageStatus = (typeof LLM_USAGE_STATUS_VALUES)[number];

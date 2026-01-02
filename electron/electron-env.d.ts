@@ -77,6 +77,9 @@ interface Window {
     requestAccessibility(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     openScreenRecordingSettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
     openAccessibilitySettings(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    onStatusChanged(
+      callback: (payload: import("../shared/ipc-types").PermissionCheckResult) => void
+    ): () => void;
   };
   // TEMPORARY: Screen capture API - remove later
   screenCaptureApi: {
@@ -87,6 +90,9 @@ interface Window {
     getState(): Promise<
       import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").SchedulerStatePayload>
     >;
+    onStateChanged(
+      callback: (payload: import("../shared/ipc-types").SchedulerStatePayload) => void
+    ): () => void;
   };
   captureSourceApi: {
     initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
@@ -163,5 +169,29 @@ interface Window {
   };
   appApi: {
     onNavigate(callback: (path: string) => void): () => void;
+  };
+  activityMonitorApi: {
+    getTimeline(req: {
+      fromTs: number;
+      toTs: number;
+    }): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/activity-types").TimelineResponse>
+    >;
+    onTimelineChanged(
+      callback: (payload: import("../shared/activity-types").ActivityTimelineChangedPayload) => void
+    ): () => void;
+    getSummary(req: {
+      windowStart: number;
+      windowEnd: number;
+    }): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/activity-types").WindowSummary | null
+      >
+    >;
+    getEventDetails(req: {
+      eventId: number;
+    }): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/activity-types").ActivityEvent>
+    >;
   };
 }

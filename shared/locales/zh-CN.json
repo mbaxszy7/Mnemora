@@ -20,8 +20,18 @@
   },
   "settings": {
     "title": "设置",
+    "description": "管理您的应用程序偏好设置",
     "language": "语言",
+    "languageDescription": "选择您偏好的语言",
     "theme": "主题",
+    "autoStart": {
+      "label": "开机启动",
+      "description": "系统启动时自动运行 Mnemora"
+    },
+    "notifications": {
+      "label": "通知",
+      "description": "接收智能洞察和提醒通知"
+    },
     "appearance": {
       "label": "外观",
       "description": "选择亮色、暗色或跟随系统",
@@ -229,6 +239,93 @@
         "tokens": "Token",
         "requests": "请求"
       }
+    }
+  },
+  "activityMonitor": {
+    "banner": {
+      "capturePausedTitle": "采集已暂停",
+      "capturePausedDescription": "截图暂停期间将不会生成新的总结。"
+    },
+    "search": {
+      "placeholder": "自然语言搜索活动记录...",
+      "deepSearch": "深度搜索",
+      "deepSearchTooltip": "启用 AI 深度分析，以获得更详细的回答"
+    },
+    "empty": {
+      "title": "还没有活动时间线",
+      "description": "当你开始采集屏幕活动后，这里会自动生成 20 分钟粒度的时间线与总结。",
+      "permissionsTitle": "权限状态",
+      "screenRecording": "屏幕录制",
+      "accessibility": "辅助功能",
+      "granted": "已授权",
+      "notGranted": "未授权",
+      "unknown": "未读取",
+      "captureTitle": "采集状态",
+      "captureCurrent": "当前：{{status}}",
+      "working": "处理中…",
+      "grantPermissions": "授予所需权限",
+      "capturing": "正在采集",
+      "starting": "正在启动…",
+      "resume": "继续采集",
+      "start": "开始采集",
+      "openSettings": "打开设置"
+    },
+    "settings": {
+      "permissionWarning": "需要授权 - 点击配置"
+    },
+    "timeline": {
+      "title": "24 小时时间线",
+      "windows": "{{count}} 个时间窗口",
+      "longEvents": "{{count}} 个长事件"
+    },
+    "summary": {
+      "selectWindow": "选择一个时间窗口",
+      "selectWindowDescription": "从左侧时间线选择一个 20 分钟窗口查看详细摘要",
+      "nodes": "{{count}} 个节点",
+      "screenshots": "{{count}} 张截图",
+      "relatedEvents": "相关事件"
+    },
+    "event": {
+      "longEvent": "长事件",
+      "noDetails": "暂无详情",
+      "kinds": {
+        "coding": "编码",
+        "meeting": "会议",
+        "break": "休息",
+        "browse": "浏览",
+        "focus": "专注",
+        "work": "工作"
+      }
+    }
+  },
+  "searchResults": {
+    "noResults": "无结果",
+    "noResultsDescription": "您的搜索没有返回任何结果",
+    "backToHome": "返回首页",
+    "resultCount": "找到 {{count}} 个结果",
+    "answer": "AI 回答",
+    "followUpQuestions": "后续问题",
+    "matchedNodes": "匹配记录",
+    "relatedEvents": "相关事件",
+    "tryDifferentQuery": "尝试不同的搜索词",
+    "kinds": {
+      "event": "事件",
+      "knowledge": "知识",
+      "state_snapshot": "状态",
+      "procedure": "过程",
+      "plan": "计划",
+      "entity_profile": "实体"
+    }
+  },
+  "circuitBreaker": {
+    "message": "检测到 AI 故障：{{seconds}} 秒内发生 {{count}} 次失败。屏幕采集已停止，请检查 LLM 配置。",
+    "openConfig": "打开 LLM 配置"
+  },
+  "splashScreen": {
+    "slogans": {
+      "pixelsToMemory": "像素化为记忆。",
+      "memoryAmplified": "记忆，放大。",
+      "rememberEverything": "记住一切。"
     }
   }
 }

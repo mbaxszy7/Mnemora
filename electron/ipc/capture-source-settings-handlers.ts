@@ -16,7 +16,7 @@ import type {
   SetPreferencesRequest,
 } from "@shared/capture-source-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { getScreenCaptureModule } from "../services/screen-capture";
+import { screenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("capture-source-settings-handlers");
@@ -33,7 +33,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     async (): Promise<IPCResult<GetScreensResponse>> => {
       try {
         logger.debug("IPC: Getting screens with thumbnails");
-        const captureService = getScreenCaptureModule().getCaptureService();
+        const captureService = screenCaptureModule.getCaptureService();
         const screens = await captureService.getCaptureScreenInfo();
         return { success: true, data: { screens } };
       } catch (error) {
@@ -49,7 +49,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     async (): Promise<IPCResult<GetAppsResponse>> => {
       try {
         logger.debug("IPC: Getting active apps");
-        const captureService = getScreenCaptureModule().getCaptureService();
+        const captureService = screenCaptureModule.getCaptureService();
         const apps = await captureService.getCaptureAppInfo();
         return { success: true, data: { apps } };
       } catch (error) {
@@ -65,7 +65,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     async (): Promise<IPCResult<PreferencesResponse>> => {
       try {
         logger.debug("IPC: Getting capture preferences");
-        const preferences = getScreenCaptureModule().getPreferencesService().getPreferences();
+        const preferences = screenCaptureModule.getPreferencesService().getPreferences();
         return { success: true, data: { preferences } };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to get preferences");
@@ -79,7 +79,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_SET_PREFERENCES,
     async (_event, request: SetPreferencesRequest): Promise<IPCResult<PreferencesResponse>> => {
       try {
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         module.setPreferences(request.preferences);
         const preferences = module.getPreferencesService().getPreferences();
         return { success: true, data: { preferences } };

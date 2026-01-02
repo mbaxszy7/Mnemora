@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage } from "electron";
+import { app, BrowserWindow, nativeImage, screen } from "electron";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -12,11 +12,12 @@ import { registerPermissionHandlers } from "./ipc/permission-handlers";
 import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
 import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
 import { registerUsageHandlers } from "./ipc/usage-handlers";
+import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
-import { ScreenCaptureModule } from "./services/screen-capture";
+import { screenCaptureModule } from "./services/screen-capture";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 
@@ -76,7 +77,15 @@ function createMainWindow(): BrowserWindow {
   // Create native image for icon to prevent flashing
   const appIcon = nativeImage.createFromPath(appIconPath);
 
+  // Calculate 80% of primary screen size
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const windowWidth = Math.round(screenWidth * 0.8);
+  const windowHeight = Math.round(screenHeight * 0.8);
+
   const win = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
     show: true,
     icon: appIcon,
     webPreferences: {
@@ -170,6 +179,7 @@ function registerIPCHandlers(): void {
   registerCaptureSourceSettingsHandlers();
   registerContextGraphHandlers();
   registerUsageHandlers();
+  registerActivityMonitorHandlers();
   logger.info("IPC handlers registered");
 }
 
@@ -197,10 +207,8 @@ async function initializeApp(): Promise<void> {
   await initAIService();
   // 5. Initialize power monitor (non-critical)
   initPowerMonitor();
-  // 6. Initialize screen capture module (only if permission granted)
-  if (isDev) {
-    ScreenCaptureModule.resetInstance();
-  }
+  // Initialize processing pipeline after DB is ready (but do not start capture)
+  screenCaptureModule.initializeProcessingPipeline();
 }
 
 // ============================================================================
@@ -219,7 +227,7 @@ app.on("before-quit", () => {
   isQuitting = true;
   TrayService.resetInstance();
   // Dispose screen capture module after tray cleanup
-  ScreenCaptureModule.disable();
+  screenCaptureModule.dispose();
   // Dispose power monitor
   powerMonitorService.dispose();
   // Close database connection before quitting

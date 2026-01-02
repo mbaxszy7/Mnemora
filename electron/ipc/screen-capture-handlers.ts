@@ -10,7 +10,7 @@
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { SchedulerConfigPayload, SchedulerStatePayload } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { getScreenCaptureModule, ScreenCaptureModule } from "../services/screen-capture";
+import { screenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("screen-capture-handlers");
@@ -27,7 +27,7 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<void>> => {
       try {
         logger.info("IPC: Starting screen capture scheduler");
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         module.start();
         return { success: true };
       } catch (error) {
@@ -41,7 +41,7 @@ export function registerScreenCaptureHandlers(): void {
   registry.registerHandler(IPC_CHANNELS.SCREEN_CAPTURE_STOP, async (): Promise<IPCResult<void>> => {
     try {
       logger.info("IPC: Stopping screen capture scheduler");
-      const module = getScreenCaptureModule();
+      const module = screenCaptureModule;
       module.stop();
       return { success: true };
     } catch (error) {
@@ -56,7 +56,7 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<void>> => {
       try {
         logger.info("IPC: Pausing screen capture scheduler");
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         module.pause();
         return { success: true };
       } catch (error) {
@@ -72,7 +72,7 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<void>> => {
       try {
         logger.info("IPC: Resuming screen capture scheduler");
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         module.resume();
         return { success: true };
       } catch (error) {
@@ -87,7 +87,7 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_GET_STATE,
     async (): Promise<IPCResult<SchedulerStatePayload>> => {
       try {
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         const state = module.getState();
         return { success: true, data: state };
       } catch (error) {
@@ -103,7 +103,7 @@ export function registerScreenCaptureHandlers(): void {
     async (_event, config: SchedulerConfigPayload): Promise<IPCResult<void>> => {
       try {
         logger.info({ config }, "IPC: Updating screen capture scheduler config");
-        const module = getScreenCaptureModule();
+        const module = screenCaptureModule;
         module.updateConfig(config);
         return { success: true };
       } catch (error) {
@@ -119,7 +119,7 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<boolean>> => {
       try {
         logger.info("Attempting to initialize capture services");
-        const initialized = await ScreenCaptureModule.tryInitialize();
+        const initialized = await screenCaptureModule.tryInitialize();
         return { success: true, data: initialized };
       } catch (error) {
         logger.error({ error }, "Failed to initialize capture services");

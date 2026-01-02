@@ -2,7 +2,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
 import { useViewTransition } from "@/components/core/view-transition";
 
-const slogans = ["Pixels to memory.", "Memory, amplified.", "Remember everything."];
+const SLOGANS = ["Pixels to memory.", "Memory, amplified.", "Remember everything."] as const;
 
 // const isDev = process.env.NODE_ENV === "development";
 
@@ -64,7 +64,7 @@ export default function SplashScreen() {
   // Slogan rotation effect
   useEffect(() => {
     const interval = setInterval(() => {
-      setCurrentSloganIndex((prev) => (prev + 1) % slogans.length);
+      setCurrentSloganIndex((prev) => (prev + 1) % SLOGANS.length);
     }, 3000);
 
     return () => clearInterval(interval);
@@ -144,7 +144,7 @@ export default function SplashScreen() {
             transition={{ duration: prefersReducedMotion ? 0 : 0.6 }}
             className="absolute text-[#64748B] text-base  text-center whitespace-nowrap"
           >
-            {slogans[currentSloganIndex]}
+            {SLOGANS[currentSloganIndex]}
           </motion.p>
         </AnimatePresence>
       </div>

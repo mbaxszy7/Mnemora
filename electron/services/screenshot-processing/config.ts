@@ -200,14 +200,14 @@ export const reconcileConfig: ReconcileConfig = {
  * Activity summary generation configuration
  */
 export interface ActivitySummaryConfig {
-  /** Generation interval in milliseconds (default: 900000 = 15min) */
+  /** Generation interval in milliseconds (default: 1200000 = 20min) */
   generationIntervalMs: number;
   /** Whether to enable automatic generation (default: true) */
   enabled: boolean;
 }
 
 export const activitySummaryConfig: ActivitySummaryConfig = {
-  generationIntervalMs: 900000, // 15 minutes
+  generationIntervalMs: 1200000, // 20 minutes
   enabled: true,
 };
 

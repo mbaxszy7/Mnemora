@@ -469,3 +469,77 @@ export function extractAndParseJSON<T>(
     };
   }
 }
+// ============================================================================
+// Activity Monitor LLM Output Schemas
+// ============================================================================
+
+/**
+ * Event candidate from LLM window analysis
+ */
+export const ActivityEventCandidateSchema = z.object({
+  title: z.string().max(100),
+  kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding"]),
+  start_offset_min: z.number().min(0).max(20),
+  end_offset_min: z.number().min(0).max(20),
+  confidence: z.number().min(0).max(10),
+  importance: z.number().min(0).max(10),
+  description: z.string().max(200),
+  node_ids: z.array(z.number().int().positive()),
+});
+
+export type ActivityEventCandidate = z.infer<typeof ActivityEventCandidateSchema>;
+
+/**
+ * Schema for LLM-generated window summary
+ */
+export const ActivityWindowSummaryLLMSchema = z.object({
+  title: z.string().max(100),
+  summary: z.string(), // Markdown with four fixed sections
+  highlights: z.array(z.string().max(100)).max(5),
+  stats: z.object({
+    top_apps: z.array(z.string()).max(5),
+    top_entities: z.array(z.string()).max(5),
+  }),
+  events: z.array(ActivityEventCandidateSchema),
+});
+
+export type ActivityWindowSummaryLLM = z.infer<typeof ActivityWindowSummaryLLMSchema>;
+
+/**
+ * Schema for LLM-generated event details
+ */
+export const ActivityEventDetailsLLMSchema = z.object({
+  details: z.string(), // Markdown detailed report
+});
+
+export type ActivityEventDetailsLLM = z.infer<typeof ActivityEventDetailsLLMSchema>;
+
+/**
+ * Safely parse Activity Window Summary LLM result
+ */
+export function parseActivityWindowSummaryLLM(data: unknown): {
+  success: boolean;
+  data?: ActivityWindowSummaryLLM;
+  error?: z.ZodError;
+} {
+  const result = ActivityWindowSummaryLLMSchema.safeParse(data);
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+  return { success: false, error: result.error };
+}
+
+/**
+ * Safely parse Activity Event Details LLM result
+ */
+export function parseActivityEventDetailsLLM(data: unknown): {
+  success: boolean;
+  data?: ActivityEventDetailsLLM;
+  error?: z.ZodError;
+} {
+  const result = ActivityEventDetailsLLMSchema.safeParse(data);
+  if (result.success) {
+    return { success: true, data: result.data };
+  }
+  return { success: false, error: result.error };
+}

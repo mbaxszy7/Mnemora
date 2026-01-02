@@ -58,7 +58,7 @@ export function UsageBreakdown({ data, isLoading }: UsageBreakdownProps) {
                   <TableCell className="capitalize">{item.capability}</TableCell>
                   <TableCell className="text-right">{item.requestCount}</TableCell>
                   <TableCell className="text-right">{item.succeededCount}</TableCell>
-                  <TableCell className="text-right">{item.totalTokens.toLocaleString()}</TableCell>
+                  <TableCell className="text-right">{item.totalTokens}</TableCell>
                 </TableRow>
               ))
             )}

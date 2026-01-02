@@ -57,8 +57,9 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   private emitter: EventEmitter;
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private captureTask!: CaptureTask;
+  private generation = 0;
 
-  constructor(config: Partial<SchedulerConfig> = {}, captureTask: CaptureTask) {
+  constructor(config: Partial<SchedulerConfig> = {}, captureTask: CaptureTask = async () => []) {
     this.config = { ...DEFAULT_SCHEDULER_CONFIG, ...config };
     // Default no-op capture task for testing state machine without actual captures
     this.captureTask = captureTask;
@@ -98,6 +99,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     }
 
     const previousState = this.state.status;
+    this.generation++;
     this.state.status = "running";
     this.emitStateChange(previousState, "running");
     logger.info({ interval: this.config.interval }, "Scheduler started, scheduling first capture");
@@ -111,6 +113,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
 
     this.cancelTimer();
     const previousState = this.state.status;
+    this.generation++;
     this.state.status = "stopped";
     this.state.nextCaptureTime = null;
     this.emitStateChange(previousState, "stopped");
@@ -123,6 +126,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
 
     this.cancelTimer();
     const previousState = this.state.status;
+    this.generation++;
     this.state.status = "paused";
     this.state.nextCaptureTime = null;
     this.emitStateChange(previousState, "paused");
@@ -134,6 +138,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     }
 
     const previousState = this.state.status;
+    this.generation++;
     this.state.status = "running";
     this.emitStateChange(previousState, "running");
     this.scheduleNext(this.config.interval);
@@ -176,6 +181,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     logger.info({ delay, nextTime: new Date(nextTime).toISOString() }, "Scheduling next capture");
 
     this.timerId = setTimeout(() => {
+      this.timerId = null;
       logger.info("Timer fired, executing capture loop");
       this.executeCaptureLoop();
     }, delay);
@@ -185,6 +191,8 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     if (this.state.status !== "running") {
       return;
     }
+
+    const generationAtStart = this.generation;
 
     const captureId = this.generateCaptureId();
     const startTime = Date.now();
@@ -200,6 +208,11 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       logger.info("Calling captureTask()...");
       result = await this.captureTask();
       logger.info("captureTask() completed");
+
+      // If paused/stopped/restarted while captureTask was running, ignore this result.
+      if (this.generation !== generationAtStart || this.state.status !== "running") {
+        return;
+      }
 
       const executionTime = Date.now() - startTime;
       this.state.lastCaptureTime = startTime;
@@ -221,6 +234,12 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       }
     } catch (error) {
       const executionTime = Date.now() - startTime;
+
+      // If paused/stopped/restarted while captureTask was running, ignore this error.
+      if (this.generation !== generationAtStart || this.state.status !== "running") {
+        return;
+      }
+
       this.state.errorCount++;
 
       // Log the error

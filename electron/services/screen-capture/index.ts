@@ -6,7 +6,7 @@
  */
 
 // Main module facade - the primary interface for screen capture
-export { ScreenCaptureModule, getScreenCaptureModule } from "./screen-capture-module";
+export { screenCaptureModule } from "./screen-capture-module";
 export { windowFilter } from "./window-filter";
 // Storage utilities used by main.ts
 export { cleanupDevCaptures } from "./capture-storage";

@@ -56,7 +56,7 @@ describe("ViewTransitionProvider", () => {
         if (index > -1) mediaQueryListeners.splice(index, 1);
       },
     }));
-    window.matchMedia = mockMatchMedia;
+    window.matchMedia = mockMatchMedia as unknown as typeof window.matchMedia;
   });
 
   afterEach(() => {

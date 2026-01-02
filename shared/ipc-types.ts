@@ -39,6 +39,7 @@ export const IPC_CHANNELS = {
   SCREEN_CAPTURE_PAUSE: "screen-capture:pause",
   SCREEN_CAPTURE_RESUME: "screen-capture:resume",
   SCREEN_CAPTURE_GET_STATE: "screen-capture:get-state",
+  SCREEN_CAPTURE_STATE_CHANGED: "screen-capture:state-changed",
   SCREEN_CAPTURE_UPDATE_CONFIG: "screen-capture:update-config",
   // Permission channels
   PERMISSION_CHECK: "permission:check",
@@ -46,6 +47,7 @@ export const IPC_CHANNELS = {
   PERMISSION_REQUEST_ACCESSIBILITY: "permission:request-accessibility",
   PERMISSION_OPEN_SCREEN_RECORDING_SETTINGS: "permission:open-screen-recording-settings",
   PERMISSION_OPEN_ACCESSIBILITY_SETTINGS: "permission:open-accessibility-settings",
+  PERMISSION_STATUS_CHANGED: "permission:status-changed",
   // Capture Source Settings channels
   CAPTURE_SOURCES_INIT_SERVICES: "capture-sources:init-services",
   CAPTURE_SOURCES_GET_SCREENS: "capture-sources:get-screens",
@@ -64,7 +66,24 @@ export const IPC_CHANNELS = {
   USAGE_GET_BREAKDOWN: "usage:get-breakdown", // By model/capability
   // App navigation
   APP_NAVIGATE: "app:navigate",
+  // Activity Monitor channels
+  ACTIVITY_GET_TIMELINE: "activity:get-timeline",
+  ACTIVITY_GET_SUMMARY: "activity:get-summary",
+  ACTIVITY_GET_EVENT_DETAILS: "activity:get-event-details",
+  ACTIVITY_TIMELINE_CHANGED: "activity:timeline-changed",
+  // AI Failure Circuit Breaker
+  AI_FAILURE_FUSE_TRIPPED: "ai:fuse-tripped",
 } as const;
+
+/**
+ * AI Failure Circuit Breaker Payload
+ */
+export interface AIFailureFuseTrippedPayload {
+  windowMs: number;
+  threshold: number;
+  count: number;
+  last: { capability: "vlm" | "text" | "embedding"; message: string };
+}
 
 /**
  * Usage IPC Types

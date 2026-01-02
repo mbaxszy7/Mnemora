@@ -136,11 +136,17 @@ export class SourceBufferRegistry {
     this.batchTriggerCache = null;
     this.disposed = false;
 
+    try {
+      this.doRefresh();
+    } catch (error) {
+      logger.error({ error }, "Failed to perform initial source refresh");
+    }
+
     // Create AutoRefreshCache for periodic source refresh
     this.refreshCache = new AutoRefreshCache<Set<SourceKey>>({
       fetchFn: async () => this.doRefresh(),
       interval: this.refreshIntervalMs,
-      immediate: true,
+      immediate: false,
       onError: (error) => {
         logger.error({ error }, "Failed to refresh active sources");
       },
@@ -463,17 +469,19 @@ export class SourceBufferRegistry {
         );
         // TODO: hand off `screenshots` to BatchBuilder/VLM pipeline via ScreenshotProcessingModule
         // Temporary debug: copy accepted screenshots to ~/.mnemora/screenshots
-        try {
-          const outDir = path.join(os.homedir(), ".mnemora", "screenshots");
-          fs.mkdirSync(outDir, { recursive: true });
-          for (const screenshot of screenshots) {
-            if (!screenshot.filePath) continue;
-            const fileName = `${screenshot.ts}-${sourceKey}.png`;
-            const destPath = path.join(outDir, fileName);
-            fs.copyFileSync(screenshot.filePath, destPath);
+        if (process.env.MNEMORA_DEBUG_SCREENSHOT_COPY === "1") {
+          try {
+            const outDir = path.join(os.homedir(), ".mnemora", "screenshots");
+            fs.mkdirSync(outDir, { recursive: true });
+            for (const screenshot of screenshots) {
+              if (!screenshot.filePath) continue;
+              const fileName = `${screenshot.ts}-${sourceKey}.png`;
+              const destPath = path.join(outDir, fileName);
+              fs.copyFileSync(screenshot.filePath, destPath);
+            }
+          } catch (error) {
+            logger.warn({ error }, "Failed to write debug screenshots to disk");
           }
-        } catch (error) {
-          logger.warn({ error }, "Failed to write debug screenshots to disk");
         }
       }
 

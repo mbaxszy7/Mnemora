@@ -245,7 +245,7 @@ export class LLMConfigService {
    * @returns Validation result with success status and individual capability results
    */
   async validateConfiguration(config: LLMConfig): Promise<LLMValidationResult> {
-    logger.info({ mode: config.mode }, "Validating LLM configuration");
+    logger.info({ mode: config.mode, config }, "Validating LLM configuration");
 
     const aiService = AISDKService.getInstance();
 

@@ -13,7 +13,6 @@ import {
 } from "@/components/ui/select";
 import { useTheme } from "@/providers/theme-provider";
 import {
-  Save,
   Languages,
   Bot,
   ChevronRight,
@@ -22,6 +21,7 @@ import {
   XCircle,
   Settings,
   Monitor,
+  ArrowLeft,
 } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
 import { useViewTransition } from "@/components/core/view-transition";
@@ -51,6 +51,14 @@ export default function SettingsPage() {
   const [isRequestingScreenRecording, setIsRequestingScreenRecording] = useState(false);
   const [isRequestingAccessibility, setIsRequestingAccessibility] = useState(false);
 
+  const screenRecordingStatusRef = useRef<PermissionStatus | null>(null);
+  const accessibilityStatusRef = useRef<PermissionStatus | null>(null);
+
+  useEffect(() => {
+    screenRecordingStatusRef.current = screenRecordingStatus;
+    accessibilityStatusRef.current = accessibilityStatus;
+  }, [screenRecordingStatus, accessibilityStatus]);
+
   // Check permission status
   const allGranted = useCallback(
     (screen?: PermissionStatus | null, accessibility?: PermissionStatus | null) =>
@@ -61,12 +69,17 @@ export default function SettingsPage() {
 
   const checkPermission = useCallback(async () => {
     // Skip IPC if already fully granted
-    if (grantedRef.current || allGranted(screenRecordingStatus, accessibilityStatus)) {
+    if (
+      grantedRef.current ||
+      allGranted(screenRecordingStatusRef.current, accessibilityStatusRef.current)
+    ) {
       return;
     }
     try {
       const result = await window.permissionApi.check();
       if (result.success && result.data) {
+        screenRecordingStatusRef.current = result.data.screenRecording;
+        accessibilityStatusRef.current = result.data.accessibility;
         setScreenRecordingStatus(result.data.screenRecording);
         setAccessibilityStatus(result.data.accessibility);
 
@@ -77,19 +90,44 @@ export default function SettingsPage() {
     } catch (error) {
       console.error("Failed to check permission:", error);
     }
-  }, [accessibilityStatus, allGranted, screenRecordingStatus]);
+  }, [allGranted]);
 
   useEffect(() => {
-    checkPermission();
+    void checkPermission();
 
-    // Poll only when not all granted
-    if (grantedRef.current || allGranted(screenRecordingStatus, accessibilityStatus)) {
-      return;
-    }
+    const unsubscribePermissionChanged =
+      typeof window.permissionApi.onStatusChanged === "function"
+        ? window.permissionApi.onStatusChanged((payload) => {
+            screenRecordingStatusRef.current = payload.screenRecording;
+            accessibilityStatusRef.current = payload.accessibility;
+            setScreenRecordingStatus(payload.screenRecording);
+            setAccessibilityStatus(payload.accessibility);
 
-    const interval = setInterval(checkPermission, 2000);
-    return () => clearInterval(interval);
-  }, [accessibilityStatus, allGranted, checkPermission, screenRecordingStatus]);
+            if (allGranted(payload.screenRecording, payload.accessibility)) {
+              grantedRef.current = true;
+            }
+          })
+        : null;
+
+    const handleFocus = () => {
+      void checkPermission();
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        void checkPermission();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      unsubscribePermissionChanged?.();
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [checkPermission, allGranted]);
 
   const handleRequestScreenRecording = async () => {
     setIsRequestingScreenRecording(true);
@@ -168,9 +206,20 @@ export default function SettingsPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold">{t("settings.title")}</h1>
-        <p className="text-muted-foreground mt-2">Manage your application preferences</p>
+      <div className="space-y-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate("/", { type: "slide-right", duration: 300 })}
+          className="mb-2"
+        >
+          <ArrowLeft className="mr-2 h-4 w-4" />
+          {t("nav.home")}
+        </Button>
+        <div>
+          <h1 className="text-3xl font-bold">{t("settings.title")}</h1>
+          <p className="text-muted-foreground mt-2">{t("settings.description")}</p>
+        </div>
       </div>
 
       <div className="space-y-6">
@@ -181,7 +230,7 @@ export default function SettingsPage() {
               <Languages className="h-4 w-4" />
               {t("settings.language")}
             </Label>
-            <p className="text-sm text-muted-foreground">Select your preferred language</p>
+            <p className="text-sm text-muted-foreground">{t("settings.languageDescription")}</p>
           </div>
           <Select
             value={currentLanguage}
@@ -331,10 +380,8 @@ export default function SettingsPage() {
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="autoStart">Launch at Startup</Label>
-            <p className="text-sm text-muted-foreground">
-              Automatically run Mnemora when system starts
-            </p>
+            <Label htmlFor="autoStart">{t("settings.autoStart.label")}</Label>
+            <p className="text-sm text-muted-foreground">{t("settings.autoStart.description")}</p>
           </div>
           <Switch
             id="autoStart"
@@ -345,9 +392,9 @@ export default function SettingsPage() {
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
-            <Label htmlFor="notifications">Notifications</Label>
+            <Label htmlFor="notifications">{t("settings.notifications.label")}</Label>
             <p className="text-sm text-muted-foreground">
-              Receive smart insights and reminder notifications
+              {t("settings.notifications.description")}
             </p>
           </div>
           <Switch
@@ -374,11 +421,6 @@ export default function SettingsPage() {
           </Select>
         </div>
       </div>
-
-      <Button className="w-full">
-        <Save className="mr-2 h-4 w-4" />
-        {t("common.buttons.save")}
-      </Button>
     </div>
   );
 }

@@ -29,6 +29,7 @@ import type {
   ContextKind,
   EvidencePack as EvidencePackType,
 } from "./types";
+import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 
 const logger = getLogger("text-llm-processor");
 
@@ -225,6 +226,10 @@ export class TextLLMProcessor {
           },
           "Text LLM expansion failed; falling back to direct conversion"
         );
+
+        // Record failure for circuit breaker
+        aiFailureCircuitBreaker.recordFailure("text", error);
+
         pendingNodes = this.convertSegmentsToPendingNodes(vlmIndex, batch, evidencePacks);
       }
 

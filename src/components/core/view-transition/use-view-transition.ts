@@ -50,7 +50,10 @@ export function useViewTransition(): { navigate: ViewTransitionNavigate; isPendi
         if (typeof to === "number") {
           routerNavigate(to);
         } else {
-          routerNavigate(to);
+          // Pass regular navigation options (state, replace, etc.)
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          const { type, duration, ...navOptions } = options;
+          routerNavigate(to, navOptions);
         }
       };
 

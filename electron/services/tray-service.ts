@@ -1,11 +1,11 @@
 import { BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
-import { getScreenCaptureModule, ScreenCaptureModule } from "./screen-capture";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
 import { VITE_DEV_SERVER_URL, RENDERER_DIST } from "../main";
 import { llmUsageService } from "./usage/llm-usage-service";
 import { IPC_CHANNELS } from "@shared/ipc-types";
+import { screenCaptureModule } from "./screen-capture/screen-capture-module";
 
 export interface TrayServiceConfig {
   /**
@@ -131,8 +131,7 @@ export class TrayService {
   private refreshMenu(): void {
     if (!this.tray) return;
 
-    const captureModule = getScreenCaptureModule();
-    const isRunning = captureModule.getState().status === "running";
+    const isRunning = screenCaptureModule.getState().status === "running";
 
     const menu = Menu.buildFromTemplate([
       {
@@ -167,20 +166,19 @@ export class TrayService {
 
   private refreshTooltip(): void {
     if (!this.tray) return;
-    const status = getScreenCaptureModule().getState().status;
+    const status = screenCaptureModule.getState().status;
     const statusText = mainI18n.t(`tray.status.${status}` as const);
     this.tray.setToolTip(`Mnemora - ${statusText}`);
   }
 
   private handleToggleRecording(): void {
-    const captureModule = getScreenCaptureModule();
-    const isRunning = captureModule.getState().status === "running";
+    const isRunning = screenCaptureModule.getState().status === "running";
     if (isRunning) {
       this.logger.info("Stopping screen capture from tray");
-      captureModule.stop();
+      screenCaptureModule.stop();
     } else {
       this.logger.info("Starting screen capture from tray");
-      ScreenCaptureModule.tryInitialize();
+      screenCaptureModule.tryInitialize();
     }
   }
 
@@ -219,12 +217,10 @@ export class TrayService {
   };
 
   private subscribeScheduler(): void {
-    const captureModule = getScreenCaptureModule();
-    captureModule.on("scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureModule.on("scheduler:state", this.handleSchedulerEventBound);
   }
 
   private unsubscribeScheduler(): void {
-    const captureModule = getScreenCaptureModule();
-    captureModule.off("scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureModule.off("scheduler:state", this.handleSchedulerEventBound);
   }
 }

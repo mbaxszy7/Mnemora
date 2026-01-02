@@ -18,7 +18,14 @@ vi.mock("pino", () => {
     child: vi.fn(() => mockLogger),
   };
 
-  const pino = vi.fn(() => mockLogger);
+  const pino = vi.fn(() => mockLogger) as unknown as {
+    (...args: unknown[]): typeof mockLogger;
+    multistream: (...args: unknown[]) => unknown;
+    stdTimeFunctions: {
+      isoTime: (...args: unknown[]) => unknown;
+    };
+  };
+
   pino.multistream = vi.fn(() => ({}));
   pino.stdTimeFunctions = { isoTime: vi.fn() };
 

@@ -795,6 +795,204 @@ i18n：在 `shared/locales/en.json` 与 `zh-CN.json` 增加 `usage.*` 文案。
 
 ---
 
+## Milestone 6 — Activity Monitor（20min summary + 长事件标记 + event details + 搜索 + 设置）
+
+### 目的
+
+- 把 `Home.tsx` 变成主界面：展示最近 24 小时的时间线 + 每 20 分钟的 activity summary。
+- summary 由 LLM 分析生成（prompt 设计见「Summary 生成」）；右侧同时展示该 20min window 内的事件列表（一个 window 可能包含多个事件；events 来源于 `activity_events` 的时间重叠查询）。
+- “长事件”标记不让 LLM 直接判断：后端根据事件在 DB 中的聚合时间跨度计算（例如 `durationMs >= 30min`），用于时间线 marker。
+- 长事件点击进入 details 界面（details 由 LLM 分析生成；推荐按需生成）。
+- 顶部支持自然语言搜索，复用 `context:search`，支持可选 Deep Search；不做 24h 限制（UI 可默认 `timeRange=last24h` 作为快捷过滤）。右上角 Settings 按钮，点击打开 Settings 页面。
+- 后台自动生成与推送：每 20 分钟生成/补齐窗口 summary，并通过 IPC 推送前端增量更新。
+
+### DB 设计（重新设计并新增表）
+
+- **改动文件**：`electron/database/schema.ts`
+
+- **[改造] `activity_summaries`（一行一个 20min window）**
+  - 目标：成为 Activity Monitor 的 source of truth（窗口级 summary + 左侧 24h timeline block 的最小展示单元）。
+  - 字段建议：
+    - `id`
+    - `windowStart` / `windowEnd`（毫秒时间戳）
+    - `idempotencyKey`（建议：`<windowStart>-<windowEnd>`；如需口径隔离可叠加 `configHash`）
+    - `title`（一句话标题；用于左侧 timeline block 展示）
+    - `summary`（正文，建议用 markdown）
+    - `highlights`（可选 JSON：bullets/tags）
+    - `stats`（可选 JSON：`{ topApps[], topEntities[], nodeCount, screenshotCount, threadCount }` 等；用于左侧展示“活跃 app name”等）
+    - `status/attempts/nextRunAt/errorCode/errorMessage`
+    - `createdAt/updatedAt`
+
+- **[新增] `activity_events`（跨窗口事件 session：marker + details）**
+  - 目标：支撑 24h 时间线上的事件展示与“长事件标记”，并承载 details 的生成状态。
+  - 核心原则：
+    - `isLong` 不能由 LLM 直接输出；必须由后端按数据规则计算（例如 `durationMs >= 30min`）。
+  - 字段建议：
+    - `id`
+    - `eventKey`（string；unique；事件 session 的幂等键；建议：`hash(<threadId> + ':' + <sessionStartWindowStart>)`；同一 `threadId` 在一天内允许产生多个 session）
+    - `startTs` / `endTs`（毫秒时间戳）
+    - `durationMs`（冗余字段，便于排序/过滤）
+    - `title`（短标题）
+    - `kind`（string；例如 `focus/work/meeting/break/unknown`，先不强枚举）
+    - `confidence` / `importance`（0-10 或 0-100，口径与 `context_nodes` 保持一致即可）
+    - `threadId`（可选：来自 `context_nodes.threadId`；用于跨 window 聚合与证据回溯）
+    - `nodeIds`（可选 JSON：关联 `context_nodes.id[]`，用于证据回溯）
+    - `isLong`（boolean；由后端按 `durationMs` 计算，用于 UI marker）
+    - `detailsStatus/detailsAttempts/detailsNextRunAt/detailsErrorCode/detailsErrorMessage`
+    - `details`（可选：markdown/json；如担心字段过大可拆表，见下一条）
+    - `createdAt/updatedAt`
+
+- **（可选）[新增] `activity_event_details`**
+  - 如果担心 `activity_events` 频繁更新大字段/多版本，建议把 details 独立拆表（`eventId` + `details` + `metadata` + timestamps）。
+
+- **索引建议**
+  - `idx_activity_summaries_window(windowStart, windowEnd)`
+  - `idx_activity_events_time(startTs, endTs)`
+  - `idx_activity_events_event_key(eventKey)`（unique）
+  - `idx_activity_events_thread(threadId, startTs)`（可选）
+  - `idx_activity_events_is_long(isLong, startTs)`
+
+### 后端逻辑（生成、存储、推送、查询）
+
+- **改动/新增文件（建议）**
+  - `electron/services/screenshot-processing/config.ts`：把 `activitySummaryConfig.generationIntervalMs` 改为 `20min = 1200000`
+  - `electron/services/screenshot-processing/reconcile-loop.ts`：把 activity summary / event details 纳入 reconcile 状态机（避免新的“重任务执行引擎”）
+  - 新增服务（命名建议二选一，避免拆散逻辑）：
+    - `electron/services/activity-monitor/activity-monitor-service.ts`
+    - 或放在 `electron/services/screenshot-processing/activity-monitor-service.ts`
+  - 新增 handlers：`electron/ipc/activity-monitor-handlers.ts`
+  - `electron/main.ts`：注册 handlers
+  - `electron/preload.ts`：暴露 `activityMonitorApi`
+
+- **窗口划分**
+  - 对齐到 20min 边界（使用本地时区；需要在 payload 中提供 `nowTs/timezone` 给 LLM 时明确）。
+  - 只处理 `windowEnd <= now - safetyLagMs` 且未 `succeeded` 的窗口；支持补齐漏跑窗口。
+
+- **Summary 生成（LLM，20min window）**
+  - 说明：summary 必须由 LLM 生成；prompt 需要稳定产出可解析 JSON（严格 schema），参考 `realtime_activity_monitor` 的写法（字段约束 + 强制 JSON-only）。
+  - 输入（基于现有数据能力）：
+    - window 时间信息：`windowStart/windowEnd/nowTs/timezone`
+    - window 内 `context_nodes`（建议不要只传 `kind='event'`；至少要把 window 内所有「可能成为证据」的 nodes 都传入，且每个 node 必须包含 `kind` 字段，便于 LLM 分类到不同 section）：
+      - 最小字段：`{ id, kind, title, summary, threadId?, eventTime?, entities?, importance?, confidence? }`
+      - 若希望 `summary` 的 **Documents** section 可落地（不编造），强烈建议额外提供可引用的文档证据字段（如果你现有 node schema 已有就直接透传；没有的话由后端预聚合一个 `documents` 列表也可以）：
+        - `documents[]`（可选，后端预聚合；来自 document/file 类型 nodes 或截图 OCR 命中的文件名/URL）：`{ title, ref, nodeId, sourceApp? }`
+        - 推荐构建方式（你在 `vlm-processor.ts` 已经要求浏览器场景必须抽取 URL，因此这里可以稳定落地）：
+          - 从 VLM 输出的 `segments[].derived.knowledge[]` 中抽取：如果 `knowledge.summary` 包含形如 `Source URL: <url>` 的子串，则 `ref=<url>`，`title=knowledge.title`。
+          - `sourceApp` 可来自同 batch 的 `screenshots[].app_guess.name`（例如 `Google Chrome`/`Arc`），用于 UI 展示“来源 app”。
+          - `nodeId` 必须指向输入 `context_nodes.id` 中对应的 knowledge/document/file node（若当前还没有把 derived.knowledge 落成 node，则建议后端先落库生成 node，再把 nodeId 透传给 summary LLM；否则不要把该 documents item 传给 LLM，避免无法引用）。
+        - 约束：LLM 只能在 Documents section 引用该 `documents[]` 或 `kind='document'`/`kind='file'` 的 nodes；不得凭空生成文件名/链接。
+    - window 内聚合统计（由代码预聚合，不依赖 LLM 推断）：
+      - `topApps`（建议来自 `screenshots.appHint`）
+      - `topEntities`（来自 `context_nodes.entities` 或 `screenshots.detectedEntities` 的聚合）
+      - `nodeCount/screenshotCount/threadCount`
+  - 输出（严格 JSON schema；不要输出任何解释文字）：
+    - `title`（<= 30 chars；用于左侧 timeline block）
+    - `summary`（markdown；用于右侧详情；必须使用下述固定结构，保证 UI 稳定渲染与可读性）：
+      - 必须按顺序包含且仅包含这四个一级分区（建议用 `##` 标题）：
+        - `## Core Tasks & Projects`
+        - `## Key Discussion & Decisions`
+        - `## Documents`
+        - `## Next Steps`
+      - 每个分区必须是 bullet list；若该分区没有可靠证据，输出单条 `- None`（不要省略标题，也不要编造）。
+      - 强约束（防幻觉）：除 `stats` 里的聚合项外，`summary` 内每一条 bullet 必须至少引用一个输入里的 `context_nodes.id`（例如在末尾加 `(node: <id>)`），否则输出 `- None`。
+    - `highlights`（string[]；可选）
+    - `stats`（object；推荐透传/轻量纠错，不要编造 app/entity）
+    - `events[]`（该 20min window 内事件列表；一个 window 可能包含多个事件）：
+      - item schema：`{ title, kind, startTs, endTs, threadId?, nodeIds?, confidence?, importance? }`
+      - 约束：
+        - `startTs/endTs` 必须落在 `[windowStart, windowEnd]`
+        - `nodeIds` 必须来自输入的 `context_nodes.id`
+        - `threadId` 必须来自输入的 `context_nodes.threadId`（如无可不填）
+      - 注意：不要输出 `isLong`；长事件由后端按 DB 聚合后的 `durationMs` 计算（例如 `>= 30min`）。
+  - 失败处理：使用 `extractAndParseJSON` + zod 强校验；失败时进入 failed 重试（避免写入不可解析文本导致口径不一致）。
+  - Prompt 草案（示例，参考 `realtime_activity_monitor` 结构）：
+    - `activity_summary_window_20min.system`：
+      - 角色：专业的活动分析助手
+      - 分析维度：Application Usage / Content Interaction / Goal Behavior / Activity Pattern / Event extraction
+      - 强约束：输出必须且只能是 JSON；不得输出任何解释文字；字段必须满足下方规范；不得编造 app/entity/nodeId/threadId/document
+      - 你只能使用输入中提供的 `context_nodes`、`documents`、`stats` 作为事实来源；如果证据不足，输出 `None`。
+      - `summary` 字段必须严格遵循四分区 markdown 模板（见 user prompt 中的模板）。
+    - `activity_summary_window_20min.user`：
+      - 提供 `{current_time}/{window_start}-{window_end}/{timezone}`
+      - 提供 window 内 `context_nodes` +（可选）`documents` + 预聚合 `stats`
+      - 要求按 schema 返回 JSON（无解释文本）
+      - 建议直接把以下内容作为 user prompt 模板（其中 JSON schema 用于约束输出结构；markdown 模板用于约束 `summary` 格式）：
+        - JSON schema（概念性；实现中用 zod 强校验即可）：
+          - `{ title: string, summary: string, highlights?: string[], stats?: object, events: Array<{ title: string, kind: string, startTs: number, endTs: number, threadId?: string, nodeIds?: string[], confidence?: number, importance?: number }> }`
+        - `summary` markdown 模板（必须严格一致，且每条 bullet 尾部带 node 引用）：
+          - `## Core Tasks & Projects`\n`- <...> (node: <id>)`\n`## Key Discussion & Decisions`\n`- <...> (node: <id>)`\n`## Documents`\n`- <title> — <ref> (node: <id>)` 或 `- None`\n`## Next Steps`\n`- <...> (node: <id>)` 或 `- None`
+
+- **事件聚合（DB 规则；跨 window 聚合为 session）**
+  - LLM 只负责产出「该 window 内的事件候选列表」；事件是否跨窗口、是否为长事件，都由后端规则完成。
+  - 对每个 `events[]` item（window 内事件片段）：
+    - 设置 `mergeGapMs`（建议 5min）：仅当新片段与同一 `threadId` 的最近 session 满足连续性（例如 `event.endTs >= item.startTs - mergeGapMs`）时才进行跨 window 合并，避免把同主题但不连续的活动误合并。
+    - 生成 `eventKey`（session 幂等键）：
+      - 若有 `threadId`：
+        - 先尝试查找可续写的 session：`threadId=item.threadId AND endTs >= item.startTs - mergeGapMs`（取 endTs 最大的一条）
+        - 若找到：复用该 session 的 `eventKey`
+        - 若未找到：新建 session，`eventKey = hash(threadId + ':' + windowStart)`（或直接拼接；必要时 hash）
+      - 若无 `threadId`：不做跨 window 合并，`eventKey = hash(normalize(kind + title) + ':' + windowStart)`
+    - upsert `activity_events`（按 `eventKey`）：
+      - 若 `eventKey` 已存在：
+        - `startTs = min(old.startTs, item.startTs)`
+        - `endTs = max(old.endTs, item.endTs)`
+        - `nodeIds` 取并集（可做去重/裁剪）
+      - 若不存在：创建新 event
+    - 计算并写回：
+      - `durationMs = endTs - startTs`
+      - `isLong = durationMs >= 30min`
+
+- **长事件详情（LLM）**
+  - 推荐策略：lazy on-demand（用户点击事件时才生成），写回 `activity_events.details*`。
+  - 输入：event 的 `nodeIds/threadId` 反查 nodes + evidence packs（严格裁剪/脱敏；复用 Deep Search 的裁剪策略）。
+  - 输出：details markdown + citations（`nodeId/screenshotId`）。
+
+- **Push（renderer 实时更新）**
+  - 当 summary / event details 状态变化后：main 进程 `webContents.send("activity-monitor:updated", payload)`。
+  - renderer 订阅后增量刷新 timeline/当前窗口内容。
+
+- **查询 API（IPC）**
+  - `activity:get-timeline({ fromTs, toTs })`：返回指定时间范围内的 20min window 列表（用于左侧 24h timeline）+ long event markers。
+    - window 最小字段建议：`{ windowStart, windowEnd, title, stats.topApps }`
+    - long event markers：查询 `activity_events` 中 `isLong=true` 且与 `[fromTs,toTs]` 有重叠的 events（建议返回 `id/title/startTs/endTs/durationMs/kind`）。
+  - `activity:get-summary({ windowStart, windowEnd })`：返回该 window 的 summary（右侧详情）+ 该 window 内 events 列表。
+    - events 列表建议按「时间重叠」查询 `activity_events`，并在返回时做 window clamp：
+      - `segmentStartTs = max(event.startTs, windowStart)`
+      - `segmentEndTs = min(event.endTs, windowEnd)`
+      - `isLong` 直接取 DB 中按规则计算后的结果（`durationMs >= 30min`）。
+  - `activity:get-event-details({ eventId })`：返回 event details（如未生成可触发生成并返回 running 状态）。
+  - 搜索：复用 `context:search`（Milestone 3），支持可选 `timeRange` 过滤但不做时间硬限制；UI 可默认 `timeRange=last24h` 作为快捷范围，并允许清除/自定义；支持 `deepSearch` toggle。
+
+### 前端（Home.tsx 主界面 + details route）
+
+- **改动/新增文件（建议）**
+  - `src/pages/Home.tsx`：Activity Monitor 主界面
+  - `src/router/index.tsx`：新增 route（例如：`/activity/events/:eventId`）
+  - 新增页面（可选）：`src/pages/ActivityEventDetails.tsx`
+  - 复用现有 `/settings` 页面；Home 顶部齿轮按钮跳转到 `/settings`
+
+- **布局（参考目标截图）**
+  - 顶部：Search bar（自然语言） + Deep Search toggle（可选） + 右上角 Settings。
+  - 主体：左右分栏
+    - 左：24h timeline（只展示 24h；窗口可点击；长事件 marker 可点击）。
+      - 每个 20min block 展示：`时间范围 + summary.title + 活跃 app name（来自 stats.topApps，取 top1~top3）`
+    - 右：选中窗口的详细展示内容：
+      - `summary`（markdown）+ `highlights/stats`（如有）
+      - events 列表（一个 window 可能有多个 events）
+        - 每个 event 展示：`title/kind/segment 时间范围`，并通过查询 DB 得到 `durationMs/isLong`
+        - `isLong=true` 的 event 展示“查看详情”（进入 details route 或在右侧进一步展开）
+
+### 验收标准
+
+- 运行中每 20 分钟自动生成一条 summary（或补齐缺失窗口），写入 DB，且 Home 页面无需刷新即可看到更新。
+- 24h timeline 可展示窗口与长事件标记；点击长事件可进入 details 页面并看到 LLM 生成内容（允许首次为 loading）。
+- 搜索框支持自然语言检索，不做时间硬限制（UI 可默认 `timeRange=last24h`，并允许清除/自定义）：
+  - 关闭 deepSearch：返回 nodes/evidence
+  - 开启 deepSearch：返回 answer/citations（失败可回退不影响 nodes/evidence）
+- DB 迁移后可正常读写，不影响既有 reconcile-loop 主流程。
+
+---
+
 # 必须的重构点清单（为了实现 MVP，不能跳过）
 
 - **单一编排**：禁止任何绕过 `ReconcileLoop` 的 VLM/TextLLM/Embedding/Index 执行路径。

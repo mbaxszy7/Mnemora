@@ -18,6 +18,7 @@ import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./capture-scheduler";
 
 import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
+import { BrowserWindow } from "electron";
 import type {
   SchedulerConfig,
   SchedulerState,
@@ -25,6 +26,7 @@ import type {
   CaptureResult,
   SchedulerEvent,
   SchedulerEventHandler,
+  SchedulerStateEvent,
   SchedulerEventPayload,
 } from "./types";
 import { DEFAULT_SCHEDULER_CONFIG, DEFAULT_CAPTURE_OPTIONS } from "./types";
@@ -34,17 +36,16 @@ import { permissionService } from "../permission-service";
 import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
 import type { CapturePreferences } from "@shared/capture-source-types";
+import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenshotProcessingModule } from "../screenshot-processing/screenshot-processing-module";
+import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
  */
-export class ScreenCaptureModule {
-  private static instance: ScreenCaptureModule | null = null;
-  private static disabled = false;
-
+class ScreenCaptureModule {
   private readonly sourceProvider: CaptureSourceProvider;
   private readonly captureService: CaptureService;
   private readonly scheduler: ScreenCaptureScheduler;
@@ -52,8 +53,20 @@ export class ScreenCaptureModule {
   private readonly captureOptions = DEFAULT_CAPTURE_OPTIONS;
   private readonly logger = getLogger("screen-capture-module");
   private disposed = false;
+  private processingInitialized = false;
 
-  private constructor() {
+  private readonly onSchedulerStateChanged: SchedulerEventHandler<SchedulerStateEvent> = () => {
+    const payload = this.getState();
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, payload);
+      }
+    } catch {
+      // Ignore if BrowserWindow is not available (e.g. tests)
+    }
+  };
+
+  constructor() {
     this.logger.info("Initializing ScreenCaptureModule");
 
     this.sourceProvider = new CaptureSourceProvider();
@@ -63,102 +76,60 @@ export class ScreenCaptureModule {
       this.executeCaptureTask()
     );
 
-    screenshotProcessingModule.initialize({
-      screenCapture: this,
-      preferencesService: this.preferencesService,
+    this.scheduler.on("scheduler:state", this.onSchedulerStateChanged);
+
+    // Register callbacks for circuit breaker to avoid circular dependency
+    aiFailureCircuitBreaker.registerCaptureControlCallbacks({
+      stop: () => this.stop(),
+      start: async () => {
+        const prepared = await this.isCapturePrepared();
+        if (!prepared) {
+          this.logger.warn("Cannot auto-resume capture: missing permission or LLM config");
+          return;
+        }
+        this.start();
+      },
+      getState: () => this.getState(),
     });
 
     this.setupPowerMonitorCallbacks();
     this.logger.info("ScreenCaptureModule initialized");
   }
 
-  // ============================================================================
-  // Singleton Management
-  // ============================================================================
-
-  /**
-   * Get the singleton instance of ScreenCaptureModule
-   */
-  static getInstance(): ScreenCaptureModule {
-    const logger = getLogger("screen-capture-module");
-    if (ScreenCaptureModule.disabled) {
-      logger.info("ScreenCaptureModule disabled, skipping getInstance");
-      throw new Error("ScreenCaptureModule disabled");
-    }
-    if (!ScreenCaptureModule.instance) {
-      logger.info("Creating new ScreenCaptureModule instance");
-      ScreenCaptureModule.instance = new ScreenCaptureModule();
-    }
-    return ScreenCaptureModule.instance;
-  }
-
-  /**
-   * Reset the singleton instance (for dev hot reload)
-   */
-  static resetInstance(): void {
-    if (ScreenCaptureModule.instance) {
-      ScreenCaptureModule.instance.dispose();
-      ScreenCaptureModule.instance = null;
-    }
-  }
-
-  /**
-   * Disable creation/restart (e.g., during app quit)
-   */
-  static disable(): void {
-    const logger = getLogger("screen-capture-module");
-    if (ScreenCaptureModule.instance) {
-      ScreenCaptureModule.instance.dispose();
-      ScreenCaptureModule.instance = null;
-    }
-    ScreenCaptureModule.disabled = true;
-    logger.info("ScreenCaptureModule disabled");
-  }
-
   /**
    * Try to initialize and start screen capture if permissions are granted
    * Call this after user grants permissions
    */
-  static async tryInitialize() {
-    const logger = getLogger("screen-capture-module");
-    if (ScreenCaptureModule.disabled) {
-      logger.info("Screen capture module disabled, skipping initialization");
+  async tryInitialize() {
+    if (this.disposed) {
+      this.logger.info("Screen capture module disposed, skipping initialization");
       return false;
     }
-
-    if (!permissionService.hasScreenRecordingPermission()) {
-      logger.info("Screen recording permission not granted, skipping initialization");
+    const prepared = await this.isCapturePrepared();
+    if (!prepared) {
+      this.logger.info("Screen capture module not prepared, skipping initialization");
       return false;
     }
-
-    if (!permissionService.hasAccessibilityPermission()) {
-      logger.info("Accessibility permission not granted, skipping initialization");
-      return false;
-    }
-
-    const llmConfig = await llmConfigService.loadConfiguration();
-
-    if (!llmConfig) {
-      logger.info("LLM config not saved, skipping initialization ");
-      return false;
-    }
-
     try {
-      const module = ScreenCaptureModule.getInstance();
-      module.start();
-      logger.info("Screen capture module initialized and started");
+      this.start();
+      this.logger.info("Screen capture module initialized and started");
       return true;
     } catch (error) {
-      logger.error({ error }, "Failed to initialize screen capture module");
+      this.logger.error({ error }, "Failed to initialize screen capture module");
       return false;
     }
   }
 
-  async isCapturePrepared(): Promise<boolean> {
+  private async isCapturePrepared(): Promise<boolean> {
     const llmConfig = await llmConfigService.loadConfiguration();
+    this.logger.debug(
+      { configured: !!llmConfig, mode: llmConfig ? (llmConfig as { mode?: string }).mode : null },
+      "LLM config loaded"
+    );
     const hasPermissions =
       permissionService.hasScreenRecordingPermission() &&
       permissionService.hasAccessibilityPermission();
+    this.logger.info({ hasPermissions }, "Permissions checked");
     return !!hasPermissions && !!llmConfig;
   }
 
@@ -210,7 +181,13 @@ export class ScreenCaptureModule {
     this.logger.debug("Executing capture task");
 
     const effectiveSources = this.preferencesService.getEffectiveCaptureSources();
-    this.logger.info({ effectiveSources }, "Effective capture sources");
+    this.logger.debug(
+      {
+        selectedAppsCount: effectiveSources.selectedApps.length,
+        selectedScreensCount: effectiveSources.selectedScreens.length,
+      },
+      "Effective capture sources"
+    );
     let results: CaptureResult[];
     if (effectiveSources.selectedApps.length > 0) {
       const currentSelectedApps = [...effectiveSources.selectedApps];
@@ -282,21 +259,51 @@ export class ScreenCaptureModule {
   // Public API: Scheduler Control
   // ============================================================================
 
+  initializeProcessingPipeline(): void {
+    if (this.disposed) {
+      this.logger.warn("Cannot initialize processing pipeline for disposed module");
+      return;
+    }
+    if (this.processingInitialized) {
+      return;
+    }
+
+    screenshotProcessingModule.initialize({
+      screenCapture: this,
+      preferencesService: this.preferencesService,
+    });
+    this.processingInitialized = true;
+  }
+
   start(): void {
     if (this.disposed) {
       this.logger.warn("Cannot start disposed module");
       return;
     }
+
+    this.initializeProcessingPipeline();
+
+    // Reset circuit breaker when starting capture
+    aiFailureCircuitBreaker.reset();
+
     this.logger.info("Starting scheduler");
     this.scheduler.start();
   }
 
   stop(): void {
+    if (this.disposed) {
+      this.logger.warn("Cannot stop disposed module");
+      return;
+    }
     this.logger.info("Stopping scheduler");
     this.scheduler.stop();
   }
 
   pause(): void {
+    if (this.disposed) {
+      this.logger.warn("Cannot pause disposed module");
+      return;
+    }
     this.logger.info("Pausing scheduler");
     this.scheduler.pause();
   }
@@ -383,6 +390,10 @@ export class ScreenCaptureModule {
   }
 
   setPreferences(prefs: Partial<CapturePreferences>): void {
+    if (this.disposed) {
+      this.logger.warn("Cannot set preferences for disposed module");
+      return;
+    }
     this.preferencesService.setPreferences(prefs);
     this.scheduler.notifyPreferencesChanged();
   }
@@ -399,8 +410,10 @@ export class ScreenCaptureModule {
     this.logger.info("Disposing ScreenCaptureModule");
     this.disposed = true;
 
+    this.scheduler.off("scheduler:state", this.onSchedulerStateChanged);
     this.scheduler.stop();
     screenshotProcessingModule.dispose();
+    this.processingInitialized = false;
 
     this.logger.info("ScreenCaptureModule disposed");
   }
@@ -410,7 +423,4 @@ export class ScreenCaptureModule {
   }
 }
 
-// Export singleton getter for convenience
-export function getScreenCaptureModule(): ScreenCaptureModule {
-  return ScreenCaptureModule.getInstance();
-}
+export const screenCaptureModule = new ScreenCaptureModule();

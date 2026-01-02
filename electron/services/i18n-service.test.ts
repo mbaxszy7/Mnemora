@@ -135,9 +135,9 @@ describe("MainI18nService", () => {
 
       mockT.mockReturnValue("Hello, World");
       await service.initialize();
-      service.t("greeting", { name: "World" });
+      service.t("tray.usageToday", { count: 1 });
 
-      expect(mockT).toHaveBeenCalledWith("greeting", { name: "World" });
+      expect(mockT).toHaveBeenCalledWith("tray.usageToday", { count: 1 });
     });
   });
 

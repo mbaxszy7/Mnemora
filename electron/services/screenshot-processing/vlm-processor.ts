@@ -29,6 +29,7 @@ import {
 } from "./schemas";
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
 import { llmUsageService } from "../usage/llm-usage-service";
+import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 
 const logger = getLogger("vlm-processor");
 
@@ -158,7 +159,7 @@ Subject identification:
   - title: <=100 chars
   - summary: <=180 chars
   - steps (procedure only): each step <=80 chars
-- knowledge: extract reusable knowledge points (docs, architecture, config meaning). Do NOT describe user actions.
+- knowledge: extract reusable knowledge points (docs, architecture, config meaning). Do NOT describe user actions. Knowledge can be extracted from any app. If the screenshots show a web browser (e.g. Chrome/Arc/Safari/Edge/Firefox/Brave) AND you output any derived.knowledge item, you MUST extract the visible URL from the address bar (preferred) or otherwise the clearly visible domain/page URL text. Include it verbatim in knowledge.summary using the format "Source URL: <url>". If no URL text is clearly visible, do NOT guess.
 - state: extract status/progress/metrics snapshots. Use neutral subjects (project/system/board). Set "object" when applicable (e.g. "CI pipeline", "Jira board", "Server CPU", "PR #123").
 - procedure: ONLY when the screenshots demonstrate a reusable multi-step process. Use "steps" with short actionable steps.
 - plan: ONLY when an explicit future plan/todo is visible.
@@ -328,6 +329,10 @@ class VLMProcessor {
         },
         "Failed to process shard"
       );
+
+      // Record failure for circuit breaker
+      aiFailureCircuitBreaker.recordFailure("vlm", error);
+
       throw error;
     }
   }

@@ -26,7 +26,12 @@ export type TransitionState = "idle" | "transitioning";
 /**
  * Configuration options for view transitions
  */
-export interface TransitionOptions {
+import { NavigateOptions } from "react-router-dom";
+
+/**
+ * Configuration options for view transitions
+ */
+export interface TransitionOptions extends NavigateOptions {
   /** Animation type, defaults to 'fade' */
   type?: TransitionType;
   /** Animation duration in milliseconds, defaults to 300 */

@@ -289,7 +289,12 @@ export interface EvidencePack {
 /**
  * Tables that can have pending records
  */
-export type PendingRecordTable = "batches" | "context_nodes" | "vector_documents";
+export type PendingRecordTable =
+  | "batches"
+  | "context_nodes"
+  | "vector_documents"
+  | "activity_summaries"
+  | "activity_events";
 
 /**
  * A pending record that needs processing

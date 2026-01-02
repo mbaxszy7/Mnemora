@@ -20,8 +20,18 @@
   },
   "settings": {
     "title": "Settings",
+    "description": "Manage your application preferences",
     "language": "Language",
+    "languageDescription": "Select your preferred language",
     "theme": "Theme",
+    "autoStart": {
+      "label": "Launch at Startup",
+      "description": "Automatically run Mnemora when system starts"
+    },
+    "notifications": {
+      "label": "Notifications",
+      "description": "Receive smart insights and reminder notifications"
+    },
     "appearance": {
       "label": "Appearance",
       "description": "Choose light, dark, or follow system",
@@ -229,5 +239,96 @@
         "requests": "Requests"
       }
     }
+  },
+  "activityMonitor": {
+    "banner": {
+      "capturePausedTitle": "Capture paused",
+      "capturePausedDescription": "New summaries will stop until you resume capture."
+    },
+    "search": {
+      "placeholder": "Search activity records with natural language...",
+      "deepSearch": "Deep Search",
+      "deepSearchTooltip": "Enable AI deep analysis for more detailed answers"
+    },
+    "empty": {
+      "title": "No activity yet",
+      "description": "Once you start capturing, Mnemora will generate a 20-minute timeline and summaries automatically.",
+      "permissionsTitle": "Permissions",
+      "screenRecording": "Screen Recording",
+      "accessibility": "Accessibility",
+      "granted": "Granted",
+      "notGranted": "Not granted",
+      "unknown": "Unknown",
+      "captureTitle": "Capture",
+      "captureCurrent": "Current: {{status}}",
+      "working": "Working…",
+      "grantPermissions": "Grant required permissions",
+      "capturing": "Capturing",
+      "starting": "Starting…",
+      "resume": "Resume capture",
+      "start": "Start capture",
+      "openSettings": "Open Settings"
+    },
+    "settings": {
+      "permissionWarning": "Permissions required - click to configure"
+    },
+    "timeline": {
+      "title": "24 Hour Timeline",
+      "windows": "{{count}} windows",
+      "longEvents": "{{count}} long events"
+    },
+    "summary": {
+      "selectWindow": "Select a time window",
+      "selectWindowDescription": "Select a 20-minute window from the timeline to view detailed summary",
+      "nodes": "{{count}} nodes",
+      "screenshots": "{{count}} screenshots",
+      "relatedEvents": "Related Events"
+    },
+    "event": {
+      "longEvent": "Long Event",
+      "noDetails": "No details",
+      "kinds": {
+        "coding": "Coding",
+        "meeting": "Meeting",
+        "break": "Break",
+        "browse": "Browse",
+        "focus": "Focus",
+        "work": "Work"
+      }
+    }
+  },
+  "searchResults": {
+    "noResults": "No results",
+    "noResultsDescription": "Your search did not return any results",
+    "backToHome": "Back to Home",
+    "resultCount": "{{count}} results found",
+    "answer": "AI Answer",
+    "followUpQuestions": "Follow-up questions",
+    "matchedNodes": "Matched Records",
+    "relatedEvents": "Related Events",
+    "tryDifferentQuery": "Try a different search query",
+    "kinds": {
+      "event": "Event",
+      "knowledge": "Knowledge",
+      "state_snapshot": "State",
+      "procedure": "Procedure",
+      "plan": "Plan",
+      "entity_profile": "Entity"
+    }
+  },
+  "circuitBreaker": {
+    "message": "AI failures detected: {{count}} failures in {{seconds}}s. Screen capture stopped. Please check LLM configuration.",
+    "openConfig": "Open LLM Config"
+  },
+  "splashScreen": {
+    "slogans": {
+      "pixelsToMemory": "Pixels to memory.",
+      "memoryAmplified": "Memory, amplified.",
+      "rememberEverything": "Remember everything."
+    }
+  },
+  "notFound": {
+    "pageNotFound": "Page Not Found",
+    "backToHome": "Back to Home"
   }
 }

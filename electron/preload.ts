@@ -23,6 +23,15 @@ import type {
   EdgeType,
 } from "@shared/context-types";
 import type { SchedulerStatePayload } from "@shared/ipc-types";
+import type {
+  TimelineRequest,
+  TimelineResponse,
+  SummaryRequest,
+  SummaryResponse,
+  EventDetailsRequest,
+  EventDetailsResponse,
+  ActivityTimelineChangedPayload,
+} from "@shared/activity-types";
 
 /**
  * VLM API exposed to renderer process
@@ -127,6 +136,7 @@ export interface PermissionApi {
   requestAccessibility(): Promise<IPCResult<boolean>>;
   openScreenRecordingSettings(): Promise<IPCResult<void>>;
   openAccessibilitySettings(): Promise<IPCResult<void>>;
+  onStatusChanged(callback: (payload: PermissionCheckResult) => void): () => void;
 }
 
 const permissionApi: PermissionApi = {
@@ -149,6 +159,14 @@ const permissionApi: PermissionApi = {
   async openAccessibilitySettings(): Promise<IPCResult<void>> {
     return ipcRenderer.invoke(IPC_CHANNELS.PERMISSION_OPEN_ACCESSIBILITY_SETTINGS);
   },
+
+  onStatusChanged(callback: (payload: PermissionCheckResult) => void) {
+    const subscription = (_event: unknown, payload: PermissionCheckResult) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.PERMISSION_STATUS_CHANGED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.PERMISSION_STATUS_CHANGED, subscription);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld("permissionApi", permissionApi);
@@ -159,6 +177,7 @@ export interface ScreenCaptureApi {
   pause(): Promise<IPCResult<void>>;
   resume(): Promise<IPCResult<void>>;
   getState(): Promise<IPCResult<SchedulerStatePayload>>;
+  onStateChanged(callback: (payload: SchedulerStatePayload) => void): () => void;
 }
 
 const screenCaptureApi: ScreenCaptureApi = {
@@ -180,6 +199,14 @@ const screenCaptureApi: ScreenCaptureApi = {
 
   async getState(): Promise<IPCResult<SchedulerStatePayload>> {
     return ipcRenderer.invoke(IPC_CHANNELS.SCREEN_CAPTURE_GET_STATE);
+  },
+
+  onStateChanged(callback: (payload: SchedulerStatePayload) => void) {
+    const subscription = (_event: unknown, payload: SchedulerStatePayload) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, subscription);
+    };
   },
 };
 
@@ -307,3 +334,36 @@ const appApi: AppApi = {
 
 contextBridge.exposeInMainWorld("appApi", appApi);
 contextBridge.exposeInMainWorld("usageApi", usageApi);
+
+// --------- Expose Activity Monitor API to the Renderer process ---------
+export interface ActivityMonitorApi {
+  getTimeline(request: TimelineRequest): Promise<IPCResult<TimelineResponse>>;
+  getSummary(request: SummaryRequest): Promise<IPCResult<SummaryResponse | null>>;
+  getEventDetails(request: EventDetailsRequest): Promise<IPCResult<EventDetailsResponse>>;
+  onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void): () => void;
+}
+
+const activityMonitorApi: ActivityMonitorApi = {
+  async getTimeline(request: TimelineRequest): Promise<IPCResult<TimelineResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_TIMELINE, request);
+  },
+
+  async getSummary(request: SummaryRequest): Promise<IPCResult<SummaryResponse | null>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_SUMMARY, request);
+  },
+
+  async getEventDetails(request: EventDetailsRequest): Promise<IPCResult<EventDetailsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_EVENT_DETAILS, request);
+  },
+
+  onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void) {
+    const subscription = (_event: unknown, payload: ActivityTimelineChangedPayload) =>
+      callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.ACTIVITY_TIMELINE_CHANGED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.ACTIVITY_TIMELINE_CHANGED, subscription);
+    };
+  },
+};
+
+contextBridge.exposeInMainWorld("activityMonitorApi", activityMonitorApi);

@@ -2,6 +2,7 @@ import { embed } from "ai";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
 import { llmUsageService } from "../usage/llm-usage-service";
+import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 
 const logger = getLogger("embedding-service");
 
@@ -39,6 +40,10 @@ export class EmbeddingService {
         { error: error instanceof Error ? error.message : String(error) },
         "Failed to generate embedding"
       );
+
+      // Record failure for circuit breaker
+      aiFailureCircuitBreaker.recordFailure("embedding", error);
+
       throw error;
     }
   }

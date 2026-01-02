@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { reconcileLoop } from "./reconcile-loop";
 import { getDb } from "../../database";
 import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
@@ -60,13 +60,18 @@ describe("ReconcileLoop", () => {
     vi.mocked(getDb).mockReturnValue(mockDb as unknown as ReturnType<typeof getDb>);
   });
 
+  afterEach(() => {
+    reconcileLoop.stop();
+  });
+
   describe("recoverStaleStates", () => {
     it("should reset stale running states to pending", async () => {
       mockDb.run.mockReturnValueOnce({ changes: 1 }); // screenshots
       mockDb.run.mockReturnValueOnce({ changes: 1 }); // batches
       mockDb.run.mockReturnValueOnce({ changes: 2 }); // contextNodes merge
       mockDb.run.mockReturnValueOnce({ changes: 1 }); // contextNodes embedding
-      mockDb.run.mockReturnValueOnce({ changes: 3 }); // vectorDocuments
+      mockDb.run.mockReturnValueOnce({ changes: 2 }); // vectorDocuments embedding
+      mockDb.run.mockReturnValueOnce({ changes: 1 }); // vectorDocuments index
 
       await (
         reconcileLoop as unknown as { recoverStaleStates: () => Promise<void> }
@@ -78,7 +83,7 @@ describe("ReconcileLoop", () => {
       expect(mockDb.update).toHaveBeenCalledWith(vectorDocuments);
       expect(mockDb.set).toHaveBeenCalledWith(expect.objectContaining({ mergeStatus: "pending" }));
 
-      expect(mockDb.run).toHaveBeenCalledTimes(5);
+      expect(mockDb.run).toHaveBeenCalledTimes(6);
     });
   });
 
@@ -109,6 +114,66 @@ describe("ReconcileLoop", () => {
       expect(setImmediateSpy).not.toHaveBeenCalled();
 
       setImmediateSpy.mockRestore();
+    });
+  });
+
+  describe("computeNextRunAt", () => {
+    it("should return now when there is immediate batch work", () => {
+      const now = 100_000;
+
+      mockDb.get.mockReturnValueOnce({ nextRunAt: null });
+
+      const nextRunAt = (
+        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
+      ).computeNextRunAt(now);
+
+      expect(nextRunAt).toBe(now);
+    });
+
+    it("should return earliest nextRunAt across tasks", () => {
+      const now = 100_000;
+
+      mockDb.get.mockReturnValueOnce({ nextRunAt: 200_000 });
+      mockDb.get.mockReturnValueOnce({ nextRunAt: 150_000 });
+
+      const nextRunAt = (
+        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
+      ).computeNextRunAt(now);
+
+      expect(nextRunAt).toBe(150_000);
+    });
+
+    it("should consider orphan screenshot eligibility time", () => {
+      const now = 100_000;
+
+      mockDb.get
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce({ createdAt: 30_000 });
+
+      const nextRunAt = (
+        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
+      ).computeNextRunAt(now);
+
+      expect(nextRunAt).toBe(105_000);
+    });
+  });
+
+  describe("run scheduling", () => {
+    it("should schedule idle scan when no work is found", async () => {
+      (reconcileLoop as unknown as { isRunning: boolean }).isRunning = true;
+
+      const setTimeoutSpy = vi.spyOn(global, "setTimeout");
+
+      await (reconcileLoop as unknown as { run: () => Promise<void> }).run();
+
+      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === 5 * 60 * 1000)).toBe(true);
+
+      setTimeoutSpy.mockRestore();
     });
   });
 

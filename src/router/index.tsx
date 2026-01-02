@@ -6,19 +6,20 @@ import {
   SettingsPage,
   SettingsLLMConfigPage,
   CaptureSourceSettingsPage,
-  AboutPage,
   NotFoundPage,
-  VLMDemoPage,
   SplashScreen,
   LLMConfigPage,
   UsagePage,
+  SearchResultsPage,
 } from "@/pages";
 import { ViewTransitionProvider } from "@/components/core/view-transition";
+import { Toaster } from "@/components/ui/sonner";
 
 function AppRoot() {
   return (
     <ViewTransitionProvider>
       <Outlet />
+      <Toaster closeButton richColors />
     </ViewTransitionProvider>
   );
 }
@@ -60,12 +61,8 @@ export const router = createHashRouter([
             element: <UsagePage />,
           },
           {
-            path: "about",
-            element: <AboutPage />,
-          },
-          {
-            path: "vlm-demo",
-            element: <VLMDemoPage />,
+            path: "search-results",
+            element: <SearchResultsPage />,
           },
           {
             path: "*",

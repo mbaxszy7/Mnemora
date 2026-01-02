@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
@@ -15,8 +15,29 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { MarkdownContent } from "./MarkdownContent";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { ActivityEvent } from "./types";
+
+const MarkdownContent = lazy(() =>
+  import("./MarkdownContent").then((m) => ({
+    default: m.MarkdownContent,
+  }))
+);
+
+function MarkdownSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-3 w-8/12" />
+      <div className="space-y-2">
+        <Skeleton className="h-3 w-11/12" />
+        <Skeleton className="h-3 w-10/12" />
+        <Skeleton className="h-3 w-9/12" />
+      </div>
+      <Skeleton className="h-20 w-full rounded-md" />
+      <Skeleton className="h-3 w-7/12" />
+    </div>
+  );
+}
 
 interface EventCardProps {
   event: ActivityEvent;
@@ -194,7 +215,9 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
                   <span className="text-xs">{t("common.messages.loading")}</span>
                 </div>
               ) : localDetails ? (
-                <MarkdownContent content={localDetails} variant="compact" />
+                <Suspense fallback={<MarkdownSkeleton />}>
+                  <MarkdownContent content={localDetails} variant="compact" />
+                </Suspense>
               ) : (
                 <div className="py-4 text-center text-xs text-muted-foreground italic">
                   {t("activityMonitor.event.noDetails")}

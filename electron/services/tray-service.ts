@@ -2,7 +2,7 @@ import { BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
-import { VITE_DEV_SERVER_URL, RENDERER_DIST } from "../main";
+import { APP_ROOT, RENDERER_DIST, VITE_DEV_SERVER_URL } from "../env";
 import { llmUsageService } from "./usage/llm-usage-service";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenCaptureModule } from "./screen-capture/screen-capture-module";
@@ -59,7 +59,8 @@ export class TrayService {
   }
 
   private getIconPath(): string {
-    const base = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT!, "public") : RENDERER_DIST;
+    const appRoot = process.env.APP_ROOT ?? APP_ROOT;
+    const base = VITE_DEV_SERVER_URL ? path.join(appRoot, "public") : RENDERER_DIST;
     // macOS tray uses Template images (monochrome)
     if (process.platform === "darwin") {
       return path.join(base, "logoTemplate@2x.png");

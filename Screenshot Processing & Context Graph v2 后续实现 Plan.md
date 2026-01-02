@@ -993,6 +993,200 @@ i18n：在 `shared/locales/en.json` 与 `zh-CN.json` 增加 `usage.*` 文案。
 
 ---
 
+## Milestone 7 — 性能监控与诊断面板（本地 Dashboard + 实时推送 + AI 错误实时页）
+
+### 目的
+
+- 为 Electron **主进程（Main Process / 主线程 event loop）**提供可视化、可解释的性能与健康度监控，帮助快速定位卡顿、内存暴涨、队列堆积、以及 AI 调用失败的根因。
+- 提供一个可以用浏览器访问的本地页面：`http://127.0.0.1:<port>`（仅监听 localhost），实时展示性能数据与错误数据。
+
+### 范围与原则（必须明确，避免隐私与开销失控）
+
+- 只采集**性能与状态指标**，不采集/不展示 prompt、response、截图图像、OCR 全量正文等敏感内容。
+- 指标采样频率默认较低（例如 1s/2s），并支持开关与“降采样”（避免监控本身造成性能问题）。
+- 监控 server 默认只绑定 `127.0.0.1`，不对局域网暴露。
+
+### 性能开销控制（必须：监控与展示不能影响项目本身性能）
+
+#### A. 采集层：低频采样 + 聚合优先
+
+- **默认采样间隔**：以秒级为主（例如 1s/2s），严禁毫秒级高频采样作为默认。
+- **聚合优先**：能用计数器/滑动窗口统计（p50/p95、近 1min 错误率）的，不推送原始明细。
+- **避免阻塞主线程**：任何采集/序列化/写盘都不应在关键路径同步执行；监控逻辑必须可随时关闭。
+
+#### B. 推送层：背压 + 丢弃策略（不允许“慢客户端拖垮主进程”）
+
+- **每连接 buffer 上限**：SSE/WS 对每个连接设置发送队列上限，超过则丢弃旧数据并累计 `droppedFrames`。
+- **慢客户端处理**：当浏览器 tab 后台/网络慢时，允许“只保留最新一帧”或直接断开重连；不能无限堆积。
+- **动态节流**：当 event loop lag/ELU 达到阈值时自动降低采样频率与推送频率（例如从 1s 降到 5s）。
+
+#### C. UI 层：图表点数上限 + 渲染降采样
+
+- **时间窗固定**：默认只渲染最近 5~15 分钟，不允许无限追加点。
+- **点数上限**：对每条曲线设置最大点数（例如 300~900 点），超过则做抽样/聚合（min/max/avg）。
+- **渲染节流**：UI 更新频率与推送频率解耦（例如 UI 1s 刷新一次，即使后端更高频）。
+
+#### D. 默认关闭 + 显式启用（可选但强烈建议）
+
+- 监控服务默认关闭或以“轻量模式”运行；只有用户显式打开面板/打开开关时才进入实时推送。
+- 监控 server 启动失败或推送异常时，必须自动降级并不影响主流程。
+
+### 1) 主进程需要加入性能监控的点（埋点位置）
+
+#### A. 全局健康度（无需业务语义，主进程通用）
+
+- `electron/main.ts`
+  - 主进程启动/ready 时间
+  - 监控服务启动、端口选择、异常保护（server 启动失败不影响主功能）
+
+#### B. 业务关键链路（建议按“阶段耗时 + 产量 + 队列积压”埋点）
+
+- 屏幕捕获
+  - `electron/services/screen-capture/screen-capture-module.ts`
+  - `electron/services/screen-capture/capture-scheduler.ts`
+  - 关注：capture tick 的抖动、截图写盘耗时、单张大小、失败率
+
+- 截图处理（重任务状态机）
+  - `electron/services/screenshot-processing/reconcile-loop.ts`
+  - `electron/services/screenshot-processing/batch-builder.ts`
+  - 关注：每次 reconcile 扫描耗时、处理条数、各状态机队列长度（pending/running/failed）、backoff 情况
+
+- AI 调用阶段（强烈建议复用/对齐 Milestone 5 的口径）
+  - `electron/services/screenshot-processing/vlm-processor.ts`
+  - `electron/services/screenshot-processing/text-llm-processor.ts`
+  - `electron/services/screenshot-processing/embedding-service.ts`
+  - 关注：请求耗时（p50/p95）、超时/限流、失败率、熔断状态（如已存在 `ai-failure-circuit-breaker`）
+
+- 索引与存储
+  - `electron/services/screenshot-processing/vector-index-service.ts`（如 Milestone 2 引入）
+  - `electron/database/*`
+  - 关注：flush 耗时、索引文件大小、DB 查询耗时（抽样）、DB 文件大小增长
+
+### 2) 适合主线程的性能监控指标（建议以“用户能理解”为第一优先级）
+
+#### A. 主进程健康度（实时曲线 + 状态灯）
+
+- `event loop` 健康：
+  - Event Loop Lag（ms，p50/p95）
+  - Event Loop Utilization（ELU，0~1）
+- CPU：主进程 CPU usage（%）
+- 内存：RSS / heapUsed / heapTotal（MB）
+- GC（可选）：近一分钟 GC 次数与耗时（ms）
+
+#### B. 处理吞吐与延迟（让用户知道“为什么慢”）
+
+- 截图吞吐：`screenshots/min`、平均单张大小（MB）
+- Pipeline 延迟（端到端）：capture → 入库 → batch ready → VLM → TextLLM → embedding → index succeeded
+- 各阶段耗时分布：VLM/TextLLM/Embedding/Index 的 p50/p95
+
+#### C. 队列与积压（最直接的“卡住了”信号）
+
+- `batches`：pending/running/failed 数
+- `vector_documents`：embedding pending/running/failed、index pending/running/failed 数
+- （如有）activity summary / event details 等后台任务的 pending/running/failed 数
+
+#### D. 错误与稳定性
+
+- 未捕获异常计数：`uncaughtException`、`unhandledRejection`
+- AI 调用错误：按 capability（VLM/Text/Embedding）与 errorCode 聚合
+- 熔断器状态（如适用）：open/half-open/closed + 最近一次打开原因
+
+### 3) 本地监控 Server（localhost 可访问）
+
+#### 功能
+
+- 提供一个本地 HTTP server：
+  - `GET /`：监控首页
+  - `GET /performance`：性能面板（也可作为首页）
+  - `GET /ai-errors`：AI 错误实时面板
+  - `GET /health`：server 自检（给脚本/诊断使用）
+
+#### 端口策略（建议写清楚）
+
+- 优先尝试固定端口（例如 23333）；冲突则自动递增或随机可用端口。
+- 将最终端口输出到日志，并在 App 内提供“打开性能面板”的入口（可选）。
+
+### 4) 实时数据推送方案（你提到 WebSocket；这里给出更优建议）
+
+#### 方案 A（推荐，单向更简单）：SSE（Server-Sent Events）
+
+- 浏览器使用 `EventSource` 订阅 `GET /stream`。
+- 优点：
+  - 单向推送天然匹配“指标流”场景
+  - 自动重连、实现简单
+  - 更容易在代理/调试环境下工作
+
+#### 方案 B（可选，双向更灵活）：WebSocket
+
+- 适合后续需要“订阅选择/过滤/远程触发 dump（例如请求导出 trace）”的场景。
+
+#### MVP 建议
+
+- MVP 先做 SSE（性能数据流 + 错误事件流），如后续需要交互能力再加 WebSocket。
+
+### 5) 页面 1：实时性能数据（通俗易懂 + 页面精美）
+
+#### 展示目标
+
+- 让用户一眼看懂：
+  - “现在应用健康吗？”
+  - “卡在哪里？”（event loop / AI 调用 / 队列堆积 / IO）
+  - “最近 5 分钟趋势如何？”
+
+#### 页面结构（建议）
+
+- 顶部 Health Cards（红黄绿）
+  - Event Loop（Lag/ELU）
+  - CPU
+  - Memory
+  - Queue Backlog（pending 总数）
+- 中部实时图表（滚动窗口 5~15 分钟）
+  - Lag/ELU 曲线
+  - 内存曲线
+  - 关键阶段耗时（VLM/Text/Embedding）
+- 底部“系统状态”表格
+  - 各队列 pending/running/failed
+  - 最近一次 reconcile 执行时间、耗时、处理条数
+  - DB / index 文件大小（可选）
+
+### 6) 页面 2：VLM / LLM / Embedding 错误实时数据
+
+#### 数据来源建议（与现有里程碑对齐）
+
+- **优先复用 Milestone 5 的 `llm_usage_events`**：
+  - `status='failed'` 作为错误事件
+  - `capability/operation/model/configHash/errorCode/ts` 做聚合与展示
+- 对于主进程自身异常：额外上报 `uncaughtException/unhandledRejection` 为独立 error stream。
+
+#### 页面结构（建议）
+
+- 顶部：最近 1min/5min 错误率（按 capability 拆分）
+- 中部：错误码 Top 列表（可点选过滤）
+- 底部：实时错误流（最近 N 条）
+  - 每条只展示：时间、capability、operation、model、errorCode、retryable（如有）、traceId（如有）
+  - 明确不展示敏感内容（不展示 prompt/response）
+
+### 7) 可额外展示的数据（建议项，按价值排序）
+
+- “端到端可用性”指标：`search ready`（从 capture 到可检索的平均/95 分位耗时）
+- “数据规模”指标：DB 大小、索引大小、context_nodes/vector_documents 总量
+- “质量/异常”指标：
+  - pending 长时间不下降的队列（疑似卡死）
+  - running 超时计数（stale recovery 触发次数）
+  - screenshot 写盘失败/权限错误计数
+
+### 验收标准（DoD）
+
+- 浏览器可访问 `http://127.0.0.1:<port>`，并实时看到主进程性能数据刷新。
+- 性能面板的核心指标可用且易理解：event loop、CPU、内存、队列积压、关键阶段耗时。
+- AI 错误面板能实时看到 VLM/Text/Embedding 的失败事件，并支持按 capability/model/errorCode 过滤。
+- 默认不采集敏感内容，且 server 仅绑定 localhost。
+- 监控开启后不会明显影响主流程：
+  - 监控推送/页面关闭时不会造成队列堆积（具备背压与丢弃策略）
+  - 监控逻辑出现异常可自动降级/关闭，不阻塞 capture/reconcile/AI pipeline
+
+---
+
 # 必须的重构点清单（为了实现 MVP，不能跳过）
 
 - **单一编排**：禁止任何绕过 `ReconcileLoop` 的 VLM/TextLLM/Embedding/Index 执行路径。

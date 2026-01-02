@@ -1,11 +1,23 @@
+import { Suspense, lazy } from "react";
 import { useTranslation } from "react-i18next";
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useViewTransition } from "@/components/core/view-transition";
-import { UsageCharts } from "./components/UsageCharts";
-import { UsageBreakdown } from "./components/UsageBreakdown";
 import { useUsageStats } from "./hooks/useUsageStats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+
+const UsageCharts = lazy(() =>
+  import("./components/UsageCharts").then((m) => ({
+    default: m.UsageCharts,
+  }))
+);
+
+const UsageBreakdown = lazy(() =>
+  import("./components/UsageBreakdown").then((m) => ({
+    default: m.UsageBreakdown,
+  }))
+);
 
 export default function UsagePage() {
   const { t } = useTranslation();
@@ -63,8 +75,12 @@ export default function UsagePage() {
         </Card>
       </div>
 
-      <UsageCharts data={dailyUsage} isLoading={isLoading} />
-      <UsageBreakdown data={breakdown} isLoading={isLoading} />
+      <Suspense fallback={<Skeleton className="w-full h-[300px] rounded-lg" />}>
+        <UsageCharts data={dailyUsage} isLoading={isLoading} />
+      </Suspense>
+      <Suspense fallback={<Skeleton className="w-full h-[200px] rounded-lg" />}>
+        <UsageBreakdown data={breakdown} isLoading={isLoading} />
+      </Suspense>
     </div>
   );
 }

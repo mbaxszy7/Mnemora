@@ -1,12 +1,38 @@
+import { Suspense, lazy } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
 import { FileText, Sparkles, BarChart3 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EventCard } from "./EventCard";
-import { MarkdownContent } from "./MarkdownContent";
 import type { WindowSummary, ActivityEvent } from "./types";
+
+const MarkdownContent = lazy(() =>
+  import("./MarkdownContent").then((m) => ({
+    default: m.MarkdownContent,
+  }))
+);
+
+function MarkdownSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-5 w-7/12" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-10/12" />
+        <Skeleton className="h-4 w-9/12" />
+      </div>
+      <Skeleton className="h-32 w-full rounded-lg" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-10/12" />
+        <Skeleton className="h-4 w-9/12" />
+        <Skeleton className="h-4 w-8/12" />
+      </div>
+    </div>
+  );
+}
 
 interface SummaryPanelProps {
   summary: WindowSummary | null;
@@ -122,7 +148,9 @@ export function SummaryPanel({ summary, onFetchDetails }: SummaryPanelProps) {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <MarkdownContent content={summary.summary} />
+              <Suspense fallback={<MarkdownSkeleton />}>
+                <MarkdownContent content={summary.summary} />
+              </Suspense>
             </motion.div>
 
             {/* Events section */}

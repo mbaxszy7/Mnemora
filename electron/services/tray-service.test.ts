@@ -66,7 +66,8 @@ vi.mock("./logger", () => ({
 }));
 
 // Mock main.ts exports
-vi.mock("../main", () => ({
+vi.mock("../env", () => ({
+  APP_ROOT: "/test/app/root",
   VITE_DEV_SERVER_URL: "http://localhost:5173",
   RENDERER_DIST: "/dist",
 }));

@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { motion } from "framer-motion";
 import { useTranslation } from "react-i18next";
 import { useLocation } from "react-router-dom";
@@ -6,9 +7,33 @@ import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MarkdownContent } from "@/components/core/activity-monitor/MarkdownContent";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useViewTransition } from "@/components/core/view-transition";
 import type { SearchResult, ExpandedContextNode } from "@shared/context-types";
+
+const MarkdownContent = lazy(() =>
+  import("@/components/core/activity-monitor/MarkdownContent").then((m) => ({
+    default: m.MarkdownContent,
+  }))
+);
+
+function MarkdownSkeleton() {
+  return (
+    <div className="space-y-2">
+      <Skeleton className="h-5 w-7/12" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-11/12" />
+        <Skeleton className="h-4 w-10/12" />
+        <Skeleton className="h-4 w-9/12" />
+      </div>
+      <Skeleton className="h-28 w-full rounded-lg" />
+      <div className="space-y-2">
+        <Skeleton className="h-4 w-10/12" />
+        <Skeleton className="h-4 w-9/12" />
+      </div>
+    </div>
+  );
+}
 
 interface SearchResultsLocationState {
   query: string;
@@ -80,7 +105,7 @@ function NodeCard({ node }: { node: ExpandedContextNode }) {
       {/* Importance bar */}
       {node.importance >= 7 && (
         <motion.div
-          className="h-0.5 bg-gradient-to-r from-amber-500 to-orange-500"
+          className="h-0.5 bg-linear-to-r from-amber-500 to-orange-500"
           initial={{ scaleX: 0 }}
           animate={{ scaleX: 1 }}
           transition={{ delay: 0.2, duration: 0.3 }}
@@ -172,7 +197,9 @@ export default function SearchResultsPage() {
                   {result.answer!.answerTitle || t("searchResults.answer")}
                 </h3>
               </div>
-              <MarkdownContent content={result.answer!.answer} />
+              <Suspense fallback={<MarkdownSkeleton />}>
+                <MarkdownContent content={result.answer!.answer} />
+              </Suspense>
 
               {/* Bullets */}
               {result.answer!.bullets && result.answer!.bullets.length > 0 && (

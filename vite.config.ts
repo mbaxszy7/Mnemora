@@ -20,6 +20,21 @@ function copyMigrationsPlugin() {
   };
 }
 
+// Plugin to copy monitoring static files to dist-electron
+function copyMonitoringStaticPlugin() {
+  return {
+    name: "copy-monitoring-static",
+    closeBundle() {
+      const src = path.resolve(__dirname, "electron/services/monitoring/static");
+      const dest = path.resolve(__dirname, "dist-electron/monitoring-static");
+      if (fs.existsSync(src)) {
+        fs.cpSync(src, dest, { recursive: true });
+        console.log("✓ Copied monitoring static files to dist-electron/monitoring-static");
+      }
+    },
+  };
+}
+
 // Shared alias configuration for both renderer and electron builds
 const sharedAlias = {
   "@": path.resolve(__dirname, "./src"),
@@ -51,7 +66,7 @@ export default defineConfig({
               external: ["better-sqlite3", "node-screenshots", "sharp", "hnswlib-node"],
             },
           },
-          plugins: [copyMigrationsPlugin()],
+          plugins: [copyMigrationsPlugin(), copyMonitoringStaticPlugin()],
         },
       },
       preload: {

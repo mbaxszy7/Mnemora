@@ -73,6 +73,7 @@ export const IPC_CHANNELS = {
   ACTIVITY_TIMELINE_CHANGED: "activity:timeline-changed",
   // AI Failure Circuit Breaker
   AI_FAILURE_FUSE_TRIPPED: "ai:fuse-tripped",
+  MONITORING_OPEN_DASHBOARD: "monitoring:open-dashboard",
 } as const;
 
 /**
@@ -147,6 +148,10 @@ export type PermissionStatus = "granted" | "denied" | "not-determined" | "restri
 export interface PermissionCheckResult {
   screenRecording: PermissionStatus;
   accessibility: PermissionStatus;
+}
+
+export interface MonitoringOpenDashboardResult {
+  url: string;
 }
 
 export type IPCChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

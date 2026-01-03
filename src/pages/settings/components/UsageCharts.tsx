@@ -37,10 +37,15 @@ export function UsageCharts({ data, isLoading }: UsageChartsProps) {
       <Card>
         <CardHeader>
           <CardTitle>{t("usage.charts.dailyTokenUsage", "Daily Token Usage")}</CardTitle>
-          <CardDescription>No usage data available for the selected period.</CardDescription>
+          <CardDescription>
+            {t(
+              "usage.charts.noDataDescription",
+              "No usage data available for the selected period."
+            )}
+          </CardDescription>
         </CardHeader>
         <CardContent className="h-[300px] flex items-center justify-center text-muted-foreground">
-          No data
+          {t("usage.charts.noData", "No data")}
         </CardContent>
       </Card>
     );
@@ -50,7 +55,9 @@ export function UsageCharts({ data, isLoading }: UsageChartsProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t("usage.charts.dailyTokenUsage", "Daily Token Usage")}</CardTitle>
-        <CardDescription>Total token usage over time</CardDescription>
+        <CardDescription>
+          {t("usage.charts.description", "Total token usage over time")}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-[300px] w-full">

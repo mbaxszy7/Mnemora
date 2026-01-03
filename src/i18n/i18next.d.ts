@@ -5,7 +5,7 @@
  * Usage: t("common.buttons.save") will have autocomplete and type checking
  */
 import "i18next";
-import type enTranslations from "@shared/locales/en.json";
+import enTranslations from "@shared/locales/en.json";
 
 declare module "i18next" {
   interface CustomTypeOptions {

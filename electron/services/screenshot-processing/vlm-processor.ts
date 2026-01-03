@@ -484,6 +484,17 @@ class VLMProcessor {
    * @returns Parsed and validated VLM index result
    */
   parseVLMResponse(rawText: string): VLMIndexResult {
+    const rawTextPreview = rawText.length > 500 ? rawText.slice(0, 500) + "..." : rawText;
+    const rawTextLength = rawText.length;
+
+    logger.debug(
+      {
+        rawTextLength,
+        rawTextPreview,
+      },
+      "Parsing VLM response"
+    );
+
     // Try to extract JSON
     let jsonStr = rawText.trim();
 
@@ -491,45 +502,105 @@ class VLMProcessor {
     const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (codeBlockMatch) {
       jsonStr = codeBlockMatch[1].trim();
+      logger.debug("Removed markdown code block from VLM response");
     }
 
     // Try to find JSON object
     const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
       // Try to repair and retry
+      logger.debug("No JSON object found in raw response, attempting repair");
       const repaired = this.repairVLMResponse(rawText);
       const repairedMatch = repaired.match(/\{[\s\S]*\}/);
       if (!repairedMatch) {
+        logger.error(
+          {
+            rawTextLength,
+            rawTextPreview,
+            repairedPreview: repaired.length > 500 ? repaired.slice(0, 500) + "..." : repaired,
+          },
+          "VLM parse error: NO_JSON_FOUND - No JSON object found even after repair"
+        );
         throw new VLMParseError("NO_JSON_FOUND", rawText);
       }
       jsonStr = repairedMatch[0];
+      logger.debug("JSON object found after repair");
     } else {
       jsonStr = jsonMatch[0];
     }
+
+    const jsonStrPreview = jsonStr.length > 500 ? jsonStr.slice(0, 500) + "..." : jsonStr;
 
     // Parse JSON
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonStr);
     } catch (e) {
+      const parseError = e instanceof Error ? e.message : String(e);
+      logger.debug(
+        {
+          parseError,
+          jsonStrPreview,
+        },
+        "Initial JSON.parse failed, attempting repair"
+      );
+
       // Try repair
       const repaired = this.repairVLMResponse(jsonStr);
+      const repairedPreview = repaired.length > 500 ? repaired.slice(0, 500) + "..." : repaired;
+
       try {
         parsed = JSON.parse(repaired);
-      } catch {
-        throw new VLMParseError(
-          "JSON_PARSE_FAILED",
-          rawText,
-          e instanceof Error ? e.message : String(e)
+        logger.debug("JSON parsed successfully after repair");
+      } catch (repairError) {
+        const repairParseError =
+          repairError instanceof Error ? repairError.message : String(repairError);
+        logger.error(
+          {
+            rawTextLength,
+            rawTextPreview,
+            jsonStrPreview,
+            repairedPreview,
+            originalParseError: parseError,
+            repairParseError,
+          },
+          "VLM parse error: JSON_PARSE_FAILED - JSON.parse failed even after repair"
         );
+        throw new VLMParseError("JSON_PARSE_FAILED", rawText, parseError);
       }
     }
 
     // Validate with Zod
     const result = VLMIndexResultSchema.safeParse(parsed);
     if (!result.success) {
+      // Extract more useful error info from Zod
+      const zodErrors = result.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        code: issue.code,
+        message: issue.message,
+      }));
+
+      logger.error(
+        {
+          rawTextLength,
+          rawTextPreview,
+          jsonStrPreview,
+          zodErrors,
+          parsedKeys: typeof parsed === "object" && parsed ? Object.keys(parsed) : [],
+        },
+        "VLM parse error: SCHEMA_VALIDATION_FAILED - Zod schema validation failed"
+      );
       throw new VLMParseError("SCHEMA_VALIDATION_FAILED", rawText, result.error.message);
     }
+
+    logger.debug(
+      {
+        segmentCount: result.data.segments.length,
+        entityCount: result.data.entities.length,
+        screenshotCount: result.data.screenshots?.length ?? 0,
+      },
+      "VLM response parsed successfully"
+    );
 
     return result.data;
   }

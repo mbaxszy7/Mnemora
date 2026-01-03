@@ -13,6 +13,7 @@ import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-sett
 import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
 import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
+import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -20,6 +21,7 @@ import { databaseService } from "./database";
 import { screenCaptureModule } from "./services/screen-capture";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
+import { monitoringServer } from "./services/monitoring";
 
 // ============================================================================
 // Environment Setup
@@ -229,6 +231,7 @@ class AppLifecycleController {
     registerContextGraphHandlers();
     registerUsageHandlers();
     registerActivityMonitorHandlers();
+    registerMonitoringHandlers();
     this.logger.info("IPC handlers registered");
   }
 
@@ -265,6 +268,7 @@ class AppLifecycleController {
     TrayService.resetInstance();
     screenCaptureModule.dispose();
     powerMonitorService.dispose();
+    monitoringServer.stop();
     databaseService.close();
     this.trayService?.dispose();
   }

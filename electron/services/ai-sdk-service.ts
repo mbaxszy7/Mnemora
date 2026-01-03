@@ -90,7 +90,7 @@ export class AISDKService {
       baseURL: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
       headers: {
-        authorization: `bearer ${endpoint.apiKey}`,
+        authorization: `Bearer ${endpoint.apiKey}`,
       },
     });
     return { provider, model: endpoint.model };

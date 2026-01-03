@@ -21,6 +21,13 @@
   "settings": {
     "title": "设置",
     "description": "管理您的应用程序偏好设置",
+    "monitoring": {
+      "title": "监控面板",
+      "description": "打开本地性能与诊断面板",
+      "opening": "正在打开...",
+      "opened": "监控面板已打开",
+      "openFailed": "打开监控面板失败"
+    },
     "language": "语言",
     "languageDescription": "选择您偏好的语言",
     "theme": "主题",
@@ -229,15 +236,22 @@
     },
     "charts": {
       "dailyTokenUsage": "每日 Token 使用量",
+      "description": "Token 使用量趋势",
+      "noData": "暂无数据",
+      "noDataDescription": "所选时间段内暂无使用数据。",
       "tokens": "Token"
     },
     "breakdown": {
       "title": "使用明细",
+      "description": "按模型和功能的使用统计",
+      "noData": "暂无数据",
       "table": {
         "model": "模型",
         "capability": "功能",
         "tokens": "Token",
-        "requests": "请求"
+        "totalTokens": "Token 总量",
+        "requests": "请求数",
+        "succeeded": "成功数"
       }
     }
   },

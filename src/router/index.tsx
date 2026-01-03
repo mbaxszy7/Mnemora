@@ -5,8 +5,8 @@ import RootLayout from "@/layouts/RootLayout";
 import { ViewTransitionProvider } from "@/components/core/view-transition";
 import { Toaster } from "@/components/ui/sonner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SplashScreen } from "@/pages";
 
-const SplashScreen = lazy(() => import("@/pages/SplashScreen"));
 const LLMConfigPage = lazy(() => import("@/pages/LLMConfig"));
 const HomePage = lazy(() => import("@/pages/Home"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
@@ -184,7 +184,7 @@ export const router = createHashRouter([
     children: [
       {
         path: "/splash",
-        element: withSuspense(<SplashScreen />, <PageShellSkeleton />),
+        element: <SplashScreen />,
       },
       {
         path: "/llm-config",

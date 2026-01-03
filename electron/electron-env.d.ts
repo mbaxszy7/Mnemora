@@ -194,4 +194,11 @@ interface Window {
       import("../shared/ipc-types").IPCResult<import("../shared/activity-types").ActivityEvent>
     >;
   };
+  monitoringApi: {
+    openDashboard(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/ipc-types").MonitoringOpenDashboardResult
+      >
+    >;
+  };
 }

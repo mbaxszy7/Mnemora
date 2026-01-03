@@ -1,5 +1,5 @@
 import { ipcRenderer, contextBridge } from "electron";
-import { IPC_CHANNELS, IPCResult } from "@shared/ipc-types";
+import { IPC_CHANNELS, IPCResult, type MonitoringOpenDashboardResult } from "@shared/ipc-types";
 import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
 import type { SupportedLanguage } from "@shared/i18n-types";
 import type {
@@ -367,3 +367,15 @@ const activityMonitorApi: ActivityMonitorApi = {
 };
 
 contextBridge.exposeInMainWorld("activityMonitorApi", activityMonitorApi);
+
+export interface MonitoringApi {
+  openDashboard(): Promise<IPCResult<MonitoringOpenDashboardResult>>;
+}
+
+const monitoringApi: MonitoringApi = {
+  async openDashboard(): Promise<IPCResult<MonitoringOpenDashboardResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.MONITORING_OPEN_DASHBOARD);
+  },
+};
+
+contextBridge.exposeInMainWorld("monitoringApi", monitoringApi);

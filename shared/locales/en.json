@@ -21,6 +21,13 @@
   "settings": {
     "title": "Settings",
     "description": "Manage your application preferences",
+    "monitoring": {
+      "title": "Monitoring Dashboard",
+      "description": "Open local performance and diagnostics dashboard",
+      "opening": "Opening...",
+      "opened": "Monitoring dashboard opened",
+      "openFailed": "Failed to open monitoring dashboard"
+    },
     "language": "Language",
     "languageDescription": "Select your preferred language",
     "theme": "Theme",
@@ -228,15 +235,22 @@
     },
     "charts": {
       "dailyTokenUsage": "Daily Token Usage",
+      "description": "Total token usage over time",
+      "noData": "No data",
+      "noDataDescription": "No usage data available for the selected period.",
       "tokens": "Tokens"
     },
     "breakdown": {
       "title": "Usage Breakdown",
+      "description": "Usage statistics by model and capability",
+      "noData": "No data available",
       "table": {
         "model": "Model",
         "capability": "Capability",
         "tokens": "Tokens",
-        "requests": "Requests"
+        "totalTokens": "Total Tokens",
+        "requests": "Requests",
+        "succeeded": "Succeeded"
       }
     }
   },

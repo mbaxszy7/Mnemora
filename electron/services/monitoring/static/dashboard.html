@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="monitoring.title">Performance Monitor</title>
+  <style>
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-tertiary: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border-color: #475569;
+      --accent-blue: #3b82f6;
+      --accent-green: #22c55e;
+      --accent-yellow: #eab308;
+      --accent-red: #ef4444;
+      --health-healthy: #22c55e;
+      --health-warning: #eab308;
+      --health-critical: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .header h1 {
+      font-size: 24px;
+      font-weight: 600;
+    }
+
+    .header-links a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+
+    .header-links a:hover {
+      text-decoration: underline;
+    }
+
+    .health-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .health-card {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .health-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .health-card-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+    }
+
+    .health-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .health-indicator.healthy { background: var(--health-healthy); }
+    .health-indicator.warning { background: var(--health-warning); }
+    .health-indicator.critical { background: var(--health-critical); }
+
+    .health-card-value {
+      font-size: 28px;
+      font-weight: 600;
+    }
+
+    .health-card-subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .charts-section {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .chart-container {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .chart-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+
+    .chart-canvas {
+      width: 100%;
+      height: 200px;
+    }
+
+    .queue-section {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .queue-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+
+    .queue-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .queue-table th,
+    .queue-table td {
+      text-align: left;
+      padding: 12px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .queue-table th {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    .queue-table td {
+      font-size: 14px;
+    }
+
+    .queue-table .count-pending { color: var(--accent-yellow); }
+    .queue-table .count-running { color: var(--accent-blue); }
+    .queue-table .count-failed { color: var(--accent-red); }
+
+    .footer {
+      margin-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .status-dot.connected { background: var(--health-healthy); }
+    .status-dot.disconnected { background: var(--health-critical); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 data-i18n="monitoring.title">Performance Monitor</h1>
+    <div class="header-links">
+      <a href="/ai-errors" data-i18n="monitoring.aiErrorsTitle">AI Errors</a>
+    </div>
+  </div>
+
+  <div class="health-cards">
+    <div class="health-card" id="card-eventloop">
+      <div class="health-card-header">
+        <span class="health-card-title" data-i18n="monitoring.cards.eventLoop">Event Loop</span>
+        <div class="health-indicator healthy" id="indicator-eventloop"></div>
+      </div>
+      <div class="health-card-value" id="value-eventloop-lag">-- ms</div>
+      <div class="health-card-subtitle">
+        <span data-i18n="monitoring.cards.utilization">Utilization</span>: <span id="value-eventloop-elu">--%</span>
+      </div>
+    </div>
+
+    <div class="health-card" id="card-cpu">
+      <div class="health-card-header">
+        <span class="health-card-title" data-i18n="monitoring.cards.cpu">CPU</span>
+        <div class="health-indicator healthy" id="indicator-cpu"></div>
+      </div>
+      <div class="health-card-value" id="value-cpu">-- %</div>
+      <div class="health-card-subtitle" data-i18n="monitoring.cards.utilization">Utilization</div>
+    </div>
+
+    <div class="health-card" id="card-memory">
+      <div class="health-card-header">
+        <span class="health-card-title" data-i18n="monitoring.cards.memory">Memory</span>
+        <div class="health-indicator healthy" id="indicator-memory"></div>
+      </div>
+      <div class="health-card-value" id="value-memory-heap">-- MB</div>
+      <div class="health-card-subtitle">
+        <span data-i18n="monitoring.cards.rss">RSS</span>: <span id="value-memory-rss">-- MB</span>
+      </div>
+    </div>
+
+    <div class="health-card" id="card-queue">
+      <div class="health-card-header">
+        <span class="health-card-title" data-i18n="monitoring.cards.queueBacklog">Queue Backlog</span>
+        <div class="health-indicator healthy" id="indicator-queue"></div>
+      </div>
+      <div class="health-card-value" id="value-queue-pending">--</div>
+      <div class="health-card-subtitle" data-i18n="monitoring.cards.pending">Pending</div>
+    </div>
+  </div>
+
+  <div class="charts-section">
+    <div class="chart-container">
+      <div class="chart-title" data-i18n="monitoring.charts.eventLoopLag">Event Loop Lag (ms)</div>
+      <canvas id="chart-lag" class="chart-canvas"></canvas>
+    </div>
+    <div class="chart-container">
+      <div class="chart-title" data-i18n="monitoring.charts.memoryUsage">Memory Usage (MB)</div>
+      <canvas id="chart-memory" class="chart-canvas"></canvas>
+    </div>
+  </div>
+
+  <div class="queue-section">
+    <div class="queue-title" data-i18n="monitoring.queue.title">Queue Status</div>
+    <table class="queue-table">
+      <thead>
+        <tr>
+          <th data-i18n="monitoring.queue.table.queue">Queue</th>
+          <th data-i18n="monitoring.queue.table.pending">Pending</th>
+          <th data-i18n="monitoring.queue.table.running">Running</th>
+          <th data-i18n="monitoring.queue.table.failed">Failed</th>
+        </tr>
+      </thead>
+      <tbody id="queue-table-body">
+        <tr>
+          <td data-i18n="monitoring.queue.batches">Batches</td>
+          <td class="count-pending" id="queue-batches-pending">--</td>
+          <td class="count-running" id="queue-batches-running">--</td>
+          <td class="count-failed" id="queue-batches-failed">--</td>
+        </tr>
+        <tr>
+          <td data-i18n="monitoring.queue.vectorDocs">Vector Documents</td>
+          <td class="count-pending" id="queue-vector-pending">--</td>
+          <td class="count-running" id="queue-vector-running">--</td>
+          <td class="count-failed" id="queue-vector-failed">--</td>
+        </tr>
+        <tr>
+          <td data-i18n="monitoring.queue.activitySummaries">Activity Summaries</td>
+          <td class="count-pending" id="queue-activity-pending">--</td>
+          <td class="count-running" id="queue-activity-running">--</td>
+          <td class="count-failed" id="queue-activity-failed">--</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div>
+      <span class="status-dot connected" id="connection-indicator"></span>
+      <span id="connection-status">Connected</span>
+    </div>
+    <div>
+      <span data-i18n="monitoring.footer.lastUpdated">Last updated</span>: <span id="last-updated">--</span>
+    </div>
+  </div>
+
+  <script>
+    // i18n translations
+    const translations = {
+      en: {
+        monitoring: {
+          title: "Performance Monitor",
+          aiErrorsTitle: "AI Errors",
+          health: { healthy: "Healthy", warning: "Warning", critical: "Critical" },
+          cards: {
+            eventLoop: "Event Loop", lag: "Lag", utilization: "Utilization",
+            cpu: "CPU", memory: "Memory", rss: "RSS", heap: "Heap",
+            queueBacklog: "Queue Backlog", pending: "Pending"
+          },
+          charts: {
+            eventLoopLag: "Event Loop Lag (ms)",
+            memoryUsage: "Memory Usage (MB)",
+            last5Min: "Last 5 minutes"
+          },
+          queue: {
+            title: "Queue Status",
+            table: { queue: "Queue", pending: "Pending", running: "Running", failed: "Failed" },
+            batches: "Batches", vectorDocs: "Vector Documents", activitySummaries: "Activity Summaries"
+          },
+          footer: { lastUpdated: "Last updated", droppedFrames: "Dropped frames" },
+          connection: { connected: "Connected", reconnecting: "Reconnecting..." }
+        }
+      },
+      "zh-CN": {
+        monitoring: {
+          title: "性能监控",
+          aiErrorsTitle: "AI 错误",
+          health: { healthy: "健康", warning: "警告", critical: "严重" },
+          cards: {
+            eventLoop: "事件循环", lag: "延迟", utilization: "利用率",
+            cpu: "CPU", memory: "内存", rss: "物理内存", heap: "堆内存",
+            queueBacklog: "队列积压", pending: "待处理"
+          },
+          charts: {
+            eventLoopLag: "事件循环延迟 (ms)",
+            memoryUsage: "内存使用 (MB)",
+            last5Min: "最近 5 分钟"
+          },
+          queue: {
+            title: "队列状态",
+            table: { queue: "队列", pending: "待处理", running: "运行中", failed: "失败" },
+            batches: "批次", vectorDocs: "向量文档", activitySummaries: "活动摘要"
+          },
+          footer: { lastUpdated: "最后更新", droppedFrames: "丢失帧数" },
+          connection: { connected: "已连接", reconnecting: "重新连接中..." }
+        }
+      }
+    };
+
+    // Chart data storage
+    const MAX_CHART_POINTS = 150;
+    const lagData = [];
+    const memoryData = [];
+
+    // DOM elements
+    const elements = {
+      lagValue: document.getElementById("value-eventloop-lag"),
+      eluValue: document.getElementById("value-eventloop-elu"),
+      cpuValue: document.getElementById("value-cpu"),
+      memoryHeap: document.getElementById("value-memory-heap"),
+      memoryRss: document.getElementById("value-memory-rss"),
+      queuePending: document.getElementById("value-queue-pending"),
+      indicatorEventloop: document.getElementById("indicator-eventloop"),
+      indicatorCpu: document.getElementById("indicator-cpu"),
+      indicatorMemory: document.getElementById("indicator-memory"),
+      indicatorQueue: document.getElementById("indicator-queue"),
+      connectionIndicator: document.getElementById("connection-indicator"),
+      connectionStatus: document.getElementById("connection-status"),
+      lastUpdated: document.getElementById("last-updated"),
+      lagCanvas: document.getElementById("chart-lag"),
+      memoryCanvas: document.getElementById("chart-memory")
+    };
+
+    // Queue elements
+    const queueElements = {
+      batchesPending: document.getElementById("queue-batches-pending"),
+      batchesRunning: document.getElementById("queue-batches-running"),
+      batchesFailed: document.getElementById("queue-batches-failed"),
+      vectorPending: document.getElementById("queue-vector-pending"),
+      vectorRunning: document.getElementById("queue-vector-running"),
+      vectorFailed: document.getElementById("queue-vector-failed"),
+      activityPending: document.getElementById("queue-activity-pending"),
+      activityRunning: document.getElementById("queue-activity-running"),
+      activityFailed: document.getElementById("queue-activity-failed")
+    };
+
+    // Initialize i18n
+    let currentTranslations = null;
+    async function initI18n() {
+      try {
+        const res = await fetch('/api/locale');
+        const { lang } = await res.json();
+        currentTranslations = translations[lang]?.monitoring || translations.en.monitoring;
+        
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.dataset.i18n.replace('monitoring.', '');
+          const value = key.split('.').reduce((obj, k) => obj?.[k], currentTranslations);
+          if (value) el.textContent = value;
+        });
+        
+        document.title = currentTranslations.title;
+      } catch (e) {
+        console.warn('Failed to load locale:', e);
+        currentTranslations = translations.en.monitoring;
+      }
+    }
+
+    function t(key) {
+      if (!currentTranslations) return key;
+      return key.split('.').reduce((obj, k) => obj?.[k], currentTranslations) || key;
+    }
+
+    // Draw simple line chart
+    function drawChart(canvas, data, color, maxValue) {
+      const ctx = canvas.getContext('2d');
+      const width = canvas.offsetWidth;
+      const height = canvas.offsetHeight;
+      
+      canvas.width = width * devicePixelRatio;
+      canvas.height = height * devicePixelRatio;
+      ctx.scale(devicePixelRatio, devicePixelRatio);
+      
+      ctx.clearRect(0, 0, width, height);
+      
+      if (data.length < 2) return;
+      
+      // Draw grid
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = (height / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      
+      // Draw line
+      const xStep = width / (MAX_CHART_POINTS - 1);
+      const yScale = height / (maxValue || 1);
+      
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      
+      const startIdx = Math.max(0, data.length - MAX_CHART_POINTS);
+      for (let i = startIdx; i < data.length; i++) {
+        const x = (i - startIdx) * xStep;
+        const y = height - (data[i] * yScale);
+        
+        if (i === startIdx) {
+          ctx.moveTo(x, y);
+        } else {
+          ctx.lineTo(x, y);
+        }
+      }
+      ctx.stroke();
+    }
+
+    // Update health indicator
+    function updateIndicator(element, level) {
+      element.className = 'health-indicator ' + level;
+    }
+
+    function combineHealthLevel(a, b) {
+      const order = { healthy: 0, warning: 1, critical: 2 };
+      return order[a] >= order[b] ? a : b;
+    }
+
+    // Format bytes to MB
+    function formatMB(bytes) {
+      return (bytes / 1024 / 1024).toFixed(1);
+    }
+
+    // Handle metrics update
+    function handleMetrics(metrics) {
+      elements.lagValue.textContent = metrics.eventLoopLagP95Ms.toFixed(1) + ' ms (p95)';
+      elements.eluValue.textContent =
+        (metrics.eventLoopUtilization * 100).toFixed(0) + '% | p50: ' + metrics.eventLoopLagP50Ms.toFixed(1) + ' ms';
+      elements.cpuValue.textContent = metrics.cpuUsagePercent.toFixed(0) + ' %';
+      elements.memoryHeap.textContent = formatMB(metrics.memoryHeapUsed) + ' MB';
+      elements.memoryRss.textContent = formatMB(metrics.memoryRss) + ' MB';
+      
+      lagData.push(metrics.eventLoopLagP95Ms);
+      memoryData.push(metrics.memoryHeapUsed / 1024 / 1024);
+      
+      if (lagData.length > MAX_CHART_POINTS) lagData.shift();
+      if (memoryData.length > MAX_CHART_POINTS) memoryData.shift();
+      
+      const maxLag = Math.max(...lagData, 100);
+      const maxMemory = Math.max(...memoryData, 100);
+      
+      drawChart(elements.lagCanvas, lagData, '#3b82f6', maxLag * 1.2);
+      drawChart(elements.memoryCanvas, memoryData, '#22c55e', maxMemory * 1.2);
+      
+      elements.lastUpdated.textContent = new Date().toLocaleTimeString();
+    }
+
+    // Handle queue update
+    function handleQueue(queue) {
+      queueElements.batchesPending.textContent = queue.batches.pending;
+      queueElements.batchesRunning.textContent = queue.batches.running;
+      queueElements.batchesFailed.textContent = queue.batches.failed;
+      
+      const vectorPending = queue.vectorDocuments.embeddingPending + queue.vectorDocuments.indexPending;
+      const vectorRunning = queue.vectorDocuments.embeddingRunning + queue.vectorDocuments.indexRunning;
+      queueElements.vectorPending.textContent = vectorPending;
+      queueElements.vectorRunning.textContent = vectorRunning;
+      queueElements.vectorFailed.textContent = queue.vectorDocuments.failed;
+      
+      queueElements.activityPending.textContent = queue.activitySummaries.pending;
+      queueElements.activityRunning.textContent = queue.activitySummaries.running;
+      queueElements.activityFailed.textContent = queue.activitySummaries.failed;
+      
+      const total = queue.batches.pending + queue.batches.running +
+        vectorPending + vectorRunning +
+        queue.activitySummaries.pending + queue.activitySummaries.running;
+      elements.queuePending.textContent = total;
+    }
+
+    // Handle health update
+    function handleHealth(health) {
+      updateIndicator(
+        elements.indicatorEventloop,
+        combineHealthLevel(health.eventLoopLag.level, health.eventLoopUtilization.level)
+      );
+      updateIndicator(elements.indicatorCpu, health.cpu.level);
+      updateIndicator(elements.indicatorMemory, health.memory.level);
+      updateIndicator(elements.indicatorQueue, health.queueBacklog.level);
+    }
+
+    // Handle init payload
+    function handleInit(init) {
+      // Load recent metrics
+      for (const m of init.recentMetrics) {
+        lagData.push(m.eventLoopLagP95Ms);
+        memoryData.push(m.memoryHeapUsed / 1024 / 1024);
+      }
+      
+      if (init.recentQueue) handleQueue(init.recentQueue);
+      handleHealth(init.health);
+      
+      if (init.recentMetrics.length > 0) {
+        handleMetrics(init.recentMetrics[init.recentMetrics.length - 1]);
+      }
+    }
+
+    // SSE connection
+    function connectSSE() {
+      const eventSource = new EventSource('/api/stream');
+      
+      eventSource.onopen = () => {
+        elements.connectionIndicator.className = 'status-dot connected';
+        elements.connectionStatus.textContent = t('connection.connected');
+      };
+      
+      eventSource.onmessage = (event) => {
+        const message = JSON.parse(event.data);
+        
+        switch (message.type) {
+          case 'init':
+            handleInit(message.data);
+            break;
+          case 'metrics':
+            handleMetrics(message.data);
+            break;
+          case 'queue':
+            handleQueue(message.data);
+            break;
+          case 'health':
+            handleHealth(message.data);
+            break;
+        }
+      };
+      
+      eventSource.onerror = () => {
+        elements.connectionIndicator.className = 'status-dot disconnected';
+        elements.connectionStatus.textContent = t('connection.reconnecting');
+      };
+    }
+
+    // Initialize
+    async function init() {
+      await initI18n();
+      connectSSE();
+    }
+    init();
+  </script>
+</body>
+</html>

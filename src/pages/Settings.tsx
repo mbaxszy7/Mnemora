@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
-import { Switch } from "@/components/ui/switch";
+// import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { toast } from "sonner";
 import {
   Select,
   SelectContent,
@@ -21,6 +22,7 @@ import {
   XCircle,
   Settings,
   Monitor,
+  Activity,
   ArrowLeft,
 } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
@@ -40,16 +42,12 @@ export default function SettingsPage() {
   } = useLanguage();
   const { theme, setTheme } = useTheme();
 
-  const [settings, setSettings] = useState({
-    autoStart: false,
-    notifications: true,
-  });
-
   // Permission state
   const [screenRecordingStatus, setScreenRecordingStatus] = useState<PermissionStatus | null>(null);
   const [accessibilityStatus, setAccessibilityStatus] = useState<PermissionStatus | null>(null);
   const [isRequestingScreenRecording, setIsRequestingScreenRecording] = useState(false);
   const [isRequestingAccessibility, setIsRequestingAccessibility] = useState(false);
+  const [isOpeningMonitoring, setIsOpeningMonitoring] = useState(false);
 
   const screenRecordingStatusRef = useRef<PermissionStatus | null>(null);
   const accessibilityStatusRef = useRef<PermissionStatus | null>(null);
@@ -169,8 +167,24 @@ export default function SettingsPage() {
     }
   };
 
-  const updateSetting = (key: keyof typeof settings) => {
-    setSettings((prev) => ({ ...prev, [key]: !prev[key] }));
+  const handleOpenMonitoringDashboard = async () => {
+    if (isOpeningMonitoring) return;
+    setIsOpeningMonitoring(true);
+    try {
+      const result = await window.monitoringApi.openDashboard();
+      if (result.success && result.data) {
+        toast.success(t("settings.monitoring.opened"), {
+          description: result.data.url,
+        });
+      } else {
+        toast.error(t("settings.monitoring.openFailed"));
+      }
+    } catch (error) {
+      console.error("Failed to open monitoring dashboard:", error);
+      toast.error(t("settings.monitoring.openFailed"));
+    } finally {
+      setIsOpeningMonitoring(false);
+    }
   };
 
   const handleLanguageChange = (value: string) => {
@@ -337,6 +351,26 @@ export default function SettingsPage() {
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
 
+        {/* Monitoring Dashboard */}
+        <button
+          onClick={handleOpenMonitoringDashboard}
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <Activity className="h-4 w-4" />
+              {t("settings.monitoring.title")}
+            </Label>
+            <p className="text-sm text-muted-foreground">{t("settings.monitoring.description")}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {isOpeningMonitoring && (
+              <Badge variant="secondary">{t("settings.monitoring.opening")}</Badge>
+            )}
+            <ChevronRight className="h-5 w-5 text-muted-foreground" />
+          </div>
+        </button>
+
         {/* Capture Source Settings */}
         <button
           onClick={() =>
@@ -378,7 +412,7 @@ export default function SettingsPage() {
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
 
-        <div className="flex items-center justify-between p-4 rounded-lg border">
+        {/* <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="autoStart">{t("settings.autoStart.label")}</Label>
             <p className="text-sm text-muted-foreground">{t("settings.autoStart.description")}</p>
@@ -402,7 +436,7 @@ export default function SettingsPage() {
             checked={settings.notifications}
             onCheckedChange={() => updateSetting("notifications")}
           />
-        </div>
+        </div> */}
 
         <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">

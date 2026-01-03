@@ -27,7 +27,9 @@ export function UsageBreakdown({ data, isLoading }: UsageBreakdownProps) {
     <Card>
       <CardHeader>
         <CardTitle>{t("usage.breakdown.title", "Usage Breakdown")}</CardTitle>
-        <CardDescription>Usage statistics by model and capability</CardDescription>
+        <CardDescription>
+          {t("usage.breakdown.description", "Usage statistics by model and capability")}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <Table>
@@ -38,9 +40,11 @@ export function UsageBreakdown({ data, isLoading }: UsageBreakdownProps) {
               <TableHead className="text-right">
                 {t("usage.breakdown.table.requests", "Requests")}
               </TableHead>
-              <TableHead className="text-right">Succeeded</TableHead>
               <TableHead className="text-right">
-                {t("usage.breakdown.table.tokens", "Total Tokens")}
+                {t("usage.breakdown.table.succeeded", "Succeeded")}
+              </TableHead>
+              <TableHead className="text-right">
+                {t("usage.breakdown.table.totalTokens", "Total Tokens")}
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -48,7 +52,7 @@ export function UsageBreakdown({ data, isLoading }: UsageBreakdownProps) {
             {data.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={5} className="text-center text-muted-foreground h-24">
-                  No data available
+                  {t("usage.breakdown.noData", "No data available")}
                 </TableCell>
               </TableRow>
             ) : (

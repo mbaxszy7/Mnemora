@@ -41,7 +41,7 @@ export interface BatchConfig {
 }
 
 export const batchConfig: BatchConfig = {
-  batchSize: 10,
+  batchSize: 4,
   batchTimeoutMs: 70000,
 };
 
@@ -67,16 +67,19 @@ export interface VLMConfig {
   maxTitleLength: number;
   /** Maximum entities per batch (default: 20) */
   maxEntitiesPerBatch: number;
+  /** Maximum output tokens for VLM response (default: 8192) */
+  maxTokens: number;
 }
 
 export const vlmConfig: VLMConfig = {
-  vlmShardSize: 5,
-  vlmConcurrency: 2,
+  vlmShardSize: 2,
+  vlmConcurrency: 1,
   maxSegmentsPerBatch: 4,
   maxDerivedItemsPerCategory: 2,
-  maxSummaryLength: 200,
+  maxSummaryLength: 500,
   maxTitleLength: 100,
   maxEntitiesPerBatch: 20,
+  maxTokens: 8192,
 };
 
 // ============================================================================
@@ -114,10 +117,10 @@ export interface RetryConfig {
 }
 
 export const retryConfig: RetryConfig = {
-  maxAttempts: 3,
-  backoffScheduleMs: [5000, 20000, 60000, 300000], // 5s, 20s, 60s, 5min
-  jitterMs: 1000,
-  staleRunningThresholdMs: 300000, // 5 minutes
+  maxAttempts: 5,
+  backoffScheduleMs: [10000, 30000, 120000, 300000, 600000], // 10s, 30s, 2m, 5m, 10m
+  jitterMs: 5000,
+  staleRunningThresholdMs: 600000, // 10 minutes (VLM is slow)
 };
 
 // ============================================================================
@@ -183,13 +186,16 @@ export interface ReconcileConfig {
   staleRunningThresholdMs: number;
   /** Whether to enable the reconcile loop (default: true) */
   enabled: boolean;
+  /** Maximum number of batches to process concurrently (default: 3) */
+  batchConcurrency: number;
 }
 
 export const reconcileConfig: ReconcileConfig = {
   scanIntervalMs: 30000,
-  batchSize: 50,
-  staleRunningThresholdMs: 300000,
+  batchSize: 5,
+  staleRunningThresholdMs: 600000,
   enabled: true,
+  batchConcurrency: 2,
 };
 
 // ============================================================================
@@ -219,8 +225,6 @@ export const activitySummaryConfig: ActivitySummaryConfig = {
  * Vector store configuration
  */
 export interface VectorStoreConfig {
-  /** Number of dimensions for embeddings (default: 1536 for text-embedding-3-small) */
-  numDimensions: number;
   /** Default top-K for search (default: 10) */
   defaultTopK: number;
   /** Path to store the HNSW index file */
@@ -228,7 +232,6 @@ export interface VectorStoreConfig {
 }
 
 export const vectorStoreConfig: VectorStoreConfig = {
-  numDimensions: 1536,
   defaultTopK: 10,
   indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
 };

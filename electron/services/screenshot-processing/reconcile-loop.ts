@@ -15,7 +15,6 @@ import {
   evidenceConfig,
   reconcileConfig,
   retryConfig,
-  vectorStoreConfig,
   activitySummaryConfig,
 } from "./config";
 import { batchBuilder } from "./batch-builder";
@@ -43,7 +42,7 @@ import type {
 import type { ContextNodeRecord } from "../../database/schema";
 
 const logger = getLogger("reconcile-loop");
-const IDLE_SCAN_INTERVAL_MS = 5 * 60 * 1000;
+const IDLE_SCAN_INTERVAL_MS = 2 * 60 * 1000;
 
 function getCanonicalAppCandidates(): string[] {
   return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
@@ -512,9 +511,22 @@ export class ReconcileLoop {
       }
 
       const records = await this.scanPendingRecords();
-      for (const record of records) {
-        await this.processRecord(record);
-      }
+
+      // Separate batch records from other records
+      const batchRecords = records.filter((r) => r.table === "batches");
+      const otherRecords = records.filter((r) => r.table !== "batches");
+
+      // Process batches AND other records in parallel
+      // This ensures embedding/indexing tasks are not blocked by slow VLM processing
+      const batchPromise =
+        batchRecords.length > 0 ? this.processBatchesConcurrently(batchRecords) : Promise.resolve();
+
+      // Process other records in parallel (each type can run concurrently)
+      const otherPromise = this.processOtherRecordsConcurrently(otherRecords);
+
+      // Wait for both to complete
+      await Promise.all([batchPromise, otherPromise]);
+
       await this.enqueueOrphanScreenshots();
     } catch (error) {
       logger.error(
@@ -551,6 +563,99 @@ export class ReconcileLoop {
           );
           this.schedule(IDLE_SCAN_INTERVAL_MS);
         }
+      }
+    }
+  }
+
+  /**
+   * Process batch records concurrently with limited concurrency
+   * Uses Promise.allSettled to ensure one failure doesn't block others
+   */
+  private async processBatchesConcurrently(records: PendingRecord[]): Promise<void> {
+    const concurrency = reconcileConfig.batchConcurrency;
+
+    logger.info(
+      { totalBatches: records.length, concurrency },
+      "Starting concurrent batch processing"
+    );
+
+    // Process in chunks of 'concurrency' size
+    for (let i = 0; i < records.length; i += concurrency) {
+      const chunk = records.slice(i, i + concurrency);
+      const chunkIndex = Math.floor(i / concurrency) + 1;
+      const totalChunks = Math.ceil(records.length / concurrency);
+
+      logger.debug({ chunkIndex, totalChunks, chunkSize: chunk.length }, "Processing batch chunk");
+
+      const results = await Promise.allSettled(
+        chunk.map((record) => this.processBatchRecord(record))
+      );
+
+      // Log results
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
+
+      if (failed > 0) {
+        logger.warn({ chunkIndex, succeeded, failed }, "Some batches in chunk failed");
+      }
+    }
+  }
+
+  /**
+   * Process non-batch records concurrently by type
+   * Groups records by table/subtask and processes each group in parallel
+   */
+  private async processOtherRecordsConcurrently(records: PendingRecord[]): Promise<void> {
+    if (records.length === 0) return;
+
+    // Group records by type for parallel processing
+    const mergeRecords = records.filter((r) => r.table === "context_nodes");
+    const embeddingRecords = records.filter(
+      (r) => r.table === "vector_documents" && r.subtask === "embedding"
+    );
+    const indexRecords = records.filter(
+      (r) => r.table === "vector_documents" && r.subtask === "index"
+    );
+    const summaryRecords = records.filter((r) => r.table === "activity_summaries");
+    const eventRecords = records.filter((r) => r.table === "activity_events");
+
+    logger.debug(
+      {
+        mergeCount: mergeRecords.length,
+        embeddingCount: embeddingRecords.length,
+        indexCount: indexRecords.length,
+        summaryCount: summaryRecords.length,
+        eventCount: eventRecords.length,
+      },
+      "Processing other records concurrently"
+    );
+
+    // Process all types in parallel
+    await Promise.allSettled([
+      // Process each type sequentially within its group
+      this.processRecordsSequentially(mergeRecords, "merge"),
+      this.processRecordsSequentially(embeddingRecords, "embedding"),
+      this.processRecordsSequentially(indexRecords, "index"),
+      this.processRecordsSequentially(summaryRecords, "summary"),
+      this.processRecordsSequentially(eventRecords, "event"),
+    ]);
+  }
+
+  /**
+   * Process a group of records sequentially
+   */
+  private async processRecordsSequentially(
+    records: PendingRecord[],
+    groupName: string
+  ): Promise<void> {
+    for (const record of records) {
+      try {
+        await this.processRecord(record);
+      } catch (error) {
+        logger.error(
+          { group: groupName, recordId: record.id, error: String(error) },
+          "Failed to process record in group"
+        );
       }
     }
   }
@@ -890,6 +995,7 @@ export class ReconcileLoop {
   }
 
   private async processBatchRecord(record: PendingRecord): Promise<void> {
+    const processStartTime = Date.now();
     const db = getDb();
 
     const batchRecord = db.select().from(batches).where(eq(batches.id, record.id)).get();
@@ -913,8 +1019,17 @@ export class ReconcileLoop {
       screenshotIds = [];
     }
 
+    // Timing metrics
+    let vlmMs = 0;
+    let textLlmMs = 0;
+
     try {
       const now = Date.now();
+
+      logger.info(
+        { batchId: batchRecord.batchId, screenshotCount: screenshotIds.length },
+        "Starting batch processing"
+      );
 
       db.update(batches)
         .set({
@@ -988,9 +1103,20 @@ export class ReconcileLoop {
       };
 
       const shards: Shard[] = batchBuilder.splitIntoShards(batch);
-      const index = await runVlmOnBatch(batch, shards);
 
+      // VLM processing with timing
+      const vlmStartTime = Date.now();
+      const index = await runVlmOnBatch(batch, shards);
+      vlmMs = Date.now() - vlmStartTime;
+
+      logger.debug({ batchId: batchRecord.batchId, vlmMs }, "VLM processing completed");
+
+      // Text LLM expansion with timing
+      const textLlmStartTime = Date.now();
       await this.persistVlmEvidenceAndFinalize(index, batch);
+      textLlmMs = Date.now() - textLlmStartTime;
+
+      logger.debug({ batchId: batchRecord.batchId, textLlmMs }, "Text LLM expansion completed");
 
       db.update(batches)
         .set({
@@ -1003,8 +1129,19 @@ export class ReconcileLoop {
         })
         .where(eq(batches.id, batchRecord.id))
         .run();
+
+      const totalMs = Date.now() - processStartTime;
+      logger.info(
+        { batchId: batchRecord.batchId, totalMs, vlmMs, textLlmMs },
+        "Batch processing completed successfully"
+      );
     } catch (error) {
+      const totalMs = Date.now() - processStartTime;
       const message = error instanceof Error ? error.message : String(error);
+      logger.error(
+        { batchId: batchRecord.batchId, totalMs, vlmMs, textLlmMs, error: message },
+        "Batch processing failed"
+      );
       const attempts = batchRecord.attempts + 1;
       const isPermanent = attempts >= retryConfig.maxAttempts;
       const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
@@ -1220,12 +1357,6 @@ export class ReconcileLoop {
       // 3. Generate embedding
       const vector = await embeddingService.embed(text);
 
-      if (vector.length !== vectorStoreConfig.numDimensions) {
-        throw new Error(
-          `Embedding dimension mismatch: expected ${vectorStoreConfig.numDimensions}, got ${vector.length}`
-        );
-      }
-
       // 4. Save embedding blob
       const buffer = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
 
@@ -1287,12 +1418,6 @@ export class ReconcileLoop {
       // 2. Convert BLOB -> Float32Array
       const buffer = doc.embedding as Buffer;
       const vector = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
-
-      if (vector.length !== vectorStoreConfig.numDimensions) {
-        throw new Error(
-          `Indexing dimension mismatch: expected ${vectorStoreConfig.numDimensions}, got ${vector.length}`
-        );
-      }
 
       // 3. Upsert into HNSW index
       // Use vector_documents.id as numerical ID for HNSW

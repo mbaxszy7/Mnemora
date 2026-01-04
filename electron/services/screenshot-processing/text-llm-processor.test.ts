@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import { TextLLMProcessor } from "./text-llm-processor";
+import { generateObject } from "ai";
 import type { VLMIndexResult, VLMSegment } from "./schemas";
 import type {
   Batch,
@@ -20,6 +21,33 @@ import type {
   ExpandedContextNode,
   SourceKey,
 } from "./types";
+
+vi.mock("../usage/llm-usage-service", () => ({
+  llmUsageService: {
+    logEvent: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+vi.mock("../ai-sdk-service", () => ({
+  AISDKService: {
+    getInstance: vi.fn(() => ({
+      isInitialized: vi.fn(() => true),
+      getTextClient: vi.fn(),
+      getTextModelName: vi.fn(() => "test-model"),
+    })),
+  },
+}));
+
+vi.mock("ai", () => ({
+  generateObject: vi.fn(),
+}));
+
+vi.mock("../ai-failure-circuit-breaker", () => ({
+  aiFailureCircuitBreaker: {
+    recordFailure: vi.fn(),
+    isTripped: vi.fn(() => false),
+  },
+}));
 
 // ============================================================================
 // Test Helpers
@@ -184,6 +212,9 @@ describe("TextLLMProcessor", () => {
     createdNodes = []; // Clear tracked nodes
     nodeIdCounter = 1; // Reset counter
     vi.clearAllMocks();
+
+    // Default mock for generateObject to avoid failures
+    vi.mocked(generateObject).mockRejectedValue(new Error("AI SDK not configured in test"));
   });
 
   afterEach(() => {

@@ -5,7 +5,7 @@ import { vectorDocuments } from "../../database/schema";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
 import { vectorDocumentService } from "./vector-document-service";
-import { vectorStoreConfig } from "./config";
+
 import type { DrizzleDB } from "../../database";
 import type { PendingRecord } from "./types";
 
@@ -68,14 +68,10 @@ describe("ReconcileLoop - Vector Documents", () => {
   let reconcileLoop: ReconcileLoop;
   let mockDb: MockDB;
   const now = 1000;
-  const originalNumDimensions = vectorStoreConfig.numDimensions;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
-
-    // Default test dimension matches the mock embedding in embedding tests
-    vectorStoreConfig.numDimensions = 3;
 
     mockDb = {
       select: vi.fn().mockReturnThis(),
@@ -99,7 +95,6 @@ describe("ReconcileLoop - Vector Documents", () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
-    vectorStoreConfig.numDimensions = originalNumDimensions;
   });
 
   describe("processVectorDocumentEmbeddingRecord", () => {
@@ -196,8 +191,6 @@ describe("ReconcileLoop - Vector Documents", () => {
 
   describe("processVectorDocumentIndexRecord", () => {
     it("should process pending index record successfully", async () => {
-      // For index flow, align dimensions with the mock embedding below
-      vectorStoreConfig.numDimensions = 2;
       const mockRecord = {
         id: 1,
         table: "vector_documents" as const,

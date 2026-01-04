@@ -11,17 +11,27 @@
  */
 
 import crypto from "node:crypto";
-import { generateText } from "ai";
-import { z } from "zod";
+import { generateObject, LanguageModelUsage } from "ai";
 
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
 import { entityService } from "./entity-service";
 import { llmUsageService } from "../usage/llm-usage-service";
-import { parseTextLLMExpandResult } from "./schemas";
+import {
+  TextLLMExpandResultSchema,
+  TextLLMExpandResultProcessedSchema,
+  TextLLMMergeResultSchema,
+  TextLLMMergeResultProcessedSchema,
+} from "./schemas";
 
-import type { VLMIndexResult, VLMSegment, DerivedItem, TextLLMExpandResult } from "./schemas";
+import type {
+  VLMIndexResult,
+  VLMSegment,
+  DerivedItem,
+  TextLLMExpandResult,
+  TextLLMMergeResult,
+} from "./schemas";
 import type {
   Batch,
   ExpandedContextNode,
@@ -150,24 +160,6 @@ Return ONLY valid JSON object with fields:
 
 Do not output markdown or extra text.`;
 
-const TextLLMMergeResultSchema = z.object({
-  title: z.string().min(1).max(100),
-  summary: z.string().min(1).max(200),
-  keywords: z.array(z.string()).max(10).default([]),
-  entities: z
-    .array(
-      z.object({
-        name: z.string().min(1),
-        entity_id: z.number().int().positive().optional(),
-        entity_type: z.string().optional(),
-        confidence: z.number().min(0).max(1).optional(),
-      })
-    )
-    .default([]),
-});
-
-type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultSchema>;
-
 // ============================================================================
 // TextLLMProcessor Class
 // ============================================================================
@@ -210,14 +202,9 @@ export class TextLLMProcessor {
       // Convert segments to pending nodes (without LLM call for now - direct conversion)
       let pendingNodes: PendingNode[];
       try {
-        const rawExpansion = await this.callTextLLMForExpansion(vlmIndex, batch, evidencePacks);
-        const parsed = parseTextLLMExpandResult(rawExpansion);
-        if (!parsed.success || !parsed.data) {
-          throw new Error(
-            `Text LLM expand schema validation failed: ${parsed.error?.message ?? "unknown error"}`
-          );
-        }
-        pendingNodes = this.convertTextLLMExpandResultToPendingNodes(parsed.data);
+        pendingNodes = this.convertTextLLMExpandResultToPendingNodes(
+          await this.callTextLLMForExpansion(vlmIndex, batch, evidencePacks)
+        );
       } catch (error) {
         logger.warn(
           {
@@ -962,7 +949,7 @@ Return the JSON now:`;
     vlmIndex: VLMIndexResult,
     batch: Batch,
     evidencePacks: EvidencePack[]
-  ): Promise<unknown> {
+  ): Promise<TextLLMExpandResult> {
     const aiService = AISDKService.getInstance();
 
     if (!aiService.isInitialized()) {
@@ -971,16 +958,35 @@ Return the JSON now:`;
 
     const prompt = this.buildExpandPrompt(vlmIndex, batch, evidencePacks);
 
-    const { text: rawText, usage } = await generateText({
-      model: aiService.getTextClient(),
-      system: TEXT_LLM_SYSTEM_PROMPT,
-      messages: [
+    let rawResult: unknown;
+    let usage: LanguageModelUsage;
+
+    try {
+      const response = await generateObject({
+        model: aiService.getTextClient(),
+        system: TEXT_LLM_SYSTEM_PROMPT,
+        schema: TextLLMExpandResultSchema,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+      });
+      rawResult = response.object;
+      usage = response.usage;
+    } catch (err) {
+      logger.error(
         {
-          role: "user",
-          content: prompt,
+          error: err instanceof Error ? err.message : String(err),
+          batchId: batch.batchId,
         },
-      ],
-    });
+        "Text LLM expansion generateObject call failed"
+      );
+      throw err;
+    }
+
+    const result = TextLLMExpandResultProcessedSchema.parse(rawResult);
 
     llmUsageService.logEvent({
       ts: Date.now(),
@@ -993,29 +999,7 @@ Return the JSON now:`;
       usageStatus: usage ? "present" : "missing",
     });
 
-    // Parse response
-    return this.parseTextLLMResponse(rawText);
-  }
-
-  /**
-   * Parse Text LLM response
-   */
-  private parseTextLLMResponse(rawText: string): unknown {
-    let jsonStr = rawText.trim();
-
-    // Remove markdown code block if present
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1].trim();
-    }
-
-    // Try to find JSON object
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error("No JSON found in Text LLM response");
-    }
-
-    return JSON.parse(jsonMatch[0]);
+    return result as TextLLMExpandResult;
   }
 
   private buildMergePrompt(
@@ -1061,16 +1045,43 @@ Return the JSON object now:`;
     }
 
     const prompt = this.buildMergePrompt(existingNode, newNode);
-    const { text: rawText, usage } = await generateText({
-      model: aiService.getTextClient(),
-      system: TEXT_LLM_MERGE_SYSTEM_PROMPT,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
+    let rawResult: unknown;
+    let usage: LanguageModelUsage;
+
+    try {
+      const response = await generateObject({
+        model: aiService.getTextClient(),
+        system: TEXT_LLM_MERGE_SYSTEM_PROMPT,
+        schema: TextLLMMergeResultSchema,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        providerOptions: {
+          mnemora: {
+            thinking: {
+              type: "disabled",
+            },
+          },
         },
-      ],
-    });
+      });
+      rawResult = response.object;
+      usage = response.usage;
+    } catch (err) {
+      logger.error(
+        {
+          error: err instanceof Error ? err.message : String(err),
+          sourceId: existingNode.id,
+          targetId: newNode.id,
+        },
+        "Text LLM merge generateObject call failed"
+      );
+      throw err;
+    }
+
+    const result = TextLLMMergeResultProcessedSchema.parse(rawResult);
 
     // Log usage
     llmUsageService.logEvent({
@@ -1084,12 +1095,7 @@ Return the JSON object now:`;
       usageStatus: usage ? "present" : "missing",
     });
 
-    const parsed = this.parseTextLLMResponse(rawText);
-    const validated = TextLLMMergeResultSchema.safeParse(parsed);
-    if (!validated.success) {
-      throw new Error(`Text LLM merge schema validation failed: ${validated.error.message}`);
-    }
-    return validated.data;
+    return result as TextLLMMergeResult;
   }
 }
 

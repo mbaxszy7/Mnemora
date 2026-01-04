@@ -32,11 +32,12 @@ import { IPC_CHANNELS } from "@shared/ipc-types";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
 import { llmUsageService } from "../usage/llm-usage-service";
-import { generateText } from "ai";
+import { generateObject } from "ai";
 import {
   ActivityWindowSummaryLLMSchema,
+  ActivityWindowSummaryLLMProcessedSchema,
   ActivityEventDetailsLLMSchema,
-  extractAndParseJSON,
+  ActivityEventDetailsLLMProcessedSchema,
 } from "./schemas";
 
 import { activitySummaryConfig, retryConfig } from "./config";
@@ -749,11 +750,14 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         2
       );
 
-      const { text, usage } = await generateText({
+      const { object: rawData, usage } = await generateObject({
         model: aiService.getTextClient(),
         system: systemPrompt,
+        schema: ActivityWindowSummaryLLMSchema,
         prompt: userPrompt,
       });
+
+      const data = ActivityWindowSummaryLLMProcessedSchema.parse(rawData);
 
       // Log usage
       llmUsageService.logEvent({
@@ -767,12 +771,9 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         usageStatus: usage ? "present" : "missing",
       });
 
-      const parseResult = extractAndParseJSON(text, ActivityWindowSummaryLLMSchema);
-      if (!parseResult.success) {
-        throw new Error(`LLM output validation failed: ${parseResult.error}`);
+      if (!data) {
+        throw new Error("LLM output validation failed: null result from generateObject");
       }
-
-      const data = parseResult.data!;
 
       // 5. Save Summary
       const finalStats: ActivityStats = {
@@ -1050,11 +1051,14 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
         2
       );
 
-      const { text, usage } = await generateText({
+      const { object: rawData, usage } = await generateObject({
         model: aiService.getTextClient(),
         system: systemPrompt,
+        schema: ActivityEventDetailsLLMSchema,
         prompt: userPrompt,
       });
+
+      const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
 
       // Log usage
       llmUsageService.logEvent({
@@ -1068,15 +1072,14 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
         usageStatus: usage ? "present" : "missing",
       });
 
-      const parseResult = extractAndParseJSON(text, ActivityEventDetailsLLMSchema);
-      if (!parseResult.success) {
-        throw new Error(`LLM output validation failed: ${parseResult.error}`);
+      if (!data) {
+        throw new Error("LLM output validation failed: null result from generateObject");
       }
 
       await db
         .update(activityEvents)
         .set({
-          details: parseResult.data!.details,
+          details: data.details,
           detailsStatus: "succeeded",
           updatedAt: Date.now(),
         })

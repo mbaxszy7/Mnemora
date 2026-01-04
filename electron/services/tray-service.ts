@@ -65,6 +65,10 @@ export class TrayService {
     if (process.platform === "darwin") {
       return path.join(base, "logoTemplate@2x.png");
     }
+    // Windows requires .ico format for proper tray icon display
+    if (process.platform === "win32") {
+      return path.join(base, "logo.ico");
+    }
     return path.join(base, "logo.png");
   }
 

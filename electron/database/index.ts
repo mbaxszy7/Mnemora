@@ -93,18 +93,34 @@ class DatabaseService {
 
     this.logger.info("Running database migrations...");
 
-    // Get the migrations folder path
-    // In development: uses __dirname which points to dist-electron/
-    // In production: resources/app.asar.unpacked/dist-electron/database/migrations
-    const migrationsFolder = app.isPackaged
-      ? path.join(app.getAppPath(), "dist-electron", "migrations")
-      : path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations");
+    // Resolve migrations folder (supports dev, packaged, and unpacked-asar layouts)
+    const candidates: string[] = [];
 
-    this.logger.info({ migrationsFolder }, "Migrations folder");
+    // Allow explicit override for tests or custom setups
+    if (process.env.MIGRATIONS_DIR) {
+      candidates.push(process.env.MIGRATIONS_DIR);
+    }
 
-    // Check if migrations folder exists
-    if (!fs.existsSync(migrationsFolder)) {
-      this.logger.warn({ migrationsFolder }, "Migrations folder not found, skipping migrations");
+    // Packaged app: prefer unpacked resources path
+    candidates.push(
+      path.join(process.resourcesPath, "app.asar.unpacked", "dist-electron", "migrations"),
+      path.join(process.resourcesPath, "dist-electron", "migrations"),
+      path.join(app.getAppPath(), "dist-electron", "migrations"),
+      // Inside asar archive (Vite copies migrations to dist-electron/migrations)
+      path.join(process.resourcesPath, "app.asar", "dist-electron", "migrations")
+    );
+
+    // Dev paths (app.getAppPath points to project root/dist-electron)
+    candidates.push(
+      path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations")
+    );
+
+    const migrationsFolder = candidates.find((p) => fs.existsSync(p));
+
+    this.logger.info({ migrationsFolder, candidates }, "Migrations folder resolution");
+
+    if (!migrationsFolder) {
+      this.logger.warn({ candidates }, "Migrations folder not found, skipping migrations");
       return;
     }
 

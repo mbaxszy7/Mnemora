@@ -171,7 +171,7 @@ describe("ReconcileLoop", () => {
 
       await (reconcileLoop as unknown as { run: () => Promise<void> }).run();
 
-      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === 5 * 60 * 1000)).toBe(true);
+      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === 2 * 60 * 1000)).toBe(true);
 
       setTimeoutSpy.mockRestore();
     });

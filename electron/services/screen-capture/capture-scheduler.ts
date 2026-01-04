@@ -203,8 +203,6 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     try {
       let result: CaptureResult[] | null = null;
 
-      logger.info({ hasCaptureTask: !!this.captureTask }, "About to execute capture task");
-
       logger.info("Calling captureTask()...");
       result = await this.captureTask();
       logger.info("captureTask() completed");

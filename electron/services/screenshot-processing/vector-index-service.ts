@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import hnswlib from "hnswlib-node";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "../../database";
 import { vectorDocuments } from "../../database/schema";
 import { vectorStoreConfig } from "./config";
@@ -9,24 +9,49 @@ import { getLogger } from "../logger";
 
 const logger = getLogger("vector-index-service");
 
+// Default dimension if no embeddings exist yet
+const DEFAULT_DIMENSIONS = 1536;
+
 export class VectorIndexService {
   private index: hnswlib.HierarchicalNSW | null = null;
+  private detectedDimensions: number | null = null;
 
-  private assertNumDimensions(vector: Float32Array): void {
-    const { numDimensions } = vectorStoreConfig;
-    if (vector.length !== numDimensions) {
-      throw new Error(
-        `Invalid embedding dimensions: expected ${numDimensions}, got ${vector.length}`
-      );
+  /**
+   * Detect embedding dimensions from existing documents
+   */
+  private detectDimensionsFromDb(): number {
+    const db = getDb();
+    // Try to get dimensions from an existing embedding
+    const doc = db
+      .select({ embedding: vectorDocuments.embedding })
+      .from(vectorDocuments)
+      .where(isNotNull(vectorDocuments.embedding))
+      .limit(1)
+      .get();
+
+    if (doc?.embedding) {
+      const buffer = doc.embedding as Buffer;
+      const dims = buffer.byteLength / 4; // Float32 = 4 bytes
+      logger.info({ detectedDimensions: dims }, "Detected embedding dimensions from database");
+      return dims;
     }
+
+    logger.info(
+      { defaultDimensions: DEFAULT_DIMENSIONS },
+      "No existing embeddings, using default dimensions"
+    );
+    return DEFAULT_DIMENSIONS;
   }
 
   /**
    * Load the index from disk or create a fresh one
    */
   async load(): Promise<void> {
-    const { indexFilePath, numDimensions } = vectorStoreConfig;
+    const { indexFilePath } = vectorStoreConfig;
     const db = getDb();
+
+    // Detect dimensions from existing embeddings
+    this.detectedDimensions = this.detectDimensionsFromDb();
 
     // Calculate needed capacity
     const [{ value }] = db.select({ value: count() }).from(vectorDocuments).all();
@@ -41,7 +66,7 @@ export class VectorIndexService {
 
     if (fs.existsSync(indexFilePath)) {
       try {
-        this.index = new hnswlib.HierarchicalNSW("l2", numDimensions);
+        this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
         this.index.readIndexSync(indexFilePath);
 
         // Check if we need to resize immediately upon loading
@@ -56,6 +81,7 @@ export class VectorIndexService {
         logger.info(
           {
             path: indexFilePath,
+            dimensions: this.detectedDimensions,
             currentCount: this.index.getCurrentCount(),
             maxElements: this.index.getMaxElements(),
           },
@@ -93,10 +119,12 @@ export class VectorIndexService {
   }
 
   private createFreshIndex(capacity: number) {
-    const { numDimensions } = vectorStoreConfig;
-    this.index = new hnswlib.HierarchicalNSW("l2", numDimensions);
+    if (!this.detectedDimensions) {
+      this.detectedDimensions = this.detectDimensionsFromDb();
+    }
+    this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
     this.index.initIndex(capacity);
-    logger.info({ capacity }, "Created fresh vector index");
+    logger.info({ capacity, dimensions: this.detectedDimensions }, "Created fresh vector index");
   }
 
   /**
@@ -123,8 +151,6 @@ export class VectorIndexService {
       await this.load();
     }
     if (!this.index) throw new Error("Index not initialized");
-
-    this.assertNumDimensions(embedding);
 
     try {
       const currentCount = this.index.getCurrentCount();
@@ -160,8 +186,6 @@ export class VectorIndexService {
     if (!this.index || this.index.getCurrentCount() === 0) {
       return [];
     }
-
-    this.assertNumDimensions(queryEmbedding);
 
     try {
       // searchKnn returns { distances, neighbors }

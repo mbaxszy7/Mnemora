@@ -4,7 +4,6 @@ import path from "node:path";
 import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
 import { AISDKService } from "./services/ai-sdk-service";
 import { LLMConfigService } from "./services/llm-config-service";
-import { registerVLMHandlers } from "./ipc/vlm-handlers";
 import { registerI18nHandlers } from "./ipc/i18n-handlers";
 import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
@@ -33,9 +32,10 @@ process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
 
 // App icon path (for BrowserWindow and Dock)
+// Windows requires .ico format for proper icon display
 const appIconPath = path.join(
   VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST,
-  "logo.png"
+  process.platform === "win32" ? "logo.ico" : "logo.png"
 );
 
 // ============================================================================
@@ -223,7 +223,6 @@ class AppLifecycleController {
     }
 
     registerI18nHandlers();
-    registerVLMHandlers();
     registerLLMConfigHandlers();
     registerScreenCaptureHandlers();
     registerPermissionHandlers();

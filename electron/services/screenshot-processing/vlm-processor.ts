@@ -12,7 +12,7 @@
  */
 
 import fs from "node:fs/promises";
-import { generateText } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 import { inArray } from "drizzle-orm";
 
 import { getDb } from "../../database";
@@ -23,6 +23,7 @@ import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { vlmConfig } from "./config";
 import {
   VLMIndexResultSchema,
+  VLMIndexResultProcessedSchema,
   type VLMIndexResult,
   type VLMSegment,
   type VLMScreenshotMeta,
@@ -103,37 +104,41 @@ Subject identification:
 - "current_user" is the screen operator (the photographer of these screenshots).
 - Names visible in screenshots (people/orgs/etc.) are not automatically "current_user"; keep them as separate entities.
 
-## Output JSON (must be valid JSON and must follow this structure)
+## Output JSON (must be valid JSON and must follow this structure EXACTLY)
 {
   "segments": [
     {
       "segment_id": "seg_1",
       "screen_ids": [1, 2],
       "event": {
-        "title": "current_user ...",
-        "summary": "current_user ...",
+        "title": "current_user debugging CI pipeline in Jenkins",
+        "summary": "current_user reviewing failed build logs in Jenkins dashboard, investigating test failures",
         "confidence": 8,
         "importance": 7
       },
       "derived": {
-        "knowledge": [],
-        "state": [],
+        "knowledge": [
+          {"title": "Jenkins pipeline configuration", "summary": "Pipeline uses 3 stages: build, test, deploy. Source URL: https://jenkins.example.com/job/main"}
+        ],
+        "state": [
+          {"title": "CI build status", "summary": "Build #456 failed at test stage with 2 failing unit tests", "object": "Jenkins pipeline"}
+        ],
         "procedure": [],
         "plan": []
       },
       "merge_hint": {
         "decision": "NEW"
       },
-      "keywords": []
+      "keywords": ["debugging", "CI", "Jenkins", "build failure"]
     }
   ],
-  "entities": [],
+  "entities": ["Jenkins", "Build #456"],
   "screenshots": [
     {
       "screenshot_id": 123,
       "app_guess": { "name": "Google Chrome", "confidence": 0.82 },
       "ocr_text": "...",
-      "ui_text_snippets": ["..."]
+      "ui_text_snippets": ["Build #456 failed", "2 tests failed"]
     }
   ],
   "notes": "Optional notes"
@@ -153,26 +158,41 @@ Subject identification:
 - confidence: 0-10 based on clarity of evidence.
 - importance: 0-10 based on how valuable this activity would be for later recall/search.
 
-## derived rules (optional; max 2 items per list)
+## derived rules (CRITICAL - follow exact schema)
 - General: derived items must be grounded in visible evidence from the screenshots. Do NOT invent.
-- Derived item constraints (per item):
-  - title: <=100 chars
-  - summary: <=180 chars
-  - steps (procedure only): each step <=80 chars
-- knowledge: extract reusable knowledge points (docs, architecture, config meaning). Do NOT describe user actions. Knowledge can be extracted from any app. If the screenshots show a web browser (e.g. Chrome/Arc/Safari/Edge/Firefox/Brave) AND you output any derived.knowledge item, you MUST extract the visible URL from the address bar (preferred) or otherwise the clearly visible domain/page URL text. Include it verbatim in knowledge.summary using the format "Source URL: <url>". If no URL text is clearly visible, do NOT guess.
-- state: extract status/progress/metrics snapshots. Use neutral subjects (project/system/board). Set "object" when applicable (e.g. "CI pipeline", "Jira board", "Server CPU", "PR #123").
-- procedure: ONLY when the screenshots demonstrate a reusable multi-step process. Use "steps" with short actionable steps.
-- plan: ONLY when an explicit future plan/todo is visible.
+- **IMPORTANT: ALL derived items (knowledge, state, procedure, plan) MUST have exactly these fields:**
+  - "title": string (<=100 chars) - a short descriptive title
+  - "summary": string (<=180 chars) - a brief description
+  - "steps": array of strings (ONLY for procedure items, each step <=80 chars)
+  - "object": string (OPTIONAL, only for state items to specify what is being tracked)
+- **Max 2 items per derived category (knowledge, state, procedure, plan)**
 
-## merge_hint rules (thread continuity)
-- Default: "decision" = "NEW".
-- Use "MERGE" ONLY if this segment is clearly continuing the SAME activity thread from provided history:
-  - same concrete goal/task (event merge is strict)
-  - same context (app/window/topic) and logically time-continuous
-  - then set "thread_id" to the exact thread id from history
+### Derived item JSON examples (use EXACTLY this structure):
+- knowledge item: {"title": "API rate limiting rules", "summary": "Rate limit is 100 req/min per user. Source URL: https://docs.example.com/api"}
+- state item: {"title": "CI pipeline status", "summary": "Build #456 failed on test stage with 3 failing tests", "object": "CI pipeline"}
+- procedure item: {"title": "Deploy to production", "summary": "Standard deployment workflow for the main app", "steps": ["Run tests locally", "Create PR", "Wait for CI", "Merge and deploy"]}
+- plan item: {"title": "Refactor auth module", "summary": "Plan to migrate from JWT to session-based auth next sprint"}
+
+### What NOT to do (these will cause validation errors):
+- WRONG state: {"object": "Server", "status": "running", "details": "..."} - missing title and summary!
+- WRONG procedure: {"title": "...", "steps": [...]} - missing summary!
+- WRONG: more than 2 items in any derived category
+
+## merge_hint rules (thread continuity) - CRITICAL
+- Default: "decision" = "NEW" (use this in most cases)
+- Use "MERGE" ONLY if ALL of these conditions are met:
+  1. Recent threads are provided in the history context below
+  2. This segment is clearly continuing the SAME activity from a provided thread
+  3. You set "thread_id" to the EXACT thread_id from the provided history
+- **If no history is provided or you cannot match a thread_id, you MUST use "NEW"**
+- **NEVER use "MERGE" without providing a valid "thread_id" from the history**
 
 ## keywords rules
 - 0-10 short keywords that help search (topic + action). Avoid overly broad terms.
+
+## Length Limits
+- title: max 100 characters.
+- summary: max 500 characters. Be concise but descriptive. If the screen contains complex data (e.g. database schema, code logic, log errors), include specific details in the summary.
 
 ## entities rules
 - 0-20 canonical named entities across the whole batch (people/orgs/teams/apps/products/repos/projects/tickets like "ABC-123").
@@ -191,10 +211,13 @@ Subject identification:
 - If you see secrets (API keys, tokens, passwords, private keys), replace the sensitive part with "***".
 
 ## Hard rules
-1) Return ONLY JSON (no markdown, no code fences, no trailing commentary).
+1) Return ONLY a single JSON object matching the requested schema.
 2) Respect all max counts and length limits.
 3) Avoid abstract generalizations (e.g. "reviewed something", "worked on code"); include specific details visible in the screenshots.
-4) If something is absent, use empty arrays or omit optional fields; never hallucinate.`;
+4) If something is absent, use empty arrays or omit optional fields; never hallucinate.
+5) ALL segments MUST have an "event" object with "title" and "summary" - this is mandatory.
+6) ALL derived items MUST have "title" and "summary" fields - no exceptions.
+7) The output MUST be a valid JSON object. Do not include markdown code blocks or any other text.`;
 
 // ============================================================================
 // VLMProcessor Class
@@ -254,27 +277,35 @@ class VLMProcessor {
    * @returns VLM index result
    */
   async processShard(shard: Shard): Promise<VLMIndexResult> {
+    const processStartTime = Date.now();
+    const timings: Record<string, number> = {};
+
     const aiService = AISDKService.getInstance();
 
     if (!aiService.isInitialized()) {
       throw new Error("AI SDK not initialized");
     }
 
-    // Build request
+    // Build request with timing
+    const buildRequestStart = Date.now();
     const request = this.buildVLMRequest(shard);
+    timings.buildRequest = Date.now() - buildRequestStart;
 
     logger.debug(
       {
         shardIndex: shard.shardIndex,
         screenshotCount: shard.screenshots.length,
+        buildRequestMs: timings.buildRequest,
       },
-      "Processing shard through VLM"
+      "VLM request built, calling API"
     );
 
     try {
-      // Call VLM
-      const { text: rawText, usage } = await generateText({
+      // Call VLM with timing
+      const apiCallStart = Date.now();
+      const { object: rawResult, usage } = await generateObject({
         model: aiService.getVLMClient(),
+        schema: VLMIndexResultSchema,
         system: request.system,
         messages: [
           {
@@ -282,7 +313,27 @@ class VLMProcessor {
             content: request.userContent,
           },
         ],
+        providerOptions: {
+          mnemora: {
+            thinking: {
+              type: "disabled",
+            },
+          },
+        },
+        maxOutputTokens: vlmConfig.maxTokens,
       });
+
+      // Normalize and clean up the result using the processed schema
+      const result = VLMIndexResultProcessedSchema.parse(rawResult);
+      timings.apiCall = Date.now() - apiCallStart;
+
+      logger.debug(
+        {
+          shardIndex: shard.shardIndex,
+          apiCallMs: timings.apiCall,
+        },
+        "VLM API responded with structured object"
+      );
 
       // Log usage
       llmUsageService.logEvent({
@@ -296,20 +347,23 @@ class VLMProcessor {
         usageStatus: usage ? "present" : "missing",
       });
 
-      // Parse response
-      const result = this.parseVLMResponse(rawText);
+      const totalMs = Date.now() - processStartTime;
 
-      logger.debug(
+      logger.info(
         {
           shardIndex: shard.shardIndex,
+          totalMs,
+          timings,
           segmentCount: result.segments.length,
           entityCount: result.entities.length,
         },
-        "Successfully processed shard"
+        "Shard processed successfully"
       );
 
       return result;
     } catch (error) {
+      const totalMs = Date.now() - processStartTime;
+
       // Log failure usage (unknown tokens)
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -325,10 +379,24 @@ class VLMProcessor {
       logger.error(
         {
           shardIndex: shard.shardIndex,
+          totalMs,
+          timings,
           error: error instanceof Error ? error.message : String(error),
         },
         "Failed to process shard"
       );
+      if (NoObjectGeneratedError.isInstance(error)) {
+        logger.error(
+          {
+            cause: error.cause,
+            text: error.text,
+            response: error.response,
+            usage: error.usage,
+            finishReason: error.finishReason,
+          },
+          "NoObjectGeneratedError"
+        );
+      }
 
       // Record failure for circuit breaker
       aiFailureCircuitBreaker.recordFailure("vlm", error);
@@ -366,7 +434,7 @@ class VLMProcessor {
         {
           batchId: batch.batchId,
           failedCount: failedShards.length,
-          errors: failedShards.map((r) => r.error),
+          errors: failedShards.map((r) => r.error?.name),
         },
         "Some shards failed"
       );
@@ -473,169 +541,6 @@ class VLMProcessor {
       screenshots: mergedScreenshots,
       notes: notes || undefined,
     };
-  }
-
-  /**
-   * Parse VLM response text into structured result
-   *
-   *
-   *
-   * @param rawText - Raw text response from VLM
-   * @returns Parsed and validated VLM index result
-   */
-  parseVLMResponse(rawText: string): VLMIndexResult {
-    const rawTextPreview = rawText.length > 500 ? rawText.slice(0, 500) + "..." : rawText;
-    const rawTextLength = rawText.length;
-
-    logger.debug(
-      {
-        rawTextLength,
-        rawTextPreview,
-      },
-      "Parsing VLM response"
-    );
-
-    // Try to extract JSON
-    let jsonStr = rawText.trim();
-
-    // Remove markdown code block if present
-    const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (codeBlockMatch) {
-      jsonStr = codeBlockMatch[1].trim();
-      logger.debug("Removed markdown code block from VLM response");
-    }
-
-    // Try to find JSON object
-    const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      // Try to repair and retry
-      logger.debug("No JSON object found in raw response, attempting repair");
-      const repaired = this.repairVLMResponse(rawText);
-      const repairedMatch = repaired.match(/\{[\s\S]*\}/);
-      if (!repairedMatch) {
-        logger.error(
-          {
-            rawTextLength,
-            rawTextPreview,
-            repairedPreview: repaired.length > 500 ? repaired.slice(0, 500) + "..." : repaired,
-          },
-          "VLM parse error: NO_JSON_FOUND - No JSON object found even after repair"
-        );
-        throw new VLMParseError("NO_JSON_FOUND", rawText);
-      }
-      jsonStr = repairedMatch[0];
-      logger.debug("JSON object found after repair");
-    } else {
-      jsonStr = jsonMatch[0];
-    }
-
-    const jsonStrPreview = jsonStr.length > 500 ? jsonStr.slice(0, 500) + "..." : jsonStr;
-
-    // Parse JSON
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(jsonStr);
-    } catch (e) {
-      const parseError = e instanceof Error ? e.message : String(e);
-      logger.debug(
-        {
-          parseError,
-          jsonStrPreview,
-        },
-        "Initial JSON.parse failed, attempting repair"
-      );
-
-      // Try repair
-      const repaired = this.repairVLMResponse(jsonStr);
-      const repairedPreview = repaired.length > 500 ? repaired.slice(0, 500) + "..." : repaired;
-
-      try {
-        parsed = JSON.parse(repaired);
-        logger.debug("JSON parsed successfully after repair");
-      } catch (repairError) {
-        const repairParseError =
-          repairError instanceof Error ? repairError.message : String(repairError);
-        logger.error(
-          {
-            rawTextLength,
-            rawTextPreview,
-            jsonStrPreview,
-            repairedPreview,
-            originalParseError: parseError,
-            repairParseError,
-          },
-          "VLM parse error: JSON_PARSE_FAILED - JSON.parse failed even after repair"
-        );
-        throw new VLMParseError("JSON_PARSE_FAILED", rawText, parseError);
-      }
-    }
-
-    // Validate with Zod
-    const result = VLMIndexResultSchema.safeParse(parsed);
-    if (!result.success) {
-      // Extract more useful error info from Zod
-      const zodErrors = result.error.issues.map((issue) => ({
-        path: issue.path.join("."),
-        code: issue.code,
-        message: issue.message,
-      }));
-
-      logger.error(
-        {
-          rawTextLength,
-          rawTextPreview,
-          jsonStrPreview,
-          zodErrors,
-          parsedKeys: typeof parsed === "object" && parsed ? Object.keys(parsed) : [],
-        },
-        "VLM parse error: SCHEMA_VALIDATION_FAILED - Zod schema validation failed"
-      );
-      throw new VLMParseError("SCHEMA_VALIDATION_FAILED", rawText, result.error.message);
-    }
-
-    logger.debug(
-      {
-        segmentCount: result.data.segments.length,
-        entityCount: result.data.entities.length,
-        screenshotCount: result.data.screenshots?.length ?? 0,
-      },
-      "VLM response parsed successfully"
-    );
-
-    return result.data;
-  }
-
-  /**
-   * Repair common JSON format issues in VLM response
-   *
-   * @param rawText - Raw text that may have JSON issues
-   * @returns Repaired text
-   */
-  repairVLMResponse(rawText: string): string {
-    let text = rawText;
-
-    // Remove markdown code blocks
-    text = text.replace(/```(?:json)?\s*/g, "").replace(/```/g, "");
-
-    // Remove trailing commas before closing brackets
-    text = text.replace(/,(\s*[}\]])/g, "$1");
-
-    // Fix unquoted keys (simple cases)
-    text = text.replace(/([{,]\s*)(\w+)(\s*:)/g, '$1"$2"$3');
-
-    // Fix single quotes to double quotes
-    text = text.replace(/'/g, '"');
-
-    // Remove control characters
-    text = text.replace(/[\p{Cc}]/gu, " ");
-
-    // Try to extract just the JSON object
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) {
-      text = match[0];
-    }
-
-    return text;
   }
 
   /**
@@ -766,8 +671,11 @@ ${appCandidatesJson}
 ${historySection}
 ## Field-by-field requirements
 - segments: max 4. Titles/summaries must be specific and human-readable. Keep confidence/importance on 0-10.
-- merge_hint: Use MERGE only when clearly continuing a provided thread_id; otherwise NEW.
-- derived: Only factual items visible in images; max 2 per category; keep steps short.
+- merge_hint: Use MERGE only when clearly continuing a provided thread_id from the history above; otherwise ALWAYS use NEW. Never use MERGE without a valid thread_id.
+- derived: CRITICAL SCHEMA - every derived item (knowledge/state/procedure/plan) MUST have both "title" and "summary" fields. Max 2 per category.
+  - Example state: {"title": "Build status", "summary": "CI build #123 failed on tests", "object": "CI pipeline"}
+  - Example procedure: {"title": "Deploy workflow", "summary": "Steps to deploy to prod", "steps": ["Build", "Test", "Deploy"]}
+  - WRONG: {"object": "X", "status": "Y", "details": "Z"} - this is INVALID, missing title/summary!
 - entities: Only meaningful named entities (person/project/team/org/app/repo/issue/ticket). Exclude generic tech/library/runtime terms (npm, node_modules, yarn, dist, build, .git), file paths, URLs without names, commands, or placeholders. Use canonical names; dedupe.
 - screenshots: For each screenshot_id from the metadata:
   - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).

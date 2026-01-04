@@ -426,12 +426,12 @@ export class CaptureService implements ICaptureService {
 
     const sorted = [...filtered].sort((a, b) => a.name.localeCompare(b.name));
 
-    logger.info(
-      {
-        hybridSources,
-      },
-      "App info retrieved (mac hybrid cross-space)"
-    );
+    // logger.info(
+    //   {
+    //     hybridSources,
+    //   },
+    //   "App info retrieved (mac hybrid cross-space)"
+    // );
 
     return sorted;
   }

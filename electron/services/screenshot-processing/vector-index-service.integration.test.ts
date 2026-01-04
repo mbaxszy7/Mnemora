@@ -33,7 +33,7 @@ describe("VectorIndexService (integration with hnswlib-node)", () => {
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hnsw-test-"));
     vectorStoreConfig.indexFilePath = path.join(tmpDir, "index.bin");
-    vectorStoreConfig.numDimensions = 4;
+
     service = new VectorIndexService();
     mockDb.select.mockClear();
     mockDb.update.mockClear();
@@ -41,7 +41,7 @@ describe("VectorIndexService (integration with hnswlib-node)", () => {
 
   afterEach(() => {
     vectorStoreConfig.indexFilePath = originalConfig.indexFilePath;
-    vectorStoreConfig.numDimensions = originalConfig.numDimensions;
+
     if (fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -75,17 +75,6 @@ describe("VectorIndexService (integration with hnswlib-node)", () => {
     expect(result[0]?.docId).toBe(1);
   });
 
-  it("throws on dimension mismatch for upsert/search", async () => {
-    await service.load();
-    await expect(service.upsert(1, new Float32Array([1, 2]))).rejects.toThrow(
-      /Invalid embedding dimensions/
-    );
-
-    await service.upsert(1, new Float32Array([0, 0, 0, 0]));
-    await service.flush();
-
-    await expect(service.search(new Float32Array([1, 2]), 1)).rejects.toThrow(
-      /Invalid embedding dimensions/
-    );
-  });
+  // Dimension checks have been removed - the service now dynamically detects dimensions
+  // from existing embeddings in the database
 });

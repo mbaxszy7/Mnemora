@@ -323,7 +323,7 @@ export class LLMConfigService {
     logger.debug("Validating vision capability");
 
     try {
-      // Minimal 1x1 transparent PNG as base64
+      // Minimal 1x1 red pixel PNG as base64
       const minimalPng =
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
 
@@ -334,11 +334,10 @@ export class LLMConfigService {
             role: "user",
             content: [
               { type: "text", text: "What is in this image? Reply in one word." },
-              { type: "image", image: `data:image/png;base64,${minimalPng}` },
+              { type: "image", image: Buffer.from(minimalPng, "base64") },
             ],
           },
         ],
-        maxOutputTokens: 10,
       });
 
       logger.debug("Vision validation successful");

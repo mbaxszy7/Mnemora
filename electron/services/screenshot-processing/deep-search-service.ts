@@ -6,15 +6,17 @@
  * - Answer Synthesis: Generate structured answers from search results
  */
 
-import { generateText } from "ai";
-import { z } from "zod";
-
+import { generateObject } from "ai";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { llmUsageService } from "../usage/llm-usage-service";
-import { extractAndParseJSON } from "./schemas";
-
+import {
+  SearchQueryPlanSchema,
+  SearchQueryPlanProcessedSchema,
+  SearchAnswerSchema,
+  SearchAnswerProcessedSchema,
+} from "./schemas";
 import type {
   SearchQueryPlan,
   SearchAnswer,
@@ -49,68 +51,6 @@ const MAX_KEYWORDS_PER_NODE = 10;
 // const MAX_CHARS_PER_UI_SNIPPET = 100;
 
 const CANONICAL_APP_CANDIDATES = getCanonicalAppCandidates();
-
-// ============================================================================
-// Zod Schemas for LLM Output Validation
-// ============================================================================
-
-const SearchQueryPlanSchema = z.object({
-  embeddingText: z.string().min(1),
-  filtersPatch: z
-    .object({
-      timeRange: z
-        .object({
-          start: z.number(),
-          end: z.number(),
-        })
-        .optional(),
-      appHint: z
-        .string()
-        .optional()
-        .refine(
-          (v) => v === undefined || CANONICAL_APP_CANDIDATES.includes(v),
-          "appHint must be a canonical app name from Canonical App Candidates"
-        ),
-      entities: z.array(z.string()).max(20).optional(),
-      // Note: threadId is NOT allowed in filtersPatch (user-controlled only)
-    })
-    .optional(),
-  kindHint: z
-    .enum(["event", "knowledge", "state_snapshot", "procedure", "plan", "entity_profile"])
-    .optional(),
-  extractedEntities: z.array(z.string()).max(20).optional(),
-  timeRangeReasoning: z.string().optional(),
-  confidence: z.number().min(0).max(1),
-});
-
-const SearchAnswerCitationSchema = z
-  .object({
-    nodeId: z.number().int().positive().optional(),
-    screenshotId: z.number().int().positive().optional(),
-    quote: z.string().max(80).optional(),
-  })
-  .refine((c) => c.nodeId !== undefined || c.screenshotId !== undefined, {
-    message: "Each citation must include at least nodeId or screenshotId",
-  });
-
-const SearchAnswerSchema = z
-  .object({
-    answerTitle: z.string().max(100).optional(),
-    answer: z.string().min(1),
-    bullets: z.array(z.string()).max(8).optional(),
-    citations: z.array(SearchAnswerCitationSchema).max(20).default([]),
-    followUps: z.array(z.string()).max(5).optional(),
-    confidence: z.number().min(0).max(1),
-  })
-  .superRefine((value, ctx) => {
-    if (value.confidence > 0.2 && value.citations.length === 0) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "citations must be non-empty when confidence > 0.2",
-        path: ["citations"],
-      });
-    }
-  });
 
 // ============================================================================
 // System Prompts
@@ -269,9 +209,10 @@ User query: "${query}"
 
 Parse this query and return the structured search parameters.`;
 
-      const result = await generateText({
+      const { object: rawResult, usage } = await generateObject({
         model: aiService.getTextClient(),
         system: QUERY_UNDERSTANDING_SYSTEM_PROMPT,
+        schema: SearchQueryPlanSchema,
         prompt,
         abortSignal,
         providerOptions: {
@@ -283,8 +224,13 @@ Parse this query and return the structured search parameters.`;
         },
       });
 
+      const parsed = SearchQueryPlanProcessedSchema.parse(rawResult);
+      if (!parsed) {
+        logger.warn("Query understanding: null result from generateObject");
+        return null;
+      }
+
       // Track usage
-      const usage = result.usage;
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -295,18 +241,12 @@ Parse this query and return the structured search parameters.`;
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
 
-      const parsed = extractAndParseJSON(result.text, SearchQueryPlanSchema);
-      if (!parsed.success || !parsed.data) {
-        logger.warn({ error: parsed.error }, "Query understanding: schema validation failed");
-        return null;
-      }
-
       logger.debug(
-        { durationMs: Date.now() - startTime, confidence: parsed.data.confidence },
+        { durationMs: Date.now() - startTime, confidence: parsed.confidence },
         "Query understanding completed"
       );
 
-      return parsed.data;
+      return parsed;
     } catch (error) {
       const duration = Date.now() - startTime;
 
@@ -376,9 +316,10 @@ Parse this query and return the structured search parameters.`;
         globalSummary
       );
 
-      const result = await generateText({
+      const { object: rawResult, usage } = await generateObject({
         model: aiService.getTextClient(),
         system: ANSWER_SYNTHESIS_SYSTEM_PROMPT,
+        schema: SearchAnswerSchema,
         prompt,
         abortSignal,
         providerOptions: {
@@ -390,8 +331,9 @@ Parse this query and return the structured search parameters.`;
         },
       });
 
+      const parsed = SearchAnswerProcessedSchema.parse(rawResult);
+
       // Track usage
-      const usage = result.usage;
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -401,19 +343,17 @@ Parse this query and return the structured search parameters.`;
         totalTokens: usage?.totalTokens ?? null,
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
-
-      const parsed = extractAndParseJSON(result.text, SearchAnswerSchema);
-      if (!parsed.success || !parsed.data) {
-        logger.warn({ error: parsed.error }, "Answer synthesis: schema validation failed");
+      if (!parsed) {
+        logger.warn("Answer synthesis: null result from generateObject");
         return null;
       }
 
       logger.debug(
-        { durationMs: Date.now() - startTime, confidence: parsed.data.confidence },
+        { durationMs: Date.now() - startTime, confidence: parsed.confidence },
         "Answer synthesis completed"
       );
 
-      return parsed.data;
+      return parsed;
     } catch (error) {
       const duration = Date.now() - startTime;
 

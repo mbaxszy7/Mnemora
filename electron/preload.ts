@@ -1,6 +1,5 @@
 import { ipcRenderer, contextBridge } from "electron";
 import { IPC_CHANNELS, IPCResult, type MonitoringOpenDashboardResult } from "@shared/ipc-types";
-import type { VLMAnalyzeRequest, VLMAnalyzeResponse, VLMStatusResponse } from "@shared/vlm-types";
 import type { SupportedLanguage } from "@shared/i18n-types";
 import type {
   LLMConfig,
@@ -33,14 +32,6 @@ import type {
   ActivityTimelineChangedPayload,
 } from "@shared/activity-types";
 
-/**
- * VLM API exposed to renderer process
- */
-export interface VLMApi {
-  analyze(imageData: string, mimeType: string): Promise<VLMAnalyzeResponse>;
-  getStatus(): Promise<IPCResult<VLMStatusResponse>>;
-}
-
 export interface I18nApi {
   changeLanguage(lang: SupportedLanguage): Promise<void>;
   getLanguage(): Promise<SupportedLanguage>;
@@ -66,21 +57,6 @@ contextBridge.exposeInMainWorld("ipcRenderer", {
     return ipcRenderer.invoke(channel, ...omit);
   },
 });
-
-// --------- Expose VLM API to the Renderer process ---------
-const vlmApi: VLMApi = {
-  async analyze(imageData: string, mimeType: string): Promise<VLMAnalyzeResponse> {
-    const request: VLMAnalyzeRequest = { imageData, mimeType };
-    return ipcRenderer.invoke(IPC_CHANNELS.VLM_ANALYZE, request);
-  },
-
-  async getStatus(): Promise<IPCResult<VLMStatusResponse>> {
-    return ipcRenderer.invoke(IPC_CHANNELS.VLM_STATUS);
-  },
-};
-
-contextBridge.exposeInMainWorld("vlmApi", vlmApi);
-
 // --------- Expose i18n API to the Renderer process ---------
 const i18nApi: I18nApi = {
   async changeLanguage(lang: SupportedLanguage): Promise<void> {

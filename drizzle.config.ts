@@ -25,7 +25,10 @@ export default defineConfig({
   // Development database for drizzle-kit commands
   // This is NOT the production database
   dbCredentials: {
-    url: "/Users/yanzheyu/Library/Application Support/Mnemora/mnemora.db",
+    url:
+      process.platform === "win32"
+        ? "C:/Users/aqcze/AppData/Roaming/Mnemora/mnemora.db"
+        : "/Users/yanzheyu/Library/Application Support/Mnemora/mnemora.db",
   },
 
   // Verbose logging during development

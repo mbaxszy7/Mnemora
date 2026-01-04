@@ -10,18 +10,6 @@ export {
   toIPCError,
 } from "./ipc-types";
 
-// VLM Types
-export {
-  VLMResponseSchema,
-  type VLMResponse,
-  type VLMAnalyzeRequest,
-  type VLMAnalyzeResponse,
-  type VLMStatusResponse,
-  SUPPORTED_IMAGE_TYPES,
-  type SupportedImageType,
-  MAX_IMAGE_SIZE,
-} from "./vlm-types";
-
 // LLM Configuration Types
 export {
   type LLMConfigMode,

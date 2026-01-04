@@ -6,11 +6,13 @@ import { getLogger } from "../logger";
 import { metricsCollector } from "./metrics-collector";
 import { queueInspector } from "./queue-inspector";
 import { aiErrorStream } from "./ai-error-stream";
+import { aiRequestTraceBuffer } from "./ai-request-trace";
 import { mainI18n } from "../i18n-service";
 import type {
   SSEMessage,
   MetricsSnapshot,
   AIErrorEvent,
+  AIRequestTrace,
   HealthSummary,
   InitPayload,
 } from "./monitoring-types";
@@ -42,14 +44,6 @@ interface SSEClient {
  * Local HTTP server for performance monitoring dashboard.
  * Binds only to 127.0.0.1 for security.
  *
- * Routes:
- * - GET /           - Performance dashboard HTML
- * - GET /ai-errors  - AI errors dashboard HTML
- * - GET /health     - Health check JSON
- * - GET /api/stream - SSE metrics stream
- * - GET /api/locale - Current language setting
- * - GET /api/queue  - Current queue status
- * - GET /api/errors - Recent AI errors
  */
 export class MonitoringServer {
   private static instance: MonitoringServer | null = null;
@@ -68,6 +62,10 @@ export class MonitoringServer {
 
   private onAIError = (event: AIErrorEvent) => {
     this.broadcastMessage({ type: "ai_error", data: event });
+  };
+
+  private onAIRequestTrace = (trace: AIRequestTrace) => {
+    this.broadcastMessage({ type: "ai_request", data: trace });
   };
 
   private constructor() {}
@@ -203,8 +201,8 @@ export class MonitoringServer {
     // Route handling
     if (url === "/" || url === "/index.html") {
       this.serveStaticFile(res, "dashboard.html", "text/html");
-    } else if (url === "/ai-errors" || url === "/ai-errors.html") {
-      this.serveStaticFile(res, "ai-errors.html", "text/html");
+    } else if (url === "/ai-monitor" || url === "/ai-monitor.html") {
+      this.serveStaticFile(res, "ai-monitor.html", "text/html");
     } else if (url === "/health") {
       this.handleHealthCheck(res);
     } else if (url === "/api/stream") {
@@ -217,6 +215,8 @@ export class MonitoringServer {
       void this.handleRecentErrors(res);
     } else if (url === "/api/error-rates") {
       void this.handleErrorRates(res);
+    } else if (url === "/api/ai-requests") {
+      this.handleAIRequests(res);
     } else {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Not found" }));
@@ -292,6 +292,17 @@ export class MonitoringServer {
     } catch {
       res.writeHead(500, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ error: "Failed to get error rates" }));
+    }
+  }
+
+  private handleAIRequests(res: http.ServerResponse): void {
+    try {
+      const traces = aiRequestTraceBuffer.getRecent();
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(traces));
+    } catch {
+      res.writeHead(500, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Failed to get AI requests" }));
     }
   }
 
@@ -457,6 +468,7 @@ export class MonitoringServer {
 
     metricsCollector.on("metrics", this.onMetrics);
     aiErrorStream.on("error", this.onAIError);
+    aiRequestTraceBuffer.on("trace", this.onAIRequestTrace);
 
     this.startQueuePolling();
   }
@@ -472,6 +484,7 @@ export class MonitoringServer {
 
     metricsCollector.off("metrics", this.onMetrics);
     aiErrorStream.off("error", this.onAIError);
+    aiRequestTraceBuffer.off("trace", this.onAIRequestTrace);
 
     metricsCollector.stop();
     aiErrorStream.stop();

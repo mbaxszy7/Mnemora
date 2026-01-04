@@ -77,7 +77,14 @@ class LoggerService {
       if (this.isProd()) {
         this.trimLogFile();
       } else {
-        fs.unlinkSync(this.logFile);
+        try {
+          fs.unlinkSync(this.logFile);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException | undefined)?.code;
+          if (code !== "ENOENT") {
+            throw error;
+          }
+        }
       }
     }
 

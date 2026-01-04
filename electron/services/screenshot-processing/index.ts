@@ -8,12 +8,8 @@
 // Export types
 export * from "./types";
 
-// Export schemas
-export * from "./schemas";
-
 // Export configuration
 export {
-  getConfig,
   batchConfig,
   vlmConfig,
   phashConfig,
@@ -23,16 +19,6 @@ export {
   reconcileConfig,
   activitySummaryConfig,
   vectorStoreConfig,
-  type BatchConfig,
-  type VLMConfig,
-  type PHashConfig,
-  type RetryConfig,
-  type HistoryPackConfig,
-  type EvidenceConfig,
-  type ReconcileConfig,
-  type ActivitySummaryConfig,
-  type VectorStoreConfig,
-  type ScreenshotProcessingConfig,
 } from "./config";
 
 // Export pHash deduplication
@@ -47,7 +33,7 @@ export {
 } from "./source-buffer-registry";
 
 // Export source buffer config
-export { sourceBufferConfig, type SourceBufferConfig } from "./config";
+export { sourceBufferConfig } from "./config";
 
 // Export batch builder
 export { BatchBuilder, batchBuilder } from "./batch-builder";

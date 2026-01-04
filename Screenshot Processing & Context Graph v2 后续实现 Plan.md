@@ -1215,6 +1215,141 @@ i18n：在 `shared/locales/en.json` 与 `zh-CN.json` 增加 `usage.*` 文案。
 
 ---
 
+## Milestone 8 — ReconcileLoop 根本调和优化 + VLM/LLM 稳定性 + AI Request Trace（不入库）
+
+### 目的
+
+- 从根本优化 `electron/services/screenshot-processing/reconcile-loop.ts` 的调和与并发，做到：
+  - VLM 慢不会拖垮 embedding/index/merge/activity 等其它队列
+  - 并发可控（不会把 provider/本机拖死），且具备“公平调度”
+  - 各任务的状态机更清晰（尤其是 batch 内 VLM 与 Text LLM 的“部分成功”）
+- 提升 VLM/Text LLM 的**结构化输出稳定性**与“防截断/防慢”的工程治理（schema + prompt + max token + timeout）。
+- 在 Monitoring Dashboard 中加入**最近 20 条** VLM / Text LLM / Embedding 请求的：
+  - 耗时
+  - 成功响应（JSON pretty 展示）
+  - 失败 error（含 errorCode/message 与关键上下文）
+  - 明确：这些数据**不入库**，只保存在内存环形缓冲中。
+
+### A) ReconcileLoop：调和与并发调度（核心改造）
+
+- **[改造] “claim + worker pool” 调度模型**
+  - 目标：避免“扫一批然后串行处理/粗粒度并行”导致的饥饿与不可控并发。
+  - 为每种任务类型增加“claim 阶段”与“处理阶段”分离：
+    - claim：挑选 due items，并用 **条件 update** 抢占（把 `status` 从 `pending/failed` 原子地置为 `running`；更新 `updatedAt`）。
+    - 处理：只处理 claim 成功的 items；处理结束再写回 `succeeded/failed`。
+  - 需要解决的问题：避免同一条任务在同一进程的并发分支（或未来多进程）被重复处理。
+
+- **[新增] 各队列独立并发配置（可控且可调）**
+  - `batchConcurrency`（已有）：控制 batch-level VLM/TextLLM 任务并发。
+  - 新增建议：
+    - `mergeConcurrency`
+    - `vectorEmbeddingConcurrency`
+    - `vectorIndexConcurrency`
+    - `activitySummaryConcurrency`
+    - `eventDetailsConcurrency`
+
+- **[新增] 外部 AI 调用的“全局 semaphore”**
+  - 背景：目前 `vlmConcurrency` 仅限制 shard 内并发，不限制“跨 batch 的总体并发”。
+  - 方案：增加 capability-level semaphore：
+    - `vlmGlobalConcurrency`
+    - `textGlobalConcurrency`
+    - `embeddingGlobalConcurrency`
+  - 目标：即使 reconcile-loop 并发调度打开，也不会把 provider 拉爆或触发严重排队/限流。
+
+- **[改造] Batch 状态机拆分（避免 Text LLM 失败后 batch 被标记 succeeded 且无法重试）**
+  - 问题：VLM 成功但 Text LLM 失败时，若直接将 `batches.status` 标为 `succeeded`，会导致 graph 永久缺失且无法补偿。
+  - 方案选一（推荐 B，状态机更清晰）：
+    - A) 在 `batches` 上新增 `textStatus/textAttempts/textNextRunAt/textError*` 字段。
+    - B) 新增 `batch_tasks` 表（`batchId + taskType(vlm|text)` 作为幂等键），以更通用方式承载“同一 batch 的多阶段任务”。
+
+- **[改造] Index flush 策略（避免每次 upsert 都 sync flush 导致卡顿）**
+  - 方案：
+    - 在 reconcile-loop 内对 index upsert 做批处理：处理 N 条或到达时间阈值才 `flush()`。
+    - 或在 VectorIndexService 内部引入 debounce 定时 flush。
+  - 目标：降低磁盘 IO 对 event loop 的影响，提升吞吐。
+
+- **[改造] VectorIndexService 初始化 singleflight + 读写互斥（防并发初始化/并发读写）**
+  - 背景：search 与 index 可能并发触发 `load()`；且 upsert/flush 与 search 可能交错。
+  - 方案：
+    - `loadPromise` singleflight：并发调用共享一次 load。
+    - `mutex`（轻量 promise lock）：序列化 upsert/flush；search 可允许并发或与写互斥（按库安全性决定）。
+
+### B) VLM/Text LLM：稳定输出 + 防慢/防截断治理（schema + prompt + tokens）
+
+- **[改造] Schema：尽量“纠错/降级”而不是“硬失败”**
+  - 目标：减少 `NoObjectGeneratedError` 触发频率，让系统进入“可恢复的低质量输出”，而不是整批失败。
+  - 建议：
+    - `merge_hint`：当 `decision='MERGE'` 但缺少 `thread_id` 时，processed schema 将其**降级为 `NEW`**（而不是 refine 抛错）。
+    - 对可控上限字段（segments/derived/entities/snippets）用 `.max(...)` 提示模型，并在 processed schema 再做截断兜底。
+
+- **[改造] Prompt：控制输出体积（减少慢与截断的根因）**
+  - VLM 侧：
+    - 不强制每张图都输出长 `ocr_text`；默认只输出 `ui_text_snippets`（高信号、短）。
+    - `ocr_text` 仅在“明显是文本密集文档/网页/日志”时输出，并要求尽量短。
+    - 进一步减少重复说明与过长示例，避免 prompt 体积膨胀。
+  - Text LLM 侧：
+    - 已把 batch-level `vlmIndex.entities` 明确传入，这有利于 entity 稳定；继续保持。
+    - 增加明确的字段长度预算（而不仅仅是“<=200 chars”），避免模型过度输出。
+
+- **[新增] 统一 timeout + retry 策略（AbortController）**
+  - 为 `generateObject`/`embed` 增加 abortSignal：
+    - VLM shard：例如 60-120s 超时
+    - Text LLM：例如 30-60s 超时
+    - Embedding：例如 15-30s 超时
+  - 超时后的降级：
+    - VLM：重试时提示“只输出 segments/event/merge_hint，省略 screenshots.ocr_text/ui_text_snippets”等可选字段。
+    - Text LLM：失败则回退到 direct conversion（当前已具备）。
+
+- **[可选增强] 图像预处理以降低 VLM latency**
+  - 将输入图片在本地做：resize（例如最长边 1024/1280）+ JPEG 压缩（质量 60~80），显著降低上传与模型视觉编码成本。
+  - 注意：需要评估 Electron 打包与 native 依赖（如 `sharp`）风险；如不希望引入 native，可先做最小 resize（或通过现有依赖实现）。
+
+### C) Monitoring：最近 20 条 VLM/Text/Embedding 请求 trace（不入库）
+
+- **[新增] In-memory `AIRequestTraceBuffer`（RingBuffer）**
+  - 仅存最近 N 条（N=20 或每 capability 20）：
+    - `ts`
+    - `capability`（vlm/text/embedding）
+    - `operation`（如 `vlm_analyze_shard`/`text_expand`/`text_merge`/`embedding_node`/`deep_search_understand_query` 等）
+    - `model`
+    - `durationMs`
+    - `status`（succeeded/failed）
+    - `responsePreview`（成功时：JSON stringify pretty + 字符预算截断）
+    - `errorPreview`（失败时：errorCode/message +（可选）finishReason 等）
+  - 严格限制体积：每条 trace 的 response/error 做字符预算（例如 12k chars），避免监控本身造成内存问题。
+
+- **[集成点] 统一在 AI 调用封装处埋点**
+  - VLM：`vlm-processor.ts`（shard 级）
+  - Text：`text-llm-processor.ts`（expand/merge） + `deep-search-service.ts`（understand/synthesize）
+  - Embedding：`embedding-service.ts`
+  - 目标：trace 的口径与 `llmUsageService` 对齐，但 trace 不入库。
+
+- **[监控 server] 增加 API 与 SSE 推送**
+  - 新增 route：
+    - `GET /api/ai-requests`：返回最近 traces（按 capability 分组）
+  - 新增 SSE message type：`ai_request`（实时推送新增 trace；用于页面实时刷新）
+  - 保持现有背压/丢弃策略（不能让慢浏览器拖垮主进程）。
+
+- **[监控 UI] 新增 AI Requests 面板**
+  - 展示：最近 20 条请求列表（capability/operation/model/duration/status）
+  - 点击展开：
+    - 成功：pretty JSON
+    - 失败：errorCode/message +（如有）finishReason
+  - 明确“不入库”：刷新页面/重启应用数据丢失属于预期。
+
+### 验收标准（DoD）
+
+- ReconcileLoop：
+  - 慢 VLM 不会阻塞 embedding/index/merge/activity 的推进。
+  - 并发可控（全局 semaphore 生效），不会出现明显的 provider 排队/限流雪崩。
+  - batch 内 VLM 与 Text LLM 的阶段失败可重试，不会出现“VLM 成功但 Text LLM 永久缺失”的不可恢复状态。
+- VLM/Text：
+  - `NoObjectGeneratedError`（特别是 length/truncation）显著下降；即使发生也能通过降级 prompt 自动恢复。
+  - 输出 JSON 字段更稳定（长度/数量约束一致，且 processed schema 可兜底截断/修正）。
+- Monitoring：
+  - 面板可看到最近 20 条 VLM/Text/Embedding 请求的耗时与响应/错误详情（JSON pretty）。
+  - 不写 DB；关闭/刷新面板不影响主流程。
+
 # 必须的重构点清单（为了实现 MVP，不能跳过）
 
 - **单一编排**：禁止任何绕过 `ReconcileLoop` 的 VLM/TextLLM/Embedding/Index 执行路径。

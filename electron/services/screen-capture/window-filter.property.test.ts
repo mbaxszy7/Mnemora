@@ -10,9 +10,10 @@ import { windowFilter } from "./window-filter";
 import type { CaptureSource } from "./types";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "./types";
 
-const normalizeAppNameForTest = (
-  windowFilter as unknown as { normalizeAppName: (name: string) => string }
-).normalizeAppName;
+function normalizeAppNameForTest(name: string): string {
+  const wf = windowFilter as unknown as { normalizeAppName: (s: string) => string };
+  return wf.normalizeAppName.call(windowFilter, name);
+}
 
 // Generator for CaptureSource
 const captureSourceArb = (type: "screen" | "window" = "window"): fc.Arbitrary<CaptureSource> =>

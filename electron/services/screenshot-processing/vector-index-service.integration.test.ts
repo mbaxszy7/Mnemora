@@ -6,10 +6,22 @@ import { VectorIndexService } from "./vector-index-service";
 import { vectorStoreConfig } from "./config";
 
 // Minimal DB mock to satisfy vector-index-service load/reset calls
+const mockEmbeddingBuffer = Buffer.from(new Float32Array([0, 0, 0, 0]).buffer);
+
 const mockDb = {
-  select: vi.fn(() => ({
+  select: vi.fn((fields?: unknown) => ({
     from: vi.fn(() => ({
       all: vi.fn(() => [{ value: 0 }]),
+      where: vi.fn(() => ({
+        limit: vi.fn(() => ({
+          get: vi.fn(() => {
+            if (fields && typeof fields === "object" && "embedding" in (fields as object)) {
+              return { embedding: mockEmbeddingBuffer };
+            }
+            return null;
+          }),
+        })),
+      })),
     })),
   })),
   update: vi.fn(() => ({

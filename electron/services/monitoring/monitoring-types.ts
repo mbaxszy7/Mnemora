@@ -76,15 +76,29 @@ export interface AIErrorEvent {
   errorCode: string | null;
 }
 
+/**
+ * AI request trace for monitoring dashboard (not persisted)
+ */
+export interface AIRequestTrace {
+  ts: number;
+  capability: "vlm" | "text" | "embedding";
+  operation: string;
+  model: string;
+  durationMs: number;
+  status: "succeeded" | "failed";
+  responsePreview?: string;
+  errorPreview?: string;
+}
+
 // ============================================================================
 // SSE Streaming Types
 // ============================================================================
 
-export type SSEMessageType = "metrics" | "queue" | "ai_error" | "health" | "init";
+export type SSEMessageType = "metrics" | "queue" | "ai_error" | "ai_request" | "health" | "init";
 
 export interface SSEMessage {
   type: SSEMessageType;
-  data: MetricsSnapshot | QueueStatus | AIErrorEvent | HealthSummary | InitPayload;
+  data: MetricsSnapshot | QueueStatus | AIErrorEvent | AIRequestTrace | HealthSummary | InitPayload;
 }
 
 export interface HealthSummary {

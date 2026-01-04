@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title data-i18n="monitoring.aiMonitorTitle">AI Monitor</title>
+  <style>
+    :root {
+      --bg-primary: #0f172a;
+      --bg-secondary: #1e293b;
+      --bg-tertiary: #334155;
+      --text-primary: #f8fafc;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --border-color: #475569;
+      --accent-blue: #3b82f6;
+      --accent-green: #22c55e;
+      --accent-yellow: #eab308;
+      --accent-red: #ef4444;
+      --accent-purple: #a855f7;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+
+    .header h1 { font-size: 24px; font-weight: 600; }
+
+    .header-links a {
+      color: var(--accent-blue);
+      text-decoration: none;
+      margin-left: 16px;
+      font-size: 14px;
+    }
+
+    .header-links a:hover { text-decoration: underline; }
+
+    /* Stats Cards */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .stat-card {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 16px;
+    }
+
+    .stat-card-title {
+      font-size: 12px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .stat-value { font-size: 28px; font-weight: 600; }
+    .stat-value.vlm { color: var(--accent-purple); }
+    .stat-value.text { color: var(--accent-blue); }
+    .stat-value.embedding { color: var(--accent-green); }
+
+    .stat-sub { font-size: 12px; color: var(--text-muted); }
+    .stat-sub.error { color: var(--accent-red); }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 16px;
+      background: var(--bg-secondary);
+      padding: 4px;
+      border-radius: 8px;
+      width: fit-content;
+    }
+
+    .tab {
+      padding: 8px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text-secondary);
+      transition: all 0.2s;
+    }
+
+    .tab:hover { color: var(--text-primary); }
+    .tab.active { background: var(--bg-tertiary); color: var(--text-primary); }
+
+    /* Table Container */
+    .table-container {
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .section-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .data-table th, .data-table td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .data-table th {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      position: sticky;
+      top: 0;
+      background: var(--bg-secondary);
+    }
+
+    .data-table td.time { color: var(--text-muted); white-space: nowrap; }
+    .data-table td.capability { text-transform: uppercase; font-weight: 500; }
+    .data-table td.capability.vlm { color: var(--accent-purple); }
+    .data-table td.capability.text { color: var(--accent-blue); }
+    .data-table td.capability.embedding { color: var(--accent-green); }
+
+    .data-table td.status.succeeded { color: var(--accent-green); }
+    .data-table td.status.failed { color: var(--accent-red); }
+    .data-table td.duration { font-family: monospace; color: var(--text-secondary); }
+    .data-table td.error-code { font-family: monospace; color: var(--accent-red); }
+
+    .data-row { cursor: pointer; }
+    .data-row:hover { background: var(--bg-tertiary); }
+
+    .preview-row { display: none; }
+    .preview-row.expanded { display: table-row; }
+
+    .preview-cell { padding: 16px !important; background: var(--bg-tertiary); }
+
+    .preview-content {
+      max-height: 250px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      background: var(--bg-primary);
+      padding: 12px;
+      border-radius: 8px;
+    }
+
+    .preview-content.error { color: var(--accent-red); }
+
+    .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
+
+    .hidden { display: none; }
+
+    .footer {
+      margin-top: 24px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .status-dot {
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+
+    .status-dot.connected { background: var(--accent-green); }
+    .status-dot.disconnected { background: var(--accent-red); }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1 data-i18n="monitoring.aiMonitorTitle">AI Monitor</h1>
+    <div class="header-links">
+      <a href="/" data-i18n="monitoring.title">Performance Monitor</a>
+    </div>
+  </div>
+
+  <!-- Stats Cards -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-card-title">VLM</div>
+      <div class="stat-row">
+        <span class="stat-value vlm" id="count-vlm">0</span>
+        <span class="stat-sub" id="avg-vlm">-- ms</span>
+      </div>
+      <div class="stat-sub error" id="errors-vlm">0 errors</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-title">Text LLM</div>
+      <div class="stat-row">
+        <span class="stat-value text" id="count-text">0</span>
+        <span class="stat-sub" id="avg-text">-- ms</span>
+      </div>
+      <div class="stat-sub error" id="errors-text">0 errors</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-title">Embedding</div>
+      <div class="stat-row">
+        <span class="stat-value embedding" id="count-embedding">0</span>
+        <span class="stat-sub" id="avg-embedding">-- ms</span>
+      </div>
+      <div class="stat-sub error" id="errors-embedding">0 errors</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-card-title" data-i18n="monitoring.aiMonitor.errorRate">Error Rate (5m)</div>
+      <div class="stat-row">
+        <span class="stat-value" style="color: var(--accent-red)" id="total-errors">0</span>
+        <span class="stat-sub">errors</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" data-tab="requests" data-i18n="monitoring.aiMonitor.tabRequests">All Requests</div>
+    <div class="tab" data-tab="errors" data-i18n="monitoring.aiMonitor.tabErrors">Errors Only</div>
+  </div>
+
+  <!-- Requests Table -->
+  <div class="table-container" id="requests-panel">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th data-i18n="monitoring.aiMonitor.table.time">Time</th>
+          <th data-i18n="monitoring.aiMonitor.table.capability">Type</th>
+          <th data-i18n="monitoring.aiMonitor.table.operation">Operation</th>
+          <th data-i18n="monitoring.aiMonitor.table.model">Model</th>
+          <th data-i18n="monitoring.aiMonitor.table.duration">Duration</th>
+          <th data-i18n="monitoring.aiMonitor.table.status">Status</th>
+        </tr>
+      </thead>
+      <tbody id="requests-body">
+        <tr><td colspan="6" class="empty-state">No requests recorded</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Errors Table -->
+  <div class="table-container hidden" id="errors-panel">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th data-i18n="monitoring.aiMonitor.table.time">Time</th>
+          <th data-i18n="monitoring.aiMonitor.table.capability">Type</th>
+          <th data-i18n="monitoring.aiMonitor.table.operation">Operation</th>
+          <th data-i18n="monitoring.aiMonitor.table.model">Model</th>
+          <th data-i18n="monitoring.aiMonitor.table.errorCode">Error Code</th>
+        </tr>
+      </thead>
+      <tbody id="errors-body">
+        <tr><td colspan="5" class="empty-state">No errors recorded</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="footer">
+    <div>
+      <span class="status-dot connected" id="connection-indicator"></span>
+      <span id="connection-status">Connected</span>
+    </div>
+    <div>
+      <span data-i18n="monitoring.footer.lastUpdated">Last updated</span>: <span id="last-updated">--</span>
+    </div>
+  </div>
+
+  <script>
+    const translations = {
+      en: {
+        monitoring: {
+          title: "Performance Monitor",
+          aiMonitorTitle: "AI Monitor",
+          aiMonitor: {
+            errorRate: "Error Rate (5m)",
+            tabRequests: "All Requests",
+            tabErrors: "Errors Only",
+            table: { time: "Time", capability: "Type", operation: "Operation", model: "Model", duration: "Duration", status: "Status", errorCode: "Error Code" }
+          },
+          footer: { lastUpdated: "Last updated" },
+          connection: { connected: "Connected", reconnecting: "Reconnecting..." }
+        }
+      },
+      "zh-CN": {
+        monitoring: {
+          title: "性能监控",
+          aiMonitorTitle: "AI 监控",
+          aiMonitor: {
+            errorRate: "错误率 (5分钟)",
+            tabRequests: "全部请求",
+            tabErrors: "仅错误",
+            table: { time: "时间", capability: "类型", operation: "操作", model: "模型", duration: "耗时", status: "状态", errorCode: "错误码" }
+          },
+          footer: { lastUpdated: "最后更新" },
+          connection: { connected: "已连接", reconnecting: "重新连接中..." }
+        }
+      }
+    };
+
+    const MAX_ITEMS = 60;
+    const requests = [];
+    const errors = [];
+
+    const elements = {
+      countVlm: document.getElementById("count-vlm"),
+      countText: document.getElementById("count-text"),
+      countEmbedding: document.getElementById("count-embedding"),
+      avgVlm: document.getElementById("avg-vlm"),
+      avgText: document.getElementById("avg-text"),
+      avgEmbedding: document.getElementById("avg-embedding"),
+      errorsVlm: document.getElementById("errors-vlm"),
+      errorsText: document.getElementById("errors-text"),
+      errorsEmbedding: document.getElementById("errors-embedding"),
+      totalErrors: document.getElementById("total-errors"),
+      requestsBody: document.getElementById("requests-body"),
+      errorsBody: document.getElementById("errors-body"),
+      requestsPanel: document.getElementById("requests-panel"),
+      errorsPanel: document.getElementById("errors-panel"),
+      connectionIndicator: document.getElementById("connection-indicator"),
+      connectionStatus: document.getElementById("connection-status"),
+      lastUpdated: document.getElementById("last-updated")
+    };
+
+    let currentTranslations = null;
+
+    async function initI18n() {
+      try {
+        const res = await fetch('/api/locale');
+        const { lang } = await res.json();
+        currentTranslations = translations[lang]?.monitoring || translations.en.monitoring;
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+          const key = el.dataset.i18n.replace('monitoring.', '');
+          const value = key.split('.').reduce((obj, k) => obj?.[k], currentTranslations);
+          if (value) el.textContent = value;
+        });
+        document.title = currentTranslations.aiMonitorTitle;
+      } catch (e) {
+        currentTranslations = translations.en.monitoring;
+      }
+    }
+
+    function t(key) {
+      if (!currentTranslations) return key;
+      return key.split('.').reduce((obj, k) => obj?.[k], currentTranslations) || key;
+    }
+
+    function formatTime(ts) { return new Date(ts).toLocaleTimeString(); }
+    function formatDuration(ms) { return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`; }
+    function escapeHtml(text) { const div = document.createElement('div'); div.textContent = text; return div.innerHTML; }
+
+    // Tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        const target = tab.dataset.tab;
+        elements.requestsPanel.classList.toggle('hidden', target !== 'requests');
+        elements.errorsPanel.classList.toggle('hidden', target !== 'errors');
+      });
+    });
+
+    function updateStats() {
+      const byCapability = { vlm: [], text: [], embedding: [] };
+      for (const req of requests) {
+        if (byCapability[req.capability]) byCapability[req.capability].push(req);
+      }
+
+      elements.countVlm.textContent = byCapability.vlm.length;
+      elements.countText.textContent = byCapability.text.length;
+      elements.countEmbedding.textContent = byCapability.embedding.length;
+
+      const calcAvg = arr => arr.length ? Math.round(arr.reduce((s, r) => s + r.durationMs, 0) / arr.length) : 0;
+      elements.avgVlm.textContent = formatDuration(calcAvg(byCapability.vlm));
+      elements.avgText.textContent = formatDuration(calcAvg(byCapability.text));
+      elements.avgEmbedding.textContent = formatDuration(calcAvg(byCapability.embedding));
+
+      // Error counts
+      const errorsByCapability = { vlm: 0, text: 0, embedding: 0 };
+      for (const err of errors) {
+        if (errorsByCapability[err.capability] !== undefined) errorsByCapability[err.capability]++;
+      }
+      elements.errorsVlm.textContent = `${errorsByCapability.vlm} errors`;
+      elements.errorsText.textContent = `${errorsByCapability.text} errors`;
+      elements.errorsEmbedding.textContent = `${errorsByCapability.embedding} errors`;
+      elements.totalErrors.textContent = errors.length;
+    }
+
+    function togglePreview(id) {
+      const row = document.getElementById(`preview-${id}`);
+      if (row) row.classList.toggle('expanded');
+    }
+
+    function renderRequestsTable() {
+      if (requests.length === 0) {
+        elements.requestsBody.innerHTML = '<tr><td colspan="6" class="empty-state">No requests recorded</td></tr>';
+        return;
+      }
+      elements.requestsBody.innerHTML = requests.slice().reverse().slice(0, MAX_ITEMS).map((req, idx) => {
+        const preview = req.status === 'succeeded' ? (req.responsePreview || 'No preview') : (req.errorPreview || 'No error details');
+        const previewClass = req.status === 'failed' ? 'error' : '';
+        return `
+          <tr class="data-row" onclick="togglePreview('req-${idx}')">
+            <td class="time">${formatTime(req.ts)}</td>
+            <td class="capability ${req.capability}">${req.capability}</td>
+            <td>${req.operation}</td>
+            <td>${req.model}</td>
+            <td class="duration">${formatDuration(req.durationMs)}</td>
+            <td class="status ${req.status}">${req.status}</td>
+          </tr>
+          <tr class="preview-row" id="preview-req-${idx}">
+            <td colspan="6" class="preview-cell"><div class="preview-content ${previewClass}">${escapeHtml(preview)}</div></td>
+          </tr>`;
+      }).join('');
+    }
+
+    function renderErrorsTable() {
+      if (errors.length === 0) {
+        elements.errorsBody.innerHTML = '<tr><td colspan="5" class="empty-state">No errors recorded</td></tr>';
+        return;
+      }
+      elements.errorsBody.innerHTML = errors.slice().reverse().slice(0, MAX_ITEMS).map(e => `
+        <tr>
+          <td class="time">${formatTime(e.ts)}</td>
+          <td class="capability ${e.capability}">${e.capability}</td>
+          <td>${e.operation}</td>
+          <td>${e.model}</td>
+          <td class="error-code">${e.errorCode || 'unknown'}</td>
+        </tr>
+      `).join('');
+    }
+
+    async function loadInitialData() {
+      try {
+        const [reqRes, errRes] = await Promise.all([fetch('/api/ai-requests'), fetch('/api/errors')]);
+        const reqData = await reqRes.json();
+        const errData = await errRes.json();
+        requests.push(...[...(reqData.vlm || []), ...(reqData.text || []), ...(reqData.embedding || [])].sort((a, b) => a.ts - b.ts));
+        errors.push(...errData);
+        updateStats();
+        renderRequestsTable();
+        renderErrorsTable();
+        elements.lastUpdated.textContent = new Date().toLocaleTimeString();
+      } catch (e) { console.warn('Failed to load data:', e); }
+    }
+
+    function connectSSE() {
+      const eventSource = new EventSource('/api/stream');
+      eventSource.onopen = () => {
+        elements.connectionIndicator.className = 'status-dot connected';
+        elements.connectionStatus.textContent = t('connection.connected');
+      };
+      eventSource.onmessage = event => {
+        const msg = JSON.parse(event.data);
+        if (msg.type === 'ai_request') {
+          requests.push(msg.data);
+          if (requests.length > MAX_ITEMS * 2) requests.splice(0, requests.length - MAX_ITEMS);
+          updateStats();
+          renderRequestsTable();
+          elements.lastUpdated.textContent = new Date().toLocaleTimeString();
+        } else if (msg.type === 'ai_error') {
+          errors.push(msg.data);
+          if (errors.length > MAX_ITEMS * 2) errors.splice(0, errors.length - MAX_ITEMS);
+          updateStats();
+          renderErrorsTable();
+          elements.lastUpdated.textContent = new Date().toLocaleTimeString();
+        }
+      };
+      eventSource.onerror = () => {
+        elements.connectionIndicator.className = 'status-dot disconnected';
+        elements.connectionStatus.textContent = t('connection.reconnecting');
+      };
+    }
+
+    initI18n();
+    loadInitialData();
+    connectSSE();
+  </script>
+</body>
+</html>

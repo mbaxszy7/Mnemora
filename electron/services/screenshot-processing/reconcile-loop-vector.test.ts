@@ -44,7 +44,7 @@ vi.mock("./embedding-service", () => ({
 vi.mock("./vector-index-service", () => ({
   vectorIndexService: {
     upsert: vi.fn(),
-    flush: vi.fn(),
+    requestFlush: vi.fn(),
     load: vi.fn(),
     search: vi.fn(),
   },
@@ -220,7 +220,7 @@ describe("ReconcileLoop - Vector Documents", () => {
       // 1. Mark running
       // 2. Upsert
       expect(vectorIndexService.upsert).toHaveBeenCalledWith(1, expect.any(Float32Array));
-      expect(vectorIndexService.flush).toHaveBeenCalled();
+      expect(vectorIndexService.requestFlush).toHaveBeenCalled();
 
       // 3. Mark succeeded
       expect(mockDb.set).toHaveBeenLastCalledWith(

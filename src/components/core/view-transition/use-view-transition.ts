@@ -53,7 +53,11 @@ export function useViewTransition(): { navigate: ViewTransitionNavigate; isPendi
           // Pass regular navigation options (state, replace, etc.)
           // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const { type, duration, ...navOptions } = options;
-          routerNavigate(to, navOptions);
+          if (Object.keys(navOptions).length === 0) {
+            routerNavigate(to);
+          } else {
+            routerNavigate(to, navOptions);
+          }
         }
       };
 

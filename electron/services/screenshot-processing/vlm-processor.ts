@@ -20,7 +20,7 @@ import { screenshots } from "../../database/schema";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { vlmConfig } from "./config";
+import { vlmConfig, aiConcurrencyConfig } from "./config";
 import {
   VLMIndexResultSchema,
   VLMIndexResultProcessedSchema,
@@ -31,6 +31,8 @@ import {
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
 import { llmUsageService } from "../usage/llm-usage-service";
 import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
+import { aiSemaphore } from "./ai-semaphore";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 
 const logger = getLogger("vlm-processor");
 
@@ -227,11 +229,9 @@ Subject identification:
  * VLMProcessor handles VLM-based screenshot analysis
  */
 class VLMProcessor {
-  private readonly concurrency: number;
   private readonly maxSegmentsPerBatch: number;
 
-  constructor(options?: { concurrency?: number; maxSegmentsPerBatch?: number }) {
-    this.concurrency = options?.concurrency ?? vlmConfig.vlmConcurrency;
+  constructor(options?: { maxSegmentsPerBatch?: number }) {
     this.maxSegmentsPerBatch = options?.maxSegmentsPerBatch ?? vlmConfig.maxSegmentsPerBatch;
   }
 
@@ -247,9 +247,9 @@ class VLMProcessor {
    * @param shard - Shard with screenshots and history pack
    * @returns VLM request ready for AI SDK
    */
-  buildVLMRequest(shard: Shard): VLMRequest {
+  buildVLMRequest(shard: Shard, options?: { degraded?: boolean }): VLMRequest {
     const screenshotMeta = this.buildScreenshotMeta(shard.screenshots);
-    const userPrompt = this.buildUserPrompt(screenshotMeta, shard.historyPack);
+    const userPrompt = this.buildUserPrompt(screenshotMeta, shard.historyPack, options);
 
     const userContent: VLMRequest["userContent"] = [{ type: "text", text: userPrompt }];
 
@@ -300,109 +300,220 @@ class VLMProcessor {
       "VLM request built, calling API"
     );
 
+    // Acquire global VLM semaphore
+    const release = await aiSemaphore.vlm.acquire();
+
+    const runAttempt = async (degraded: boolean) => {
+      const attemptStart = Date.now();
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.vlmTimeoutMs);
+      try {
+        const req = degraded ? this.buildVLMRequest(shard, { degraded: true }) : request;
+        const { object: rawResult, usage } = await generateObject({
+          model: aiService.getVLMClient(),
+          schema: VLMIndexResultSchema,
+          system: req.system,
+          messages: [
+            {
+              role: "user",
+              content: req.userContent,
+            },
+          ],
+          providerOptions: {
+            mnemora: {
+              thinking: {
+                type: "disabled",
+              },
+            },
+          },
+          maxOutputTokens: vlmConfig.maxTokens,
+          abortSignal: controller.signal,
+        });
+
+        const result = VLMIndexResultProcessedSchema.parse(rawResult);
+        return {
+          result,
+          usage,
+          attemptMs: Date.now() - attemptStart,
+        };
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
     try {
       // Call VLM with timing
       const apiCallStart = Date.now();
-      const { object: rawResult, usage } = await generateObject({
-        model: aiService.getVLMClient(),
-        schema: VLMIndexResultSchema,
-        system: request.system,
-        messages: [
-          {
-            role: "user",
-            content: request.userContent,
-          },
-        ],
-        providerOptions: {
-          mnemora: {
-            thinking: {
-              type: "disabled",
-            },
-          },
-        },
-        maxOutputTokens: vlmConfig.maxTokens,
-      });
-
-      // Normalize and clean up the result using the processed schema
-      const result = VLMIndexResultProcessedSchema.parse(rawResult);
+      const response = await runAttempt(false);
       timings.apiCall = Date.now() - apiCallStart;
 
-      logger.debug(
-        {
-          shardIndex: shard.shardIndex,
-          apiCallMs: timings.apiCall,
-        },
-        "VLM API responded with structured object"
-      );
-
-      // Log usage
-      llmUsageService.logEvent({
-        ts: Date.now(),
-        capability: "vlm",
-        operation: "vlm_analyze_shard",
-        status: "succeeded",
-        model: aiService.getVLMModelName(),
-        provider: "openai_compatible",
-        totalTokens: usage?.totalTokens ?? 0,
-        usageStatus: usage ? "present" : "missing",
+      return this.finalizeShardSuccess({
+        shard,
+        result: response.result,
+        timings,
+        usage: response.usage,
+        processStartTime,
+        aiService,
       });
-
-      const totalMs = Date.now() - processStartTime;
-
-      logger.info(
-        {
-          shardIndex: shard.shardIndex,
-          totalMs,
-          timings,
-          segmentCount: result.segments.length,
-          entityCount: result.entities.length,
-        },
-        "Shard processed successfully"
-      );
-
-      return result;
     } catch (error) {
-      const totalMs = Date.now() - processStartTime;
+      const isRetryable =
+        (error instanceof Error && error.name === "AbortError") ||
+        NoObjectGeneratedError.isInstance(error);
 
-      // Log failure usage (unknown tokens)
-      llmUsageService.logEvent({
-        ts: Date.now(),
-        capability: "vlm",
-        operation: "vlm_analyze_shard",
-        status: "failed",
-        errorCode: error instanceof Error ? error.name : "UNKNOWN",
-        model: aiService.getVLMModelName(),
-        provider: "openai_compatible",
-        usageStatus: "missing",
-      });
+      if (isRetryable) {
+        try {
+          const apiCallStart = Date.now();
+          const response = await runAttempt(true);
+          timings.apiCall = Date.now() - apiCallStart;
 
-      logger.error(
-        {
-          shardIndex: shard.shardIndex,
-          totalMs,
-          timings,
-          error: error instanceof Error ? error.message : String(error),
-        },
-        "Failed to process shard"
-      );
-      if (NoObjectGeneratedError.isInstance(error)) {
-        logger.error(
-          {
-            cause: error.cause,
-            text: error.text,
-            response: error.response,
-            usage: error.usage,
-            finishReason: error.finishReason,
-          },
-          "NoObjectGeneratedError"
-        );
+          return this.finalizeShardSuccess({
+            shard,
+            timings,
+            result: response.result,
+            usage: response.usage,
+            processStartTime,
+            aiService,
+          });
+        } catch (secondError) {
+          this.finalizeShardFailure({
+            shard,
+            timings,
+            processStartTime,
+            aiService,
+            error: secondError,
+          });
+          throw secondError;
+        }
       }
 
-      // Record failure for circuit breaker
-      aiFailureCircuitBreaker.recordFailure("vlm", error);
-
+      this.finalizeShardFailure({
+        shard,
+        timings,
+        processStartTime,
+        aiService,
+        error,
+      });
       throw error;
+    } finally {
+      release();
     }
+  }
+
+  private finalizeShardSuccess(args: {
+    shard: Shard;
+    result: VLMIndexResult;
+    timings: Record<string, number>;
+    usage: { totalTokens?: number } | undefined;
+    processStartTime: number;
+    aiService: AISDKService;
+  }): VLMIndexResult {
+    const { shard, result, timings, usage, processStartTime, aiService } = args;
+
+    logger.debug(
+      {
+        shardIndex: shard.shardIndex,
+        apiCallMs: timings.apiCall,
+      },
+      "VLM API responded with structured object"
+    );
+
+    // Log usage
+    llmUsageService.logEvent({
+      ts: Date.now(),
+      capability: "vlm",
+      operation: "vlm_analyze_shard",
+      status: "succeeded",
+      model: aiService.getVLMModelName(),
+      provider: "openai_compatible",
+      totalTokens: usage?.totalTokens ?? 0,
+      usageStatus: usage ? "present" : "missing",
+    });
+
+    const totalMs = Date.now() - processStartTime;
+
+    // Record trace for monitoring dashboard
+    aiRequestTraceBuffer.record({
+      ts: Date.now(),
+      capability: "vlm",
+      operation: "vlm_analyze_shard",
+      model: aiService.getVLMModelName(),
+      durationMs: totalMs,
+      status: "succeeded",
+      responsePreview: JSON.stringify(result, null, 2),
+    });
+
+    logger.info(
+      {
+        shardIndex: shard.shardIndex,
+        totalMs,
+        timings,
+        segmentCount: result.segments.length,
+        entityCount: result.entities.length,
+      },
+      "Shard processed successfully"
+    );
+
+    return result;
+  }
+
+  private finalizeShardFailure(args: {
+    shard: Shard;
+    timings: Record<string, number>;
+    processStartTime: number;
+    aiService: AISDKService;
+    error: unknown;
+  }): void {
+    const { shard, timings, processStartTime, aiService, error } = args;
+    const totalMs = Date.now() - processStartTime;
+
+    // Log failure usage (unknown tokens)
+    llmUsageService.logEvent({
+      ts: Date.now(),
+      capability: "vlm",
+      operation: "vlm_analyze_shard",
+      status: "failed",
+      errorCode: error instanceof Error ? error.name : "UNKNOWN",
+      model: aiService.getVLMModelName(),
+      provider: "openai_compatible",
+      usageStatus: "missing",
+    });
+
+    // Record trace for monitoring dashboard
+    aiRequestTraceBuffer.record({
+      ts: Date.now(),
+      capability: "vlm",
+      operation: "vlm_analyze_shard",
+      model: aiService.getVLMModelName(),
+      durationMs: totalMs,
+      status: "failed",
+      errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+    });
+
+    logger.error(
+      {
+        shardIndex: shard.shardIndex,
+        totalMs,
+        timings,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      "Failed to process shard"
+    );
+
+    if (NoObjectGeneratedError.isInstance(error)) {
+      logger.error(
+        {
+          cause: error.cause,
+          text: error.text,
+          response: error.response,
+          usage: error.usage,
+          finishReason: error.finishReason,
+        },
+        "NoObjectGeneratedError"
+      );
+    }
+
+    // Record failure for circuit breaker
+    aiFailureCircuitBreaker.recordFailure("vlm", error);
   }
 
   /**
@@ -417,7 +528,7 @@ class VLMProcessor {
       {
         batchId: batch.batchId,
         shardCount: shards.length,
-        concurrency: this.concurrency,
+        globalConcurrency: aiConcurrencyConfig.vlmGlobalConcurrency,
       },
       "Processing batch"
     );
@@ -605,7 +716,11 @@ class VLMProcessor {
   /**
    * Build user prompt with screenshot metadata and history
    */
-  private buildUserPrompt(screenshotMeta: VLMScreenshotMeta[], historyPack: HistoryPack): string {
+  private buildUserPrompt(
+    screenshotMeta: VLMScreenshotMeta[],
+    historyPack: HistoryPack,
+    options?: { degraded?: boolean }
+  ): string {
     const metaJson = JSON.stringify(screenshotMeta, null, 2);
     const canonicalCandidates = getCanonicalAppCandidates();
     const appCandidatesJson = JSON.stringify(canonicalCandidates, null, 2);
@@ -650,6 +765,8 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
 `;
     }
 
+    const degraded = options?.degraded === true;
+
     return `Analyze the following ${screenshotMeta.length} screenshots and produce the structured JSON described in the system prompt.
 
 ## Current User Time Context (for relative time interpretation)
@@ -680,9 +797,18 @@ ${historySection}
 - screenshots: For each screenshot_id from the metadata:
   - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).
   - app_guess: optional; if present must follow Canonical App Candidates + App mapping rules; confidence is 0..1.
-  - ocr_text: full readable text in visible order, trimmed to 8000 chars; remove binary noise and repeated boilerplate.
   - ui_text_snippets: pick 5-15 high-signal sentences/phrases (chat bubbles, titles, decisions, issue IDs). Drop duplicates, timestamps-only lines, hashes, directory paths.
+  - ocr_text: OPTIONAL. Only include when the screenshot is clearly text-heavy (documents, logs, long web pages). Keep it short and remove boilerplate; trimmed to 8000 chars.
 - notes: optional; only if useful.
+
+${
+  degraded
+    ? `## Degraded mode
+- Return the same JSON schema, but keep the output extremely compact.
+- Still include the screenshots array (one entry per screenshot_id), but OMIT ocr_text, ui_text_snippets, and notes unless absolutely necessary.
+- Focus on segments (event + merge_hint) and entities only.`
+    : ""
+}
 
 ## Instructions
 1. Review all screenshots in order (1..${screenshotMeta.length}).
@@ -698,7 +824,11 @@ ${historySection}
     const results: ShardProcessResult[] = new Array(shards.length);
     let nextIndex = 0;
 
-    const workerCount = Math.max(1, Math.min(this.concurrency, shards.length));
+    // Use global VLM concurrency limit from AI Semaphore config
+    const workerCount = Math.max(
+      1,
+      Math.min(aiConcurrencyConfig.vlmGlobalConcurrency, shards.length)
+    );
     const workers = Array.from({ length: workerCount }, async () => {
       while (true) {
         const current = nextIndex;

@@ -32,6 +32,8 @@ export class TrayService {
   private updateInterval: NodeJS.Timeout | null = null;
 
   private readonly handleSchedulerEventBound = () => {
+    this.refreshMenu();
+    this.refreshTooltip();
     this.updateUsageDisplay();
   };
 
@@ -84,6 +86,7 @@ export class TrayService {
 
     // Initial display
     this.refreshTooltip();
+    this.refreshMenu();
 
     this.tray.on("click", this.handleShowMainWindow);
     this.tray.on("double-click", this.handleShowMainWindow);

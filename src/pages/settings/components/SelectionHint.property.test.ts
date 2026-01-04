@@ -181,34 +181,48 @@ describe("Selection Hint Property Tests", () => {
 
     it("Non-empty selection should filter to only selected screens", () => {
       fc.assert(
-        fc.property(fc.array(screenInfoArb, { minLength: 2, maxLength: 10 }), (screens) => {
-          // Select only the first screen
-          const selectedIds = [screens[0].id];
-          const effectiveScreens = getEffectiveScreens(screens, selectedIds);
+        fc.property(
+          fc.uniqueArray(screenInfoArb, {
+            minLength: 2,
+            maxLength: 10,
+            selector: (s) => s.id,
+          }),
+          (screens) => {
+            // Select only the first screen
+            const selectedIds = [screens[0].id];
+            const effectiveScreens = getEffectiveScreens(screens, selectedIds);
 
-          // Property: Only selected screens should be in effective list
-          expect(effectiveScreens.length).toBe(1);
-          expect(effectiveScreens[0].id).toBe(screens[0].id);
+            // Property: Only selected screens should be in effective list
+            expect(effectiveScreens.length).toBe(1);
+            expect(effectiveScreens[0].id).toBe(screens[0].id);
 
-          return true;
-        }),
+            return true;
+          }
+        ),
         { numRuns: 100 }
       );
     });
 
     it("Non-empty selection should filter to only selected apps", () => {
       fc.assert(
-        fc.property(fc.array(appInfoArb, { minLength: 2, maxLength: 10 }), (apps) => {
-          // Select only the first app
-          const selectedNames = [apps[0].name];
-          const effectiveApps = getEffectiveApps(apps, selectedNames);
+        fc.property(
+          fc.uniqueArray(appInfoArb, {
+            minLength: 2,
+            maxLength: 10,
+            selector: (a) => a.name,
+          }),
+          (apps) => {
+            // Select only the first app
+            const selectedNames = [apps[0].name];
+            const effectiveApps = getEffectiveApps(apps, selectedNames);
 
-          // Property: Only selected apps should be in effective list
-          expect(effectiveApps.length).toBe(1);
-          expect(effectiveApps[0].name).toBe(apps[0].name);
+            // Property: Only selected apps should be in effective list
+            expect(effectiveApps.length).toBe(1);
+            expect(effectiveApps[0].name).toBe(apps[0].name);
 
-          return true;
-        }),
+            return true;
+          }
+        ),
         { numRuns: 100 }
       );
     });

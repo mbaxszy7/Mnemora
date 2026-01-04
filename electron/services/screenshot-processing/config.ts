@@ -14,7 +14,7 @@ import path from "node:path";
 /**
  * Source buffer configuration for per-source screenshot buffering
  */
-export interface SourceBufferConfig {
+interface SourceBufferConfig {
   /** Grace period before removing inactive source buffers in milliseconds (default: 60000 = 60s) */
   gracePeriodMs: number;
   /** Refresh interval for active sources in milliseconds (default: 10000 = 10s) */
@@ -33,7 +33,7 @@ export const sourceBufferConfig: SourceBufferConfig = {
 /**
  * Batch processing configuration
  */
-export interface BatchConfig {
+interface BatchConfig {
   /** Number of screenshots per batch (default: 10) */
   batchSize: number;
   /** Timeout to trigger batch even if not full in milliseconds (default: 70000) */
@@ -52,19 +52,11 @@ export const batchConfig: BatchConfig = {
 /**
  * VLM processing configuration
  */
-export interface VLMConfig {
+interface VLMConfig {
   /** Number of screenshots per shard (default: 5) */
   vlmShardSize: number;
-  /** Number of concurrent shard processing (default: 2) */
-  vlmConcurrency: number;
   /** Maximum segments per batch (default: 4) */
   maxSegmentsPerBatch: number;
-  /** Maximum derived items per category per segment (default: 2) */
-  maxDerivedItemsPerCategory: number;
-  /** Maximum summary length in characters (default: 200) */
-  maxSummaryLength: number;
-  /** Maximum title length in characters (default: 100) */
-  maxTitleLength: number;
   /** Maximum entities per batch (default: 20) */
   maxEntitiesPerBatch: number;
   /** Maximum output tokens for VLM response (default: 8192) */
@@ -73,11 +65,7 @@ export interface VLMConfig {
 
 export const vlmConfig: VLMConfig = {
   vlmShardSize: 2,
-  vlmConcurrency: 1,
   maxSegmentsPerBatch: 4,
-  maxDerivedItemsPerCategory: 2,
-  maxSummaryLength: 500,
-  maxTitleLength: 100,
   maxEntitiesPerBatch: 20,
   maxTokens: 8192,
 };
@@ -89,7 +77,7 @@ export const vlmConfig: VLMConfig = {
 /**
  * pHash deduplication configuration
  */
-export interface PHashConfig {
+interface PHashConfig {
   /** Hamming distance threshold for similarity (default: 8) */
   similarityThreshold: number;
 }
@@ -99,28 +87,59 @@ export const phashConfig: PHashConfig = {
 };
 
 // ============================================================================
+// AI Concurrency Configuration
+// ============================================================================
+
+/**
+ * AI concurrency and timeout configuration
+ *
+ * Controls global concurrency limits for AI API calls to prevent
+ * overwhelming the provider with too many concurrent requests.
+ */
+interface AIConcurrencyConfig {
+  /** Maximum concurrent VLM API calls (default: 2) */
+  vlmGlobalConcurrency: number;
+  /** Maximum concurrent Text LLM API calls (default: 3) */
+  textGlobalConcurrency: number;
+  /** Maximum concurrent Embedding API calls (default: 5) */
+  embeddingGlobalConcurrency: number;
+  /** VLM request timeout in milliseconds (default: 120000 = 2min) */
+  vlmTimeoutMs: number;
+  /** Text LLM request timeout in milliseconds (default: 60000 = 1min) */
+  textTimeoutMs: number;
+  /** Embedding request timeout in milliseconds (default: 30000 = 30s) */
+  embeddingTimeoutMs: number;
+}
+
+export const aiConcurrencyConfig: AIConcurrencyConfig = {
+  vlmGlobalConcurrency: 2,
+  textGlobalConcurrency: 3,
+  embeddingGlobalConcurrency: 5,
+  vlmTimeoutMs: 120000, // 2 minutes
+  textTimeoutMs: 60000, // 1 minute
+  embeddingTimeoutMs: 30000, // 30 seconds
+};
+
+// ============================================================================
 // Retry Configuration
 // ============================================================================
 
 /**
  * Retry and recovery configuration
  */
-export interface RetryConfig {
+interface RetryConfig {
   /** Maximum number of retry attempts (default: 3) */
   maxAttempts: number;
   /** Backoff schedule in milliseconds (default: [5000, 20000, 60000, 300000]) */
   backoffScheduleMs: number[];
   /** Random jitter to add to backoff in milliseconds (default: 1000) */
   jitterMs: number;
-  /** Threshold for considering a running record as stale in milliseconds (default: 300000 = 5min) */
-  staleRunningThresholdMs: number;
 }
 
 export const retryConfig: RetryConfig = {
   maxAttempts: 5,
   backoffScheduleMs: [10000, 30000, 120000, 300000, 600000], // 10s, 30s, 2m, 5m, 10m
   jitterMs: 5000,
-  staleRunningThresholdMs: 600000, // 10 minutes (VLM is slow)
 };
 
 // ============================================================================
@@ -130,7 +149,7 @@ export const retryConfig: RetryConfig = {
 /**
  * History pack configuration for VLM context
  */
-export interface HistoryPackConfig {
+interface HistoryPackConfig {
   /** Number of recent threads to include (default: 3) */
   recentThreadsLimit: number;
   /** Number of recent entities to include (default: 10) */
@@ -155,19 +174,16 @@ export const historyPackConfig: HistoryPackConfig = {
 /**
  * Evidence pack configuration
  */
-export interface EvidenceConfig {
+interface EvidenceConfig {
   /** Maximum OCR text length in characters (default: 8192) */
   maxOcrTextLength: number;
   /** Maximum UI text snippets to store (default: 20) */
   maxUiTextSnippets: number;
-  /** Minimum UI text snippets to store (default: 5) */
-  minUiTextSnippets: number;
 }
 
 export const evidenceConfig: EvidenceConfig = {
   maxOcrTextLength: 8192,
   maxUiTextSnippets: 20,
-  minUiTextSnippets: 5,
 };
 
 // ============================================================================
@@ -177,7 +193,7 @@ export const evidenceConfig: EvidenceConfig = {
 /**
  * Reconcile loop configuration
  */
-export interface ReconcileConfig {
+interface ReconcileConfig {
   /** Scan interval in milliseconds (default: 30000 = 30s) */
   scanIntervalMs: number;
   /** Number of records to process per scan (default: 50) */
@@ -205,7 +221,7 @@ export const reconcileConfig: ReconcileConfig = {
 /**
  * Activity summary generation configuration
  */
-export interface ActivitySummaryConfig {
+interface ActivitySummaryConfig {
   /** Generation interval in milliseconds (default: 1200000 = 20min) */
   generationIntervalMs: number;
   /** Whether to enable automatic generation (default: true) */
@@ -224,55 +240,14 @@ export const activitySummaryConfig: ActivitySummaryConfig = {
 /**
  * Vector store configuration
  */
-export interface VectorStoreConfig {
-  /** Default top-K for search (default: 10) */
-  defaultTopK: number;
+interface VectorStoreConfig {
   /** Path to store the HNSW index file */
   indexFilePath: string;
+  /** Debounce interval for flushing index to disk (ms) */
+  flushDebounceMs?: number;
 }
 
 export const vectorStoreConfig: VectorStoreConfig = {
-  defaultTopK: 10,
   indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
+  flushDebounceMs: 500,
 };
-
-// ============================================================================
-// Combined Configuration
-// ============================================================================
-
-/**
- * All configuration combined
- */
-export interface ScreenshotProcessingConfig {
-  batch: BatchConfig;
-  vlm: VLMConfig;
-  phash: PHashConfig;
-  retry: RetryConfig;
-  historyPack: HistoryPackConfig;
-  evidence: EvidenceConfig;
-  reconcile: ReconcileConfig;
-  activitySummary: ActivitySummaryConfig;
-  vectorStore: VectorStoreConfig;
-}
-
-/**
- * Get the complete configuration
- */
-export function getConfig(): ScreenshotProcessingConfig {
-  return {
-    batch: batchConfig,
-    vlm: vlmConfig,
-    phash: phashConfig,
-    retry: retryConfig,
-    historyPack: historyPackConfig,
-    evidence: evidenceConfig,
-    reconcile: reconcileConfig,
-    activitySummary: activitySummaryConfig,
-    vectorStore: vectorStoreConfig,
-  };
-}
-
-/**
- * Default export for convenience
- */
-export default getConfig();

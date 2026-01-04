@@ -1031,15 +1031,27 @@ export class ReconcileLoop {
         "Starting batch processing"
       );
 
-      db.update(batches)
+      const claim = db
+        .update(batches)
         .set({
           status: "running",
           errorMessage: null,
           errorCode: null,
           updatedAt: now,
+          attempts: batchRecord.attempts + 1,
         })
-        .where(eq(batches.id, batchRecord.id))
+        .where(
+          and(
+            eq(batches.id, batchRecord.id),
+            or(eq(batches.status, "pending"), eq(batches.status, "failed"))
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        // Another worker claimed this batch
+        return;
+      }
 
       if (screenshotIds.length > 0) {
         db.update(screenshots)
@@ -1305,22 +1317,33 @@ export class ReconcileLoop {
       return;
     }
 
+    const claimedAttempts = node.mergeAttempts + 1;
+
     try {
-      db.update(contextNodes)
-        .set({ mergeStatus: "running", updatedAt: Date.now() })
-        .where(eq(contextNodes.id, node.id))
+      const claim = db
+        .update(contextNodes)
+        .set({ mergeStatus: "running", mergeAttempts: claimedAttempts, updatedAt: Date.now() })
+        .where(
+          and(
+            eq(contextNodes.id, node.id),
+            or(eq(contextNodes.mergeStatus, "pending"), eq(contextNodes.mergeStatus, "failed"))
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return;
+      }
 
       await this.handleSingleMerge(node);
     } catch (error) {
-      const attempts = node.mergeAttempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
-      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
+      const isPermanent = claimedAttempts >= retryConfig.maxAttempts;
+      const nextRun = isPermanent ? null : this.calculateNextRun(claimedAttempts);
 
       db.update(contextNodes)
         .set({
           mergeStatus: isPermanent ? "failed_permanent" : "failed",
-          mergeAttempts: attempts,
+          mergeAttempts: claimedAttempts,
           mergeNextRunAt: nextRun,
           mergeErrorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: Date.now(),
@@ -1341,10 +1364,23 @@ export class ReconcileLoop {
 
     try {
       // 1. Mark running
-      db.update(vectorDocuments)
+      const claim = db
+        .update(vectorDocuments)
         .set({ embeddingStatus: "running", updatedAt: Date.now() })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(
+          and(
+            eq(vectorDocuments.id, doc.id),
+            or(
+              eq(vectorDocuments.embeddingStatus, "pending"),
+              eq(vectorDocuments.embeddingStatus, "failed")
+            )
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return;
+      }
 
       // 2. Get text content
       if (!doc.refId) {
@@ -1410,10 +1446,23 @@ export class ReconcileLoop {
 
     try {
       // 1. Mark running
-      db.update(vectorDocuments)
+      const claim = db
+        .update(vectorDocuments)
         .set({ indexStatus: "running", updatedAt: Date.now() })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(
+          and(
+            eq(vectorDocuments.id, doc.id),
+            or(
+              eq(vectorDocuments.indexStatus, "pending"),
+              eq(vectorDocuments.indexStatus, "failed")
+            )
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return;
+      }
 
       // 2. Convert BLOB -> Float32Array
       const buffer = doc.embedding as Buffer;
@@ -1422,7 +1471,7 @@ export class ReconcileLoop {
       // 3. Upsert into HNSW index
       // Use vector_documents.id as numerical ID for HNSW
       await vectorIndexService.upsert(doc.id, vector);
-      await vectorIndexService.flush();
+      vectorIndexService.requestFlush();
 
       // 4. Mark succeeded
       db.update(vectorDocuments)
@@ -1595,12 +1644,23 @@ export class ReconcileLoop {
       return;
     }
 
+    const claimedAttempts = summary.attempts + 1;
+
     try {
-      await db
+      const claim = await db
         .update(activitySummaries)
-        .set({ status: "running", updatedAt: Date.now() })
-        .where(eq(activitySummaries.id, record.id))
+        .set({ status: "running", attempts: claimedAttempts, updatedAt: Date.now() })
+        .where(
+          and(
+            eq(activitySummaries.id, record.id),
+            or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed"))
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return;
+      }
 
       const success = await activityMonitorService.generateWindowSummary(
         summary.windowStart,
@@ -1611,13 +1671,12 @@ export class ReconcileLoop {
         throw new Error("Generation failed");
       }
     } catch (error) {
-      const nextAttempts = record.attempts + 1;
-      const nextRunAt = this.calculateNextRun(nextAttempts);
+      const nextRunAt = this.calculateNextRun(claimedAttempts);
       await db
         .update(activitySummaries)
         .set({
           status: "failed",
-          attempts: nextAttempts,
+          attempts: claimedAttempts,
           nextRunAt,
           errorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: Date.now(),
@@ -1635,12 +1694,27 @@ export class ReconcileLoop {
       return;
     }
 
+    const currentAttempts = event.detailsAttempts || 0;
+    const claimedAttempts = currentAttempts + 1;
+
     try {
-      await db
+      const claim = await db
         .update(activityEvents)
-        .set({ detailsStatus: "running", updatedAt: Date.now() })
-        .where(eq(activityEvents.id, record.id))
+        .set({ detailsStatus: "running", detailsAttempts: claimedAttempts, updatedAt: Date.now() })
+        .where(
+          and(
+            eq(activityEvents.id, record.id),
+            or(
+              eq(activityEvents.detailsStatus, "pending"),
+              eq(activityEvents.detailsStatus, "failed")
+            )
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return;
+      }
 
       const success = await activityMonitorService.generateEventDetails(event.id);
 
@@ -1648,13 +1722,12 @@ export class ReconcileLoop {
         throw new Error("Details generation failed");
       }
     } catch (error) {
-      const nextAttempts = (event.detailsAttempts || 0) + 1;
-      const nextRunAt = this.calculateNextRun(nextAttempts);
+      const nextRunAt = this.calculateNextRun(claimedAttempts);
       await db
         .update(activityEvents)
         .set({
           detailsStatus: "failed",
-          detailsAttempts: nextAttempts,
+          detailsAttempts: claimedAttempts,
           detailsNextRunAt: nextRunAt,
           detailsErrorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: Date.now(),

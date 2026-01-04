@@ -11,10 +11,13 @@ const logger = getLogger("vector-index-service");
 
 // Default dimension if no embeddings exist yet
 const DEFAULT_DIMENSIONS = 1536;
+const DEFAULT_FLUSH_DEBOUNCE_MS = 500;
 
 export class VectorIndexService {
   private index: hnswlib.HierarchicalNSW | null = null;
   private detectedDimensions: number | null = null;
+  private loadPromise: Promise<void> | null = null;
+  private flushTimer: NodeJS.Timeout | null = null;
 
   /**
    * Detect embedding dimensions from existing documents
@@ -47,54 +50,66 @@ export class VectorIndexService {
    * Load the index from disk or create a fresh one
    */
   async load(): Promise<void> {
+    if (this.loadPromise) {
+      return this.loadPromise;
+    }
+
     const { indexFilePath } = vectorStoreConfig;
     const db = getDb();
 
-    // Detect dimensions from existing embeddings
-    this.detectedDimensions = this.detectDimensionsFromDb();
+    this.loadPromise = (async () => {
+      // Detect dimensions from existing embeddings
+      this.detectedDimensions = this.detectDimensionsFromDb();
 
-    // Calculate needed capacity
-    const [{ value }] = db.select({ value: count() }).from(vectorDocuments).all();
-    // Initial capacity: current docs + 5000 headroom
-    const neededCapacity = Number(value ?? 0) + 5000;
+      // Calculate needed capacity
+      const [{ value }] = db.select({ value: count() }).from(vectorDocuments).all();
+      // Initial capacity: current docs + 5000 headroom
+      const neededCapacity = Number(value ?? 0) + 5000;
 
-    // Ensure directory exists
-    const dir = path.dirname(indexFilePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+      // Ensure directory exists
+      const dir = path.dirname(indexFilePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
 
-    if (fs.existsSync(indexFilePath)) {
-      try {
-        this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
-        this.index.readIndexSync(indexFilePath);
+      if (fs.existsSync(indexFilePath)) {
+        try {
+          this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
+          this.index.readIndexSync(indexFilePath);
 
-        // Check if we need to resize immediately upon loading
-        if (this.index.getMaxElements() < neededCapacity) {
+          // Check if we need to resize immediately upon loading
+          if (this.index.getMaxElements() < neededCapacity) {
+            logger.info(
+              { oldMax: this.index.getMaxElements(), newMax: neededCapacity },
+              "Resizing index on load"
+            );
+            this.index.resizeIndex(neededCapacity);
+          }
+
           logger.info(
-            { oldMax: this.index.getMaxElements(), newMax: neededCapacity },
-            "Resizing index on load"
+            {
+              path: indexFilePath,
+              dimensions: this.detectedDimensions,
+              currentCount: this.index.getCurrentCount(),
+              maxElements: this.index.getMaxElements(),
+            },
+            "Loaded vector index"
           );
-          this.index.resizeIndex(neededCapacity);
+        } catch (err) {
+          logger.error({ error: err }, "Failed to load index from file, creating fresh index");
+          this.createFreshIndex(neededCapacity);
+          this.resetSucceededIndexStatuses();
         }
-
-        logger.info(
-          {
-            path: indexFilePath,
-            dimensions: this.detectedDimensions,
-            currentCount: this.index.getCurrentCount(),
-            maxElements: this.index.getMaxElements(),
-          },
-          "Loaded vector index"
-        );
-      } catch (err) {
-        logger.error({ error: err }, "Failed to load index from file, creating fresh index");
+      } else {
         this.createFreshIndex(neededCapacity);
         this.resetSucceededIndexStatuses();
       }
-    } else {
-      this.createFreshIndex(neededCapacity);
-      this.resetSucceededIndexStatuses();
+    })();
+
+    try {
+      await this.loadPromise;
+    } finally {
+      this.loadPromise = null;
     }
   }
 
@@ -152,6 +167,12 @@ export class VectorIndexService {
     }
     if (!this.index) throw new Error("Index not initialized");
 
+    if (this.detectedDimensions && embedding.length !== this.detectedDimensions) {
+      throw new Error(
+        `Embedding dimensions mismatch: expected ${this.detectedDimensions}, got ${embedding.length}`
+      );
+    }
+
     try {
       const currentCount = this.index.getCurrentCount();
       const maxElements = this.index.getMaxElements();
@@ -168,6 +189,13 @@ export class VectorIndexService {
       // addPoint(vector, label) - replaces if label exists (usually)
       this.index.addPoint(Array.from(embedding), docId);
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("dimensions mismatch")) {
+        // Rebuild index and reset statuses so index tasks can retry with correct dims
+        const capacity = this.index?.getMaxElements() ?? 5000;
+        this.createFreshIndex(capacity);
+        this.resetSucceededIndexStatuses();
+      }
       logger.error({ error: err, docId }, "Failed to upsert vector");
       throw err;
     }
@@ -185,6 +213,12 @@ export class VectorIndexService {
     }
     if (!this.index || this.index.getCurrentCount() === 0) {
       return [];
+    }
+
+    if (this.detectedDimensions && queryEmbedding.length !== this.detectedDimensions) {
+      throw new Error(
+        `Query embedding dimensions mismatch: expected ${this.detectedDimensions}, got ${queryEmbedding.length}`
+      );
     }
 
     try {
@@ -214,6 +248,22 @@ export class VectorIndexService {
       // Ignore error if element doesn't exist
       logger.debug({ docId, error: err }, "Failed to markDelete (likely not found)");
     }
+  }
+
+  /**
+   * Debounced flush to reduce IO pressure when indexing many vectors.
+   */
+  requestFlush(): void {
+    const delay = vectorStoreConfig.flushDebounceMs ?? DEFAULT_FLUSH_DEBOUNCE_MS;
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(async () => {
+      this.flushTimer = null;
+      try {
+        await this.flush();
+      } catch (err) {
+        logger.error({ error: err }, "Debounced flush failed");
+      }
+    }, delay);
   }
 }
 

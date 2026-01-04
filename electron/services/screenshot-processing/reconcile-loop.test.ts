@@ -233,6 +233,7 @@ describe("ReconcileLoop", () => {
       } as ContextNodeRecord;
 
       mockDb.get.mockReturnValueOnce(mockNode);
+      mockDb.run.mockReturnValueOnce({ changes: 1 });
 
       // Mock handleSingleMerge to avoid deep logic in this test
       const loop = reconcileLoop as unknown as {
@@ -264,6 +265,7 @@ describe("ReconcileLoop", () => {
       } as ContextNodeRecord;
 
       mockDb.get.mockReturnValueOnce(mockNode);
+      mockDb.run.mockReturnValueOnce({ changes: 1 }).mockReturnValueOnce({ changes: 1 });
       const loop = reconcileLoop as unknown as {
         handleSingleMerge: (node: ContextNodeRecord) => Promise<void>;
       };
@@ -280,7 +282,7 @@ describe("ReconcileLoop", () => {
         attempts: retryConfig.maxAttempts - 1,
       });
 
-      expect(mockDb.set).toHaveBeenCalledWith(
+      expect(mockDb.set).toHaveBeenLastCalledWith(
         expect.objectContaining({
           mergeStatus: "failed_permanent",
           mergeAttempts: retryConfig.maxAttempts,

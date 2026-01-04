@@ -11,7 +11,7 @@
  */
 
 import crypto from "node:crypto";
-import { generateObject, LanguageModelUsage } from "ai";
+import { generateObject } from "ai";
 
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
@@ -40,6 +40,9 @@ import type {
   EvidencePack as EvidencePackType,
 } from "./types";
 import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
+import { aiSemaphore } from "./ai-semaphore";
+import { aiConcurrencyConfig } from "./config";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 
 const logger = getLogger("text-llm-processor");
 
@@ -950,6 +953,7 @@ Return the JSON now:`;
     batch: Batch,
     evidencePacks: EvidencePack[]
   ): Promise<TextLLMExpandResult> {
+    const startTime = Date.now();
     const aiService = AISDKService.getInstance();
 
     if (!aiService.isInitialized()) {
@@ -957,9 +961,14 @@ Return the JSON now:`;
     }
 
     const prompt = this.buildExpandPrompt(vlmIndex, batch, evidencePacks);
+    const modelName = aiService.getTextModelName();
 
-    let rawResult: unknown;
-    let usage: LanguageModelUsage;
+    // Acquire global text semaphore
+    const release = await aiSemaphore.text.acquire();
+
+    // Setup timeout with AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
 
     try {
       const response = await generateObject({
@@ -972,10 +981,49 @@ Return the JSON now:`;
             content: prompt,
           },
         ],
+        abortSignal: controller.signal,
       });
-      rawResult = response.object;
-      usage = response.usage;
+
+      const result = TextLLMExpandResultProcessedSchema.parse(response.object);
+      const durationMs = Date.now() - startTime;
+
+      llmUsageService.logEvent({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_expand",
+        status: "succeeded",
+        model: modelName,
+        provider: "openai_compatible",
+        totalTokens: response.usage?.totalTokens ?? 0,
+        usageStatus: response.usage ? "present" : "missing",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_expand",
+        model: modelName,
+        durationMs,
+        status: "succeeded",
+        responsePreview: JSON.stringify(result, null, 2),
+      });
+
+      return result as TextLLMExpandResult;
     } catch (err) {
+      const durationMs = Date.now() - startTime;
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_expand",
+        model: modelName,
+        durationMs,
+        status: "failed",
+        errorPreview: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      });
+
       logger.error(
         {
           error: err instanceof Error ? err.message : String(err),
@@ -984,22 +1032,10 @@ Return the JSON now:`;
         "Text LLM expansion generateObject call failed"
       );
       throw err;
+    } finally {
+      clearTimeout(timeoutId);
+      release();
     }
-
-    const result = TextLLMExpandResultProcessedSchema.parse(rawResult);
-
-    llmUsageService.logEvent({
-      ts: Date.now(),
-      capability: "text",
-      operation: "text_expand",
-      status: "succeeded",
-      model: aiService.getTextModelName(),
-      provider: "openai_compatible",
-      totalTokens: usage?.totalTokens ?? 0,
-      usageStatus: usage ? "present" : "missing",
-    });
-
-    return result as TextLLMExpandResult;
   }
 
   private buildMergePrompt(
@@ -1039,14 +1075,21 @@ Return the JSON object now:`;
     existingNode: ExpandedContextNode,
     newNode: ExpandedContextNode
   ): Promise<TextLLMMergeResult> {
+    const startTime = Date.now();
     const aiService = AISDKService.getInstance();
     if (!aiService.isInitialized()) {
       throw new Error("AI SDK not initialized");
     }
 
     const prompt = this.buildMergePrompt(existingNode, newNode);
-    let rawResult: unknown;
-    let usage: LanguageModelUsage;
+    const modelName = aiService.getTextModelName();
+
+    // Acquire global text semaphore
+    const release = await aiSemaphore.text.acquire();
+
+    // Setup timeout with AbortController
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
 
     try {
       const response = await generateObject({
@@ -1066,10 +1109,50 @@ Return the JSON object now:`;
             },
           },
         },
+        abortSignal: controller.signal,
       });
-      rawResult = response.object;
-      usage = response.usage;
+
+      const result = TextLLMMergeResultProcessedSchema.parse(response.object);
+      const durationMs = Date.now() - startTime;
+
+      // Log usage
+      llmUsageService.logEvent({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_merge",
+        status: "succeeded",
+        model: modelName,
+        provider: "openai_compatible",
+        totalTokens: response.usage?.totalTokens ?? 0,
+        usageStatus: response.usage ? "present" : "missing",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_merge",
+        model: modelName,
+        durationMs,
+        status: "succeeded",
+        responsePreview: JSON.stringify(result, null, 2),
+      });
+
+      return result as TextLLMMergeResult;
     } catch (err) {
+      const durationMs = Date.now() - startTime;
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_merge",
+        model: modelName,
+        durationMs,
+        status: "failed",
+        errorPreview: err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+      });
+
       logger.error(
         {
           error: err instanceof Error ? err.message : String(err),
@@ -1079,23 +1162,10 @@ Return the JSON object now:`;
         "Text LLM merge generateObject call failed"
       );
       throw err;
+    } finally {
+      clearTimeout(timeoutId);
+      release();
     }
-
-    const result = TextLLMMergeResultProcessedSchema.parse(rawResult);
-
-    // Log usage
-    llmUsageService.logEvent({
-      ts: Date.now(),
-      capability: "text",
-      operation: "text_merge",
-      status: "succeeded",
-      model: aiService.getTextModelName(),
-      provider: "openai_compatible",
-      totalTokens: usage?.totalTokens ?? 0,
-      usageStatus: usage ? "present" : "missing",
-    });
-
-    return result as TextLLMMergeResult;
   }
 }
 

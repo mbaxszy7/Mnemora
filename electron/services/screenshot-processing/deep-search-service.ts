@@ -25,6 +25,9 @@ import type {
   ScreenshotEvidence,
   ContextKind,
 } from "./types";
+import { aiSemaphore } from "./ai-semaphore";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiConcurrencyConfig } from "./config";
 
 const logger = getLogger("deep-search-service");
 
@@ -185,6 +188,14 @@ export class DeepSearchService {
   ): Promise<SearchQueryPlan | null> {
     const startTime = Date.now();
 
+    // Acquire global text semaphore
+    const release = await aiSemaphore.text.acquire();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const onAbort = () => controller.abort();
+    abortSignal?.addEventListener("abort", onAbort);
+
     try {
       const aiService = AISDKService.getInstance();
       if (!aiService.isInitialized()) {
@@ -193,6 +204,7 @@ export class DeepSearchService {
       }
 
       const canonicalCandidatesJson = JSON.stringify(CANONICAL_APP_CANDIDATES, null, 2);
+      const modelName = aiService.getTextModelName();
 
       const prompt = `Current time: ${new Date(nowTs).toISOString()}
 Timezone: ${timezone}
@@ -214,7 +226,7 @@ Parse this query and return the structured search parameters.`;
         system: QUERY_UNDERSTANDING_SYSTEM_PROMPT,
         schema: SearchQueryPlanSchema,
         prompt,
-        abortSignal,
+        abortSignal: controller.signal,
         providerOptions: {
           mnemora: {
             thinking: {
@@ -230,48 +242,75 @@ Parse this query and return the structured search parameters.`;
         return null;
       }
 
+      const durationMs = Date.now() - startTime;
+
       // Track usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
         operation: "deep_search_understand_query",
         status: "succeeded",
-        model: aiService.getTextModelName(),
+        model: modelName,
         totalTokens: usage?.totalTokens ?? null,
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
 
-      logger.debug(
-        { durationMs: Date.now() - startTime, confidence: parsed.confidence },
-        "Query understanding completed"
-      );
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "deep_search_understand_query",
+        model: modelName,
+        durationMs,
+        status: "succeeded",
+        responsePreview: JSON.stringify(parsed, null, 2),
+      });
+
+      logger.debug({ durationMs, confidence: parsed.confidence }, "Query understanding completed");
 
       return parsed;
     } catch (error) {
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
 
       // Record failed usage
       try {
         const aiService = AISDKService.getInstance();
+        const modelName = aiService.getTextModelName();
+
         llmUsageService.logEvent({
           ts: Date.now(),
           capability: "text",
           operation: "deep_search_understand_query",
           status: "failed",
-          model: aiService.getTextModelName(),
+          model: modelName,
           totalTokens: null,
           usageStatus: "missing",
           errorCode: error instanceof Error ? error.name : "unknown",
+        });
+
+        // Record trace for monitoring dashboard
+        aiRequestTraceBuffer.record({
+          ts: Date.now(),
+          capability: "text",
+          operation: "deep_search_understand_query",
+          model: modelName,
+          durationMs,
+          status: "failed",
+          errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
         });
       } catch {
         // Ignore usage recording errors
       }
 
       logger.warn(
-        { error: error instanceof Error ? error.message : String(error), durationMs: duration },
+        { error: error instanceof Error ? error.message : String(error), durationMs },
         "Query understanding failed"
       );
       return null;
+    } finally {
+      clearTimeout(timeoutId);
+      abortSignal?.removeEventListener("abort", onAbort);
+      release();
     }
   }
 
@@ -296,12 +335,22 @@ Parse this query and return the structured search parameters.`;
 
     const startTime = Date.now();
 
+    // Acquire global text semaphore
+    const release = await aiSemaphore.text.acquire();
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const onAbort = () => controller.abort();
+    abortSignal?.addEventListener("abort", onAbort);
+
     try {
       const aiService = AISDKService.getInstance();
       if (!aiService.isInitialized()) {
         logger.warn("AI SDK not initialized, skipping answer synthesis");
         return null;
       }
+
+      const modelName = aiService.getTextModelName();
 
       // Build LLM payload
       const { nodesPayload, evidencePayload, globalSummary } = this.buildLLMPayload(
@@ -321,7 +370,7 @@ Parse this query and return the structured search parameters.`;
         system: ANSWER_SYNTHESIS_SYSTEM_PROMPT,
         schema: SearchAnswerSchema,
         prompt,
-        abortSignal,
+        abortSignal: controller.signal,
         providerOptions: {
           mnemora: {
             thinking: {
@@ -332,6 +381,7 @@ Parse this query and return the structured search parameters.`;
       });
 
       const parsed = SearchAnswerProcessedSchema.parse(rawResult);
+      const durationMs = Date.now() - startTime;
 
       // Track usage
       llmUsageService.logEvent({
@@ -339,46 +389,72 @@ Parse this query and return the structured search parameters.`;
         capability: "text",
         operation: "deep_search_synthesize_answer",
         status: "succeeded",
-        model: aiService.getTextModelName(),
+        model: modelName,
         totalTokens: usage?.totalTokens ?? null,
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "deep_search_synthesize_answer",
+        model: modelName,
+        durationMs,
+        status: "succeeded",
+        responsePreview: JSON.stringify(parsed, null, 2),
+      });
+
       if (!parsed) {
         logger.warn("Answer synthesis: null result from generateObject");
         return null;
       }
 
-      logger.debug(
-        { durationMs: Date.now() - startTime, confidence: parsed.confidence },
-        "Answer synthesis completed"
-      );
+      logger.debug({ durationMs, confidence: parsed.confidence }, "Answer synthesis completed");
 
       return parsed;
     } catch (error) {
-      const duration = Date.now() - startTime;
+      const durationMs = Date.now() - startTime;
 
       // Record failed usage
       try {
         const aiService = AISDKService.getInstance();
+        const modelName = aiService.getTextModelName();
+
         llmUsageService.logEvent({
           ts: Date.now(),
           capability: "text",
           operation: "deep_search_synthesize_answer",
           status: "failed",
-          model: aiService.getTextModelName(),
+          model: modelName,
           totalTokens: null,
           usageStatus: "missing",
           errorCode: error instanceof Error ? error.name : "unknown",
+        });
+
+        // Record trace for monitoring dashboard
+        aiRequestTraceBuffer.record({
+          ts: Date.now(),
+          capability: "text",
+          operation: "deep_search_synthesize_answer",
+          model: modelName,
+          durationMs,
+          status: "failed",
+          errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
         });
       } catch {
         // Ignore usage recording errors
       }
 
       logger.warn(
-        { error: error instanceof Error ? error.message : String(error), durationMs: duration },
+        { error: error instanceof Error ? error.message : String(error), durationMs },
         "Answer synthesis failed"
       );
       return null;
+    } finally {
+      clearTimeout(timeoutId);
+      abortSignal?.removeEventListener("abort", onAbort);
+      release();
     }
   }
 

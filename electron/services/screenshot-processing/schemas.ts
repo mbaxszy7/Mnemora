@@ -7,7 +7,7 @@
 
 import { z } from "zod";
 
-import { CONTEXT_KIND_VALUES, EDGE_TYPE_VALUES, VLM_STATUS_VALUES } from "../../database/schema";
+import { CONTEXT_KIND_VALUES, EDGE_TYPE_VALUES } from "../../database/schema";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 
 // ============================================================================
@@ -17,37 +17,22 @@ import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 /**
  * Context node kinds
  */
-export const ContextKindEnum = z.enum([...CONTEXT_KIND_VALUES]);
-
-export type ContextKindValue = z.infer<typeof ContextKindEnum>;
+const ContextKindEnum = z.enum([...CONTEXT_KIND_VALUES]);
 
 /**
  * Edge types for context graph relationships
  */
-export const EdgeTypeEnum = z.enum([...EDGE_TYPE_VALUES]);
-
-export type EdgeTypeValue = z.infer<typeof EdgeTypeEnum>;
+const EdgeTypeEnum = z.enum([...EDGE_TYPE_VALUES]);
 
 /**
  * Entity types
  */
-export const EntityTypeSchema = z.string().min(1).max(32);
-
-export type EntityTypeValue = z.infer<typeof EntityTypeSchema>;
-
-/**
- * Processing status values
- */
-export const ProcessingStatusEnum = z.enum([...VLM_STATUS_VALUES]);
-
-export type ProcessingStatusValue = z.infer<typeof ProcessingStatusEnum>;
+const EntityTypeSchema = z.string().min(1).max(32);
 
 /**
  * Merge decision values
  */
-export const MergeDecisionEnum = z.enum(["NEW", "MERGE"]);
-
-export type MergeDecisionValue = z.infer<typeof MergeDecisionEnum>;
+const MergeDecisionEnum = z.enum(["NEW", "MERGE"]);
 
 // ============================================================================
 // Constants
@@ -75,18 +60,18 @@ function truncateTo(maxLen: number) {
 /**
  * Schema for derived items (knowledge, state, procedure, plan)
  */
-export const DerivedItemSchema = z.object({
+const DerivedItemSchema = z.object({
   /** Title of the derived item (≤100 chars) */
-  title: z.string().max(100),
+  title: z.string(),
   /** Summary of the derived item (≤500 chars) */
-  summary: z.string().max(500),
+  summary: z.string(),
   /** Steps for procedures (optional) */
   steps: z.array(z.string()).optional(),
   /** Object being tracked for state snapshots (optional) */
   object: z.string().optional(),
 });
 
-export const DerivedItemProcessedSchema = DerivedItemSchema.transform((val) => {
+const DerivedItemProcessedSchema = DerivedItemSchema.transform((val) => {
   const result: z.infer<typeof DerivedItemSchema> = {
     ...val,
     title: truncateTo(100)(val.title),
@@ -103,18 +88,18 @@ export type DerivedItem = z.infer<typeof DerivedItemSchema>;
 /**
  * Schema for VLM segment event
  */
-export const VLMEventSchema = z.object({
+const VLMEventSchema = z.object({
   /** Event title (≤100 chars) */
-  title: z.string().max(100),
+  title: z.string(),
   /** Event summary (≤500 chars) */
-  summary: z.string().max(500),
+  summary: z.string(),
   /** Confidence score (0-10) */
-  confidence: z.number().min(0).max(10),
+  confidence: z.number(),
   /** Importance score (0-10) */
-  importance: z.number().min(0).max(10),
+  importance: z.number(),
 });
 
-export const VLMEventProcessedSchema = VLMEventSchema.transform((val) => ({
+const VLMEventProcessedSchema = VLMEventSchema.transform((val) => ({
   ...val,
   title: truncateTo(100)(val.title),
   summary: truncateTo(500)(val.summary),
@@ -122,12 +107,10 @@ export const VLMEventProcessedSchema = VLMEventSchema.transform((val) => ({
   importance: Math.max(0, Math.min(10, val.importance)),
 }));
 
-export type VLMEvent = z.infer<typeof VLMEventProcessedSchema>;
-
 /**
  * Schema for derived nodes in a segment
  */
-export const DerivedNodesSchema = z.object({
+const DerivedNodesSchema = z.object({
   /** Knowledge items extracted */
   knowledge: z.array(DerivedItemSchema).default([]),
   /** State snapshots captured */
@@ -138,7 +121,7 @@ export const DerivedNodesSchema = z.object({
   plan: z.array(DerivedItemSchema).default([]),
 });
 
-export const DerivedNodesProcessedSchema = DerivedNodesSchema.transform((val) => {
+const DerivedNodesProcessedSchema = DerivedNodesSchema.transform((val) => {
   const result: z.infer<typeof DerivedNodesSchema> = {
     knowledge: val.knowledge.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
     state: val.state.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
@@ -148,32 +131,28 @@ export const DerivedNodesProcessedSchema = DerivedNodesSchema.transform((val) =>
   return result;
 });
 
-export type DerivedNodes = z.infer<typeof DerivedNodesSchema>;
-
 /**
  * Schema for merge hint
  */
-export const MergeHintSchema = z.object({
+const MergeHintSchema = z.object({
   /** Decision: NEW for new thread, MERGE for existing thread */
   decision: MergeDecisionEnum,
   /** Thread ID to merge with (required if decision is MERGE) */
   thread_id: z.string().optional(),
 });
 
-export const MergeHintProcessedSchema = MergeHintSchema.refine(
-  (val) => !(val.decision === "MERGE" && !val.thread_id),
-  {
-    message: "thread_id is required when decision is MERGE",
-    path: ["thread_id"],
+const MergeHintProcessedSchema = MergeHintSchema.transform((val) => {
+  if (val.decision === "MERGE" && !val.thread_id) {
+    // Gracefully downgrade to NEW when thread_id is missing to avoid hard failure
+    return { decision: "NEW" as const };
   }
-);
-
-export type MergeHint = z.infer<typeof MergeHintProcessedSchema>;
+  return val;
+});
 
 /**
  * Schema for a VLM segment
  */
-export const VLMSegmentSchema = z.object({
+const VLMSegmentSchema = z.object({
   /** Unique segment identifier */
   segment_id: z.string(),
   /** Screenshot IDs (1-based indices) included in this segment */
@@ -188,7 +167,7 @@ export const VLMSegmentSchema = z.object({
   keywords: z.array(z.string()).optional(),
 });
 
-export const VLMSegmentProcessedSchema = VLMSegmentSchema.transform((val) => {
+const VLMSegmentProcessedSchema = VLMSegmentSchema.transform((val) => {
   const result: z.infer<typeof VLMSegmentSchema> = {
     ...val,
     event: VLMEventProcessedSchema.parse(val.event),
@@ -226,7 +205,7 @@ export const VLMIndexResultSchema = z.object({
         /** Full OCR text (trimmed, ≤8000 chars) */
         ocr_text: z.string().optional(),
         /** High-value UI text snippets (≤20, each ≤200 chars) */
-        ui_text_snippets: z.array(z.string().max(200)).optional(),
+        ui_text_snippets: z.array(z.string()).optional(),
       })
     )
     .default([]),
@@ -261,105 +240,14 @@ export const VLMIndexResultProcessedSchema = VLMIndexResultSchema.transform((val
 
 export type VLMIndexResult = z.infer<typeof VLMIndexResultSchema>;
 
-// ============================================================================
-// Meta Payload Schema
-// ============================================================================
-
-/**
- * Schema for vector document meta payload
- * Used for post-retrieval filtering
- */
-export const MetaPayloadSchema = z.object({
-  /** Node kind */
-  kind: ContextKindEnum,
-  /** Thread ID (for events) */
-  thread_id: z.string().optional(),
-  /** Timestamp */
-  ts: z.number(),
-  /** Application hint */
-  app_hint: z.string().optional(),
-  /** Entity names mentioned */
-  entities: z.array(z.string()).default([]),
-  /** Source key */
-  source_key: z.string(),
-});
-
-export type MetaPayload = z.infer<typeof MetaPayloadSchema>;
-
-// ============================================================================
-// Screenshot Meta Schema
-// ============================================================================
-
-/**
- * Schema for screenshot metadata passed to VLM
- * Note: Named VLMScreenshotMeta to avoid conflict with types.ts ScreenshotMeta
- */
-export const VLMScreenshotMetaSchema = z.object({
-  /** 1-based index in the batch */
-  index: z.number().int().positive(),
-  /** Screenshot database ID */
-  screenshot_id: z.number().int().positive(),
-  /** Capture timestamp (ISO string) */
-  captured_at: z.string(),
-  /** Source key */
-  source_key: z.string(),
-  /** Application hint (null if unavailable) */
-  app_hint: z.string().nullable(),
-  /** Window title (null if unavailable) */
-  window_title: z.string().nullable(),
-});
-
-export type VLMScreenshotMeta = z.infer<typeof VLMScreenshotMetaSchema>;
-
-// ============================================================================
-// History Pack Schema
-// ============================================================================
-
-/**
- * Schema for thread summary in history pack
- */
-export const ThreadSummarySchema = z.object({
-  /** Thread identifier */
-  thread_id: z.string(),
-  /** Thread title */
-  title: z.string().max(100),
-  /** Last event summary (≤200 chars) */
-  last_event_summary: z.string().max(200),
-  /** Last event timestamp */
-  last_event_ts: z.number(),
-});
-
-export type ThreadSummaryValue = z.infer<typeof ThreadSummarySchema>;
-
-/**
- * Schema for segment summary in history pack
- */
-export const SegmentSummarySchema = z.object({
-  /** Segment identifier */
-  segment_id: z.string(),
-  /** Segment summary */
-  summary: z.string().max(200),
-  /** Source key */
-  source_key: z.string(),
-  /** Start timestamp */
-  start_ts: z.number(),
-});
-
-export type SegmentSummaryValue = z.infer<typeof SegmentSummarySchema>;
-
-/**
- * Schema for history pack
- */
-export const HistoryPackSchema = z.object({
-  /** Recent threads (1-3) */
-  recent_threads: z.array(ThreadSummarySchema).max(3).default([]),
-  /** Open segments */
-  open_segments: z.array(SegmentSummarySchema).default([]),
-  /** Recent entity names (5-10) */
-  recent_entities: z.array(z.string()).max(10).default([]),
-});
-
-export type HistoryPackValue = z.infer<typeof HistoryPackSchema>;
+export type VLMScreenshotMeta = {
+  index: number;
+  screenshot_id: number;
+  captured_at: string;
+  source_key: string;
+  app_hint: string | null;
+  window_title: string | null;
+};
 
 // ============================================================================
 // Entity Schemas
@@ -368,7 +256,7 @@ export type HistoryPackValue = z.infer<typeof HistoryPackSchema>;
 /**
  * Schema for entity reference
  */
-export const EntityRefSchema = z.object({
+const EntityRefSchema = z.object({
   /** Entity ID (if matched) */
   entity_id: z.number().int().positive().optional(),
   /** Entity name */
@@ -379,28 +267,10 @@ export const EntityRefSchema = z.object({
   confidence: z.number().optional(),
 });
 
-export const EntityRefProcessedSchema = EntityRefSchema.transform((val) => ({
+const EntityRefProcessedSchema = EntityRefSchema.transform((val) => ({
   ...val,
   confidence: val.confidence !== undefined ? Math.max(0, Math.min(1, val.confidence)) : undefined,
 }));
-
-export type EntityRefValue = z.infer<typeof EntityRefSchema>;
-
-/**
- * Schema for detected entity
- */
-export const DetectedEntitySchema = z.object({
-  /** Entity name */
-  name: z.string(),
-  /** Entity type */
-  entity_type: EntityTypeSchema,
-  /** Confidence score (0-1) */
-  confidence: z.number().min(0).max(1),
-  /** Detection source */
-  source: z.enum(["ocr", "vlm"]),
-});
-
-export type DetectedEntityValue = z.infer<typeof DetectedEntitySchema>;
 
 // ============================================================================
 // Text LLM Expand Output Schema
@@ -409,7 +279,7 @@ export type DetectedEntityValue = z.infer<typeof DetectedEntitySchema>;
 /**
  * Schema for expanded context node from Text LLM
  */
-export const ExpandedNodeSchema = z.object({
+const ExpandedNodeSchema = z.object({
   /** Node kind */
   kind: ContextKindEnum,
   /** Thread ID */
@@ -432,7 +302,7 @@ export const ExpandedNodeSchema = z.object({
   event_time: z.number().optional(),
 });
 
-export const ExpandedNodeProcessedSchema = ExpandedNodeSchema.transform((val) => {
+const ExpandedNodeProcessedSchema = ExpandedNodeSchema.transform((val) => {
   return {
     ...val,
     title: truncateTo(100)(val.title),
@@ -443,8 +313,6 @@ export const ExpandedNodeProcessedSchema = ExpandedNodeSchema.transform((val) =>
     entities: (val.entities ?? []).map((e) => EntityRefProcessedSchema.parse(e)),
   };
 });
-
-export type ExpandedNode = z.infer<typeof ExpandedNodeProcessedSchema>;
 
 /**
  * Schema for Text LLM expand result
@@ -494,113 +362,6 @@ export const TextLLMMergeResultProcessedSchema = TextLLMMergeResultSchema.transf
 });
 
 export type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultProcessedSchema>;
-
-// ============================================================================
-// Activity Summary Schema
-// ============================================================================
-
-/**
- * Schema for activity summary metadata
- */
-export const ActivitySummaryMetadataSchema = z.object({
-  /** Number of nodes included */
-  node_count: z.number().int().min(0),
-  /** Thread IDs included */
-  thread_ids: z.array(z.string()).default([]),
-  /** Top entities mentioned */
-  top_entities: z.array(z.string()).default([]),
-});
-
-export type ActivitySummaryMetadata = z.infer<typeof ActivitySummaryMetadataSchema>;
-
-// ============================================================================
-// Validation Helpers
-// ============================================================================
-
-/**
- * Safely parse VLM index result with error handling
- */
-export function parseVLMIndexResult(data: unknown): {
-  success: boolean;
-  data?: VLMIndexResult;
-  error?: z.ZodError;
-} {
-  const result = VLMIndexResultProcessedSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data };
-  }
-  return { success: false, error: result.error };
-}
-
-/**
- * Safely parse meta payload with error handling
- */
-export function parseMetaPayload(data: unknown): {
-  success: boolean;
-  data?: MetaPayload;
-  error?: z.ZodError;
-} {
-  const result = MetaPayloadSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data };
-  }
-  return { success: false, error: result.error };
-}
-
-/**
- * Safely parse Text LLM expand result with error handling
- */
-export function parseTextLLMExpandResult(data: unknown): {
-  success: boolean;
-  data?: TextLLMExpandResult;
-  error?: z.ZodError;
-} {
-  const result = TextLLMExpandResultProcessedSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data };
-  }
-  return { success: false, error: result.error };
-}
-
-/**
- * Validate that a string is valid JSON and parse it
- */
-export function extractAndParseJSON<T>(
-  rawText: string,
-  schema: z.ZodSchema<T>
-): { success: boolean; data?: T; error?: string } {
-  // Try to extract JSON from the text (handle markdown code blocks)
-  let jsonStr = rawText.trim();
-
-  // Remove markdown code block if present
-  const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (codeBlockMatch) {
-    jsonStr = codeBlockMatch[1].trim();
-  }
-
-  // Try to find JSON object or array
-  const jsonMatch = jsonStr.match(/(\{[\s\S]*\}|\[[\s\S]*\])/);
-  if (!jsonMatch) {
-    return { success: false, error: "No JSON object or array found in text" };
-  }
-
-  try {
-    const parsed = JSON.parse(jsonMatch[1]);
-    const result = schema.safeParse(parsed);
-    if (result.success) {
-      return { success: true, data: result.data };
-    }
-    return {
-      success: false,
-      error: `Schema validation failed: ${result.error.message}`,
-    };
-  } catch (e) {
-    return {
-      success: false,
-      error: `JSON parse error: ${e instanceof Error ? e.message : String(e)}`,
-    };
-  }
-}
 // ============================================================================
 // Activity Monitor LLM Output Schemas
 // ============================================================================
@@ -608,7 +369,7 @@ export function extractAndParseJSON<T>(
 /**
  * Event candidate from LLM window analysis
  */
-export const ActivityEventCandidateSchema = z.object({
+const ActivityEventCandidateSchema = z.object({
   title: z.string().max(100),
   kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding"]),
   start_offset_min: z.number().min(0).max(20),
@@ -618,8 +379,6 @@ export const ActivityEventCandidateSchema = z.object({
   description: z.string().max(200),
   node_ids: z.array(z.number().int().positive()),
 });
-
-export type ActivityEventCandidate = z.infer<typeof ActivityEventCandidateSchema>;
 
 /**
  * Schema for LLM-generated window summary
@@ -643,8 +402,6 @@ export const ActivityWindowSummaryLLMProcessedSchema = ActivityWindowSummaryLLMS
   })
 );
 
-export type ActivityWindowSummaryLLM = z.infer<typeof ActivityWindowSummaryLLMProcessedSchema>;
-
 /**
  * Schema for LLM-generated event details
  */
@@ -653,38 +410,6 @@ export const ActivityEventDetailsLLMSchema = z.object({
 });
 
 export const ActivityEventDetailsLLMProcessedSchema = ActivityEventDetailsLLMSchema;
-
-export type ActivityEventDetailsLLM = z.infer<typeof ActivityEventDetailsLLMProcessedSchema>;
-
-/**
- * Safely parse Activity Window Summary LLM result
- */
-export function parseActivityWindowSummaryLLM(data: unknown): {
-  success: boolean;
-  data?: ActivityWindowSummaryLLM;
-  error?: z.ZodError;
-} {
-  const result = ActivityWindowSummaryLLMProcessedSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data };
-  }
-  return { success: false, error: result.error };
-}
-
-/**
- * Safely parse Activity Event Details LLM result
- */
-export function parseActivityEventDetailsLLM(data: unknown): {
-  success: boolean;
-  data?: ActivityEventDetailsLLM;
-  error?: z.ZodError;
-} {
-  const result = ActivityEventDetailsLLMProcessedSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data };
-  }
-  return { success: false, error: result.error };
-}
 
 // ============================================================================
 // Deep Search Schemas
@@ -735,12 +460,10 @@ export const SearchQueryPlanProcessedSchema = SearchQueryPlanSchema.transform((v
   return result;
 });
 
-export type SearchQueryPlanResult = z.infer<typeof SearchQueryPlanSchema>;
-
 /**
  * Citation schema for search answers
  */
-export const SearchAnswerCitationSchema = z.object({
+const SearchAnswerCitationSchema = z.object({
   nodeId: z.number().int().positive().optional(),
   screenshotId: z.number().int().positive().optional(),
   quote: z.string().optional(),
@@ -778,5 +501,3 @@ export const SearchAnswerProcessedSchema = SearchAnswerSchema.transform((val) =>
 
   return result;
 });
-
-export type SearchAnswerResult = z.infer<typeof SearchAnswerSchema>;

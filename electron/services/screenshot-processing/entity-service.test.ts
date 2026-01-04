@@ -12,15 +12,16 @@ interface MockDrizzle {
   insert: ReturnType<typeof vi.fn>;
 }
 
+function makeSelectChain(getValue: unknown) {
+  const get = vi.fn(() => getValue);
+  const orderBy = vi.fn(() => ({ get }));
+  const where = vi.fn(() => ({ get, orderBy }));
+  const from = vi.fn(() => ({ where }));
+  return { from };
+}
+
 const mockDb: MockDrizzle = {
-  select: vi.fn(() => ({
-    from: vi.fn(() => ({
-      where: vi.fn(() => ({
-        get: vi.fn(),
-        all: vi.fn(),
-      })),
-    })),
-  })),
+  select: vi.fn(() => makeSelectChain(null)),
   insert: vi.fn(() => ({
     values: vi.fn(() => ({
       onConflictDoNothing: vi.fn(() => ({
@@ -65,21 +66,9 @@ describe("EntityService", () => {
 
   describe("resolveEntities", () => {
     it("should reuse existing entity from aliases", async () => {
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ entityId: 101 }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ entityId: 101 }));
 
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ title: "Alice" }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ title: "Alice" }));
 
       const refs = [{ name: "Alice" }];
       const result = await entityService.resolveEntities(refs, "llm");
@@ -92,31 +81,13 @@ describe("EntityService", () => {
 
     it("should create new entity if not found", async () => {
       // 1. Alias lookup fails
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue(null),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain(null));
       // 2. Canonical title lookup fails
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue(null),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain(null));
       // 3. Mock createNode
       vi.mocked(contextGraphService.createNode).mockResolvedValue("202");
       // 4. Canonical name lookup for the new node
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ title: "New Entity" }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ title: "New Entity" }));
 
       const refs = [{ name: "New Entity" }];
       const result = await entityService.resolveEntities(refs, "vlm");
@@ -129,42 +100,18 @@ describe("EntityService", () => {
 
     it("should ignore invalid entityId and fallback to resolution", async () => {
       // 1. Verify entityId fails (returns non-entity node or null)
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ id: 999, kind: "event" }), // NOT entity_profile
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ id: 999, kind: "event" }));
 
       // 2. Alias lookup fails
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue(null),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain(null));
 
       // 3. Canonical title lookup fails
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue(null),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain(null));
 
       vi.mocked(contextGraphService.createNode).mockResolvedValue("102");
 
       // 4. Canonical name lookup for the new node
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ title: "Alice" }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ title: "Alice" }));
 
       const refs = [{ name: "Alice", entityId: 999 }];
       const result = await entityService.resolveEntities(refs, "llm");
@@ -177,22 +124,10 @@ describe("EntityService", () => {
   describe("syncEventEntityMentions", () => {
     it("should resolve entities and create edges", async () => {
       // 0. Guard lookup
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ kind: "event" }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValueOnce(makeSelectChain({ kind: "event" }));
 
       // 1. Resolve lookup
-      mockDb.select.mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            get: vi.fn().mockReturnValue({ entityId: 101, title: "Alice" }),
-          }),
-        }),
-      });
+      mockDb.select.mockReturnValue(makeSelectChain({ entityId: 101, title: "Alice" }));
 
       const refs = [{ name: "Alice" }];
       await entityService.syncEventEntityMentions(1, refs, "llm");

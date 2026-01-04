@@ -30,20 +30,14 @@ vi.mock("electron", () => ({
 // Mock screen capture module
 const mockCaptureModule = {
   getState: vi.fn(() => ({ status: "idle" })),
-  start: vi.fn(),
+  tryInitialize: vi.fn(),
   stop: vi.fn(),
   on: vi.fn(),
   off: vi.fn(),
 };
 
-vi.mock("./screen-capture", () => ({
-  getScreenCaptureModule: vi.fn(() => mockCaptureModule),
-  ScreenCaptureModule: {
-    tryInitialize: vi.fn(() => {
-      mockCaptureModule.start();
-      return true;
-    }),
-  },
+vi.mock("./screen-capture/screen-capture-module", () => ({
+  screenCaptureModule: mockCaptureModule,
 }));
 
 // Mock i18n service
@@ -420,7 +414,7 @@ describe("TrayService", () => {
       expect(toggleItem?.click).toBeDefined();
       toggleItem?.click?.();
 
-      expect(mockCaptureModule.start).toHaveBeenCalled();
+      expect(mockCaptureModule.tryInitialize).toHaveBeenCalled();
     });
 
     it("should call stop when running", async () => {
@@ -478,7 +472,7 @@ describe("TrayService", () => {
       toggleItem?.click?.();
 
       expect(mockCaptureModule.stop).toHaveBeenCalled();
-      expect(mockCaptureModule.start).not.toHaveBeenCalled();
+      expect(mockCaptureModule.tryInitialize).not.toHaveBeenCalled();
     });
   });
 });

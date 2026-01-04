@@ -335,6 +335,10 @@
     "message": "检测到 AI 故障：{{seconds}} 秒内发生 {{count}} 次失败。屏幕采集已停止，请检查 LLM 配置。",
     "openConfig": "打开 LLM 配置"
   },
+  "notFound": {
+    "pageNotFound": "页面未找到",
+    "backToHome": "返回首页"
+  },
   "splashScreen": {
     "slogans": {
       "pixelsToMemory": "像素化为记忆。",

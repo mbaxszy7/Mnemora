@@ -391,19 +391,6 @@ export default function HomePage() {
                   <div className="flex-1 flex gap-4 overflow-hidden px-2 pb-2 min-h-0">
                     {/* Left Panel - Timeline */}
                     <motion.div className="w-80 shrink-0 flex flex-col" variants={itemVariants}>
-                      {isCapturePausedOrStopped ? (
-                        <div className="mb-2 px-4">
-                          <Alert className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-50 w-full max-w-full">
-                            <PauseCircle className="h-4 w-4" />
-                            <AlertTitle>
-                              {t("activityMonitor.banner.capturePausedTitle")}
-                            </AlertTitle>
-                            <AlertDescription>
-                              {t("activityMonitor.banner.capturePausedDescription")}
-                            </AlertDescription>
-                          </Alert>
-                        </div>
-                      ) : null}
                       <Timeline
                         windows={timeline}
                         events={longEvents}
@@ -419,6 +406,19 @@ export default function HomePage() {
 
                     {/* Right Panel - Summary */}
                     <motion.div className="flex-1 min-w-0 flex flex-col" variants={itemVariants}>
+                      {isCapturePausedOrStopped ? (
+                        <div className="mb-2">
+                          <Alert className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/40 dark:bg-amber-950/30 dark:text-amber-50 w-full max-w-full">
+                            <PauseCircle className="h-4 w-4" />
+                            <AlertTitle>
+                              {t("activityMonitor.banner.capturePausedTitle")}
+                            </AlertTitle>
+                            <AlertDescription>
+                              {t("activityMonitor.banner.capturePausedDescription")}
+                            </AlertDescription>
+                          </Alert>
+                        </div>
+                      ) : null}
                       <SummaryPanel
                         summary={selectedSummary}
                         isLoading={isLoadingSummary}

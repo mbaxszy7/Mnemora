@@ -179,7 +179,7 @@ export function Timeline({
             <motion.div
               key="content"
               variants={containerVariants}
-              initial="hidden"
+              initial={false}
               animate="show"
               className="space-y-1"
             >

@@ -323,9 +323,9 @@ export class LLMConfigService {
     logger.debug("Validating vision capability");
 
     try {
-      // Minimal 1x1 red pixel PNG as base64
+      // Minimal 10x10 red pixel PNG as base64
       const minimalPng =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+        "iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAFklEQVR4nGP4z8DwnxjMMKrwP12DBwCSw8c5lI9cnwAAAABJRU5ErkJggg==";
 
       await generateText({
         model: aiService.getVLMClient(),

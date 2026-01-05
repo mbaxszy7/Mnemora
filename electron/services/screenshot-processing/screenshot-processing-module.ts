@@ -17,7 +17,7 @@ import type { ScreenshotInput } from "./source-buffer-registry";
 import type { BatchReadyEvent } from "./source-buffer-registry";
 import { batchBuilder } from "./batch-builder";
 import { reconcileLoop } from "./reconcile-loop";
-import { activityMonitorService } from "./activity-monitor-service";
+import { activityTimelineScheduler } from "./activity-timeline-scheduler";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 
 export interface ScreenCaptureEventSource {
@@ -48,13 +48,6 @@ export class ScreenshotProcessingModule {
         { error },
         "Failed to refresh source buffer registry on preferences change"
       );
-    }
-  };
-
-  private readonly onSchedulerState: SchedulerEventHandler = (event) => {
-    if (event.type === "scheduler:state") {
-      const isActive = event.currentState === "running";
-      reconcileLoop.setCaptureActive(isActive, event.timestamp);
     }
   };
 
@@ -167,19 +160,17 @@ export class ScreenshotProcessingModule {
 
     this.screenCapture = options.screenCapture;
 
-    activityMonitorService.setWakeReconcileLoop(() => reconcileLoop.wake());
-
     sourceBufferRegistry.initialize(options.preferencesService);
 
     this.screenCapture.on("preferences:changed", this.onPreferencesChanged);
     this.screenCapture.on<CaptureCompleteEvent>("capture:complete", this.onCaptureComplete);
-    this.screenCapture.on("scheduler:state", this.onSchedulerState);
 
     sourceBufferRegistryEmitter.on("batch:ready", this.onBatchReady);
 
     this.startCleanupLoop();
 
     reconcileLoop.start();
+    activityTimelineScheduler.start();
 
     this.initialized = true;
   }
@@ -189,11 +180,8 @@ export class ScreenshotProcessingModule {
       return;
     }
 
-    activityMonitorService.setWakeReconcileLoop(null);
-
     this.screenCapture?.off("preferences:changed", this.onPreferencesChanged);
     this.screenCapture?.off<CaptureCompleteEvent>("capture:complete", this.onCaptureComplete);
-    this.screenCapture?.off("scheduler:state", this.onSchedulerState);
     sourceBufferRegistryEmitter.off("batch:ready", this.onBatchReady);
 
     this.stopCleanupLoop();
@@ -201,6 +189,7 @@ export class ScreenshotProcessingModule {
     sourceBufferRegistry.dispose();
 
     reconcileLoop.stop();
+    activityTimelineScheduler.stop();
 
     this.screenCapture = null;
     this.initialized = false;

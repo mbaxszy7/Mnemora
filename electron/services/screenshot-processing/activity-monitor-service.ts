@@ -5,7 +5,7 @@
  * Note: This is a data access layer - LLM generation is handled by ReconcileLoop.
  */
 
-import { eq, and, gte, lte, ne, inArray, lt, gt, desc, isNotNull } from "drizzle-orm";
+import { eq, and, or, gte, lte, ne, inArray, lt, gt, desc } from "drizzle-orm";
 import { BrowserWindow } from "electron";
 import { getDb } from "../../database";
 import {
@@ -40,8 +40,9 @@ import {
   ActivityEventDetailsLLMProcessedSchema,
 } from "./schemas";
 
-import { activitySummaryConfig, retryConfig } from "./config";
+import { activitySummaryConfig, retryConfig, aiConcurrencyConfig } from "./config";
 import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
+import { aiSemaphore } from "./ai-semaphore";
 
 const logger = getLogger("activity-monitor-service");
 
@@ -127,10 +128,6 @@ function capJsonArrayByChars<T>(
   return { items: result, approxChars: used };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function buildEmptyWindowSummary(): string {
   return [
     "## Core Tasks & Projects",
@@ -145,16 +142,6 @@ function buildEmptyWindowSummary(): string {
     "## Next Steps",
     "- None",
   ].join("\n");
-}
-
-function alignToLocalWindowStart(ts: number, intervalMs: number): number {
-  const intervalMinutes = Math.max(1, Math.round(intervalMs / 60000));
-  const d = new Date(ts);
-  d.setSeconds(0, 0);
-  const mins = d.getMinutes();
-  const alignedMins = Math.floor(mins / intervalMinutes) * intervalMinutes;
-  d.setMinutes(alignedMins);
-  return d.getTime();
 }
 
 function normalizeSummaryStatus(status: string): "pending" | "succeeded" | "failed" {
@@ -174,90 +161,6 @@ function normalizeDetailsStatus(status: string): "pending" | "succeeded" | "fail
 }
 
 class ActivityMonitorService {
-  private wakeReconcileLoop: (() => void) | null = null;
-
-  setWakeReconcileLoop(handler: (() => void) | null): void {
-    this.wakeReconcileLoop = handler;
-  }
-
-  async ensureWindowRecords(
-    fromTs: number,
-    toTs: number,
-    opts?: { emitTimelineChanged?: boolean }
-  ): Promise<void> {
-    const db = getDb();
-    const now = Date.now();
-
-    const intervalMs = activitySummaryConfig.generationIntervalMs;
-    const safetyLagMs = 2 * 60 * 1000;
-    const createdAt = now;
-    const emptySummary = buildEmptyWindowSummary();
-
-    const nodeRows = db
-      .select({ eventTime: contextNodes.eventTime })
-      .from(contextNodes)
-      .where(
-        and(
-          isNotNull(contextNodes.eventTime),
-          gte(contextNodes.eventTime, fromTs),
-          lt(contextNodes.eventTime, toTs),
-          ne(contextNodes.kind, "entity_profile")
-        )
-      )
-      .all();
-
-    if (nodeRows.length === 0) {
-      return;
-    }
-
-    const windowStarts = new Set<number>();
-    for (const row of nodeRows) {
-      const ts = row.eventTime;
-      if (!ts) continue;
-      windowStarts.add(alignToLocalWindowStart(ts, intervalMs));
-    }
-
-    const starts = Array.from(windowStarts).sort((a, b) => a - b);
-
-    let insertedAny = false;
-
-    for (const windowStart of starts) {
-      const windowEnd = windowStart + intervalMs;
-
-      const idempotencyKey = `win_${windowStart}_${windowEnd}`;
-      const nextRunAt = windowEnd > now - safetyLagMs ? windowEnd + safetyLagMs : null;
-
-      const res = db
-        .insert(activitySummaries)
-        .values({
-          windowStart,
-          windowEnd,
-          idempotencyKey,
-          title: null,
-          summary: emptySummary,
-          highlights: null,
-          stats: null,
-          status: "pending",
-          attempts: 0,
-          nextRunAt,
-          errorCode: null,
-          errorMessage: null,
-          createdAt,
-          updatedAt: createdAt,
-        })
-        .onConflictDoNothing({ target: activitySummaries.idempotencyKey })
-        .run();
-
-      if (res.changes > 0) {
-        insertedAny = true;
-      }
-    }
-
-    if (insertedAny && (opts?.emitTimelineChanged ?? true)) {
-      emitActivityTimelineChanged(fromTs, toTs);
-    }
-  }
-
   /**
    * Get timeline windows and long events for a time range
    */
@@ -274,14 +177,16 @@ class ActivityMonitorService {
       .orderBy(activitySummaries.windowStart);
 
     // Map to TimeWindow format
-    const windows: TimeWindow[] = summaries.map((s: ActivitySummaryRecord) => ({
-      id: s.id,
-      windowStart: s.windowStart,
-      windowEnd: s.windowEnd,
-      title: s.title,
-      status: normalizeSummaryStatus(s.status),
-      stats: parseJsonSafe<ActivityStats | null>(s.stats, null),
-    }));
+    const windows: TimeWindow[] = summaries
+      .filter((s) => s.title !== "No Data")
+      .map((s: ActivitySummaryRecord) => ({
+        id: s.id,
+        windowStart: s.windowStart,
+        windowEnd: s.windowEnd,
+        title: s.title,
+        status: normalizeSummaryStatus(s.status),
+        stats: parseJsonSafe<ActivityStats | null>(s.stats, null),
+      }));
 
     // Query long events that overlap with the range
     const events = await db
@@ -371,7 +276,6 @@ class ActivityMonitorService {
 
   /**
    * Get event details. If details are missing for a long event, trigger background generation
-   * through ReconcileLoop and wait briefly for completion.
    */
   async getEventDetails(eventId: number): Promise<ActivityEvent> {
     const db = getDb();
@@ -405,99 +309,94 @@ class ActivityMonitorService {
       detailsStatus: normalizeDetailsStatus(event.detailsStatus),
     });
 
+    // Non-long events don't need details
     if (!event.isLong) {
       return mapped();
     }
 
+    // Already have details
     if (event.details) {
       return mapped();
     }
 
-    if (event.detailsStatus !== "running") {
-      await db
-        .update(activityEvents)
-        .set({
-          detailsStatus: "pending",
-          detailsNextRunAt: null,
-          detailsErrorMessage: null,
-          detailsErrorCode: null,
-          updatedAt: Date.now(),
-        })
-        .where(eq(activityEvents.id, eventId))
-        .run();
-
-      this.wakeReconcileLoop?.();
+    // Details generation failed permanently
+    if (event.detailsStatus === "failed_permanent") {
+      return mapped();
     }
 
-    const timeoutMs = 45_000;
-    const pollIntervalMs = 300;
-    const start = Date.now();
-    while (Date.now() - start < timeoutMs) {
-      const latest = await db
+    // Directly generate details for on-demand user request
+    // This bypasses the scheduler for immediate response
+    try {
+      await this.generateEventDetails(eventId);
+
+      // Fetch refreshed event with details
+      const refreshed = await db
         .select()
         .from(activityEvents)
         .where(eq(activityEvents.id, eventId))
         .limit(1);
-      if (latest.length === 0) break;
 
-      const e = latest[0];
-      if (e.details) {
-        return {
-          id: e.id,
-          eventKey: e.eventKey,
-          title: e.title,
-          kind: e.kind as ActivityEventKind,
-          startTs: e.startTs,
-          endTs: e.endTs,
-          durationMs: e.durationMs,
-          isLong: e.isLong,
-          confidence: e.confidence,
-          importance: e.importance,
-          threadId: e.threadId,
-          nodeIds: parseJsonSafe<number[] | null>(e.nodeIds, null),
-          details: e.details,
-          detailsStatus: normalizeDetailsStatus(e.detailsStatus),
-        };
+      if (refreshed.length === 0) {
+        throw new Error(`Event not found after generation: ${eventId}`);
       }
 
-      if (e.detailsStatus === "failed") {
-        break;
+      const e = refreshed[0];
+      return {
+        id: e.id,
+        eventKey: e.eventKey,
+        title: e.title,
+        kind: e.kind as ActivityEventKind,
+        startTs: e.startTs,
+        endTs: e.endTs,
+        durationMs: e.durationMs,
+        isLong: e.isLong,
+        confidence: e.confidence,
+        importance: e.importance,
+        threadId: e.threadId,
+        nodeIds: parseJsonSafe<number[] | null>(e.nodeIds, null),
+        details: e.details,
+        detailsStatus: normalizeDetailsStatus(e.detailsStatus),
+      };
+    } catch (error) {
+      // If generation fails, return event with failed status
+      logger.warn(
+        { eventId, error: error instanceof Error ? error.message : String(error) },
+        "Event details generation failed on-demand"
+      );
+
+      // Refetch to get latest status
+      const failedEvent = await db
+        .select()
+        .from(activityEvents)
+        .where(eq(activityEvents.id, eventId))
+        .limit(1);
+
+      if (failedEvent.length === 0) {
+        throw new Error(`Event not found: ${eventId}`);
       }
 
-      await sleep(pollIntervalMs);
+      const f = failedEvent[0];
+      return {
+        id: f.id,
+        eventKey: f.eventKey,
+        title: f.title,
+        kind: f.kind as ActivityEventKind,
+        startTs: f.startTs,
+        endTs: f.endTs,
+        durationMs: f.durationMs,
+        isLong: f.isLong,
+        confidence: f.confidence,
+        importance: f.importance,
+        threadId: f.threadId,
+        nodeIds: parseJsonSafe<number[] | null>(f.nodeIds, null),
+        details: f.details,
+        detailsStatus: normalizeDetailsStatus(f.detailsStatus),
+      };
     }
-
-    const refreshed = await db
-      .select()
-      .from(activityEvents)
-      .where(eq(activityEvents.id, eventId))
-      .limit(1);
-
-    if (refreshed.length === 0) {
-      throw new Error(`Event not found after refresh: ${eventId}`);
-    }
-
-    return {
-      id: refreshed[0].id,
-      eventKey: refreshed[0].eventKey,
-      title: refreshed[0].title,
-      kind: refreshed[0].kind as ActivityEventKind,
-      startTs: refreshed[0].startTs,
-      endTs: refreshed[0].endTs,
-      durationMs: refreshed[0].durationMs,
-      isLong: refreshed[0].isLong,
-      confidence: refreshed[0].confidence,
-      importance: refreshed[0].importance,
-      threadId: refreshed[0].threadId,
-      nodeIds: parseJsonSafe<number[] | null>(refreshed[0].nodeIds, null),
-      details: refreshed[0].details,
-      detailsStatus: normalizeDetailsStatus(refreshed[0].detailsStatus),
-    };
   }
 
   /**
    * Trigger LLM generation for a 20-minute window summary
-   * Called by ReconcileLoop during its cycle
    */
   async generateWindowSummary(windowStart: number, windowEnd: number): Promise<boolean> {
     const db = getDb();
@@ -587,9 +486,37 @@ class ActivityMonitorService {
 
       // Branch: Processing (screens exist but no nodes yet)
       if (screenshotCount > 0 && nodeCount === 0) {
+        // Check if VLM is still working on these screenshots (pending, running, or failed-with-retries)
+        const pendingVlmCount = db
+          .select({ id: screenshots.id })
+          .from(screenshots)
+          .where(
+            and(
+              gte(screenshots.ts, windowStart),
+              lt(screenshots.ts, windowEnd),
+              or(
+                inArray(screenshots.vlmStatus, ["pending", "running"]),
+                and(
+                  eq(screenshots.vlmStatus, "failed"),
+                  lt(screenshots.vlmAttempts, retryConfig.maxAttempts)
+                )
+              )
+            )
+          )
+          .all().length;
+
         const attempts = summaryRow?.attempts ?? 0;
         const nextRunAt = Date.now() + 5 * 60 * 1000;
-        const shouldStopRetry = attempts + 1 >= retryConfig.maxAttempts;
+
+        // If we are just waiting for VLM, don't count this as a failure attempt.
+        // We set attempts back to the previous value so it doesn't burn through retries.
+        // The scheduler already incremented it to 'attempts', so we keep it there if VLM is done,
+        // or decrement if VLM is still working.
+        const newAttempts = pendingVlmCount > 0 ? Math.max(0, attempts - 1) : attempts;
+
+        // Only stop retries if we've exhausted attempts AND VLM has finished processing all screens
+        const shouldStopRetry = newAttempts >= retryConfig.maxAttempts && pendingVlmCount === 0;
+
         const emptySummary = buildEmptyWindowSummary();
         const stats: ActivityStats = {
           topApps: [],
@@ -606,7 +533,7 @@ class ActivityMonitorService {
             highlights: JSON.stringify([]),
             stats: JSON.stringify(stats),
             status: shouldStopRetry ? "succeeded" : "pending",
-            attempts: attempts + 1,
+            attempts: newAttempts,
             nextRunAt: shouldStopRetry ? null : nextRunAt,
             updatedAt: Date.now(),
           })
@@ -618,7 +545,9 @@ class ActivityMonitorService {
           )
           .run();
         emitActivityTimelineChanged(windowStart, windowEnd);
-        return !shouldStopRetry;
+        // Return true to indicate we've handled the state (even if it's still 'pending')
+        // Returning false would trigger the scheduler's catch block, which we want to avoid.
+        return true;
       }
 
       // Group nodes and count unique screenshots
@@ -750,13 +679,28 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         2
       );
 
-      const { object: rawData, usage } = await generateObject({
-        model: aiService.getTextClient(),
-        system: systemPrompt,
-        schema: ActivityWindowSummaryLLMSchema,
-        prompt: userPrompt,
-      });
+      // Use semaphore for concurrency control and AbortController for timeout
+      const releaseText = await aiSemaphore.text.acquire();
+      let llmResult: { object: unknown; usage?: { totalTokens?: number } };
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+        try {
+          llmResult = await generateObject({
+            model: aiService.getTextClient(),
+            system: systemPrompt,
+            schema: ActivityWindowSummaryLLMSchema,
+            prompt: userPrompt,
+            abortSignal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } finally {
+        releaseText();
+      }
 
+      const { object: rawData, usage } = llmResult;
       const data = ActivityWindowSummaryLLMProcessedSchema.parse(rawData);
 
       // Log usage
@@ -1051,13 +995,28 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
         2
       );
 
-      const { object: rawData, usage } = await generateObject({
-        model: aiService.getTextClient(),
-        system: systemPrompt,
-        schema: ActivityEventDetailsLLMSchema,
-        prompt: userPrompt,
-      });
+      // Use semaphore for concurrency control and AbortController for timeout
+      const releaseText = await aiSemaphore.text.acquire();
+      let llmResult: { object: unknown; usage?: { totalTokens?: number } };
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+        try {
+          llmResult = await generateObject({
+            model: aiService.getTextClient(),
+            system: systemPrompt,
+            schema: ActivityEventDetailsLLMSchema,
+            prompt: userPrompt,
+            abortSignal: controller.signal,
+          });
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      } finally {
+        releaseText();
+      }
 
+      const { object: rawData, usage } = llmResult;
       const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
 
       // Log usage

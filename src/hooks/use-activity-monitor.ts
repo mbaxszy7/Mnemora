@@ -7,23 +7,41 @@ import type {
   ActivityTimelineChangedPayload,
 } from "@shared/activity-types";
 
+/**
+ * Global cache to persist activity data across component remounts
+ * (e.g. when navigating to Settings and back, or window restore)
+ */
+const globalCache = {
+  windows: new Map<number, TimeWindow>(),
+  longEvents: new Map<number, LongEventMarker>(),
+  rangeMs: 2 * 60 * 60 * 1000,
+  lastRevision: 0,
+  hasLoadedOnce: false,
+};
+
 export function useActivityMonitor() {
-  const [timeline, setTimeline] = useState<TimeWindow[]>([]);
-  const [longEvents, setLongEvents] = useState<LongEventMarker[]>([]);
-  const [isLoadingTimeline, setIsLoadingTimeline] = useState(false);
+  // Initialize from global cache if available
+  const [timeline, setTimeline] = useState<TimeWindow[]>(() => {
+    return Array.from(globalCache.windows.values()).sort((a, b) => a.windowStart - b.windowStart);
+  });
+  const [longEvents, setLongEvents] = useState<LongEventMarker[]>(() => {
+    return Array.from(globalCache.longEvents.values()).sort((a, b) => a.startTs - b.startTs);
+  });
+
+  // Only show initial loading if we've never loaded before
+  const [isLoadingTimeline, setIsLoadingTimeline] = useState(!globalCache.hasLoadedOnce);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [loadedRangeMs, setLoadedRangeMs] = useState<number>(2 * 60 * 60 * 1000);
-  const cacheRangeMsRef = useRef<number>(2 * 60 * 60 * 1000);
-  const [cacheRangeMs, setCacheRangeMs] = useState<number>(2 * 60 * 60 * 1000);
-  const cacheWindowsRef = useRef<Map<number, TimeWindow>>(new Map());
-  const cacheLongEventsRef = useRef<Map<number, LongEventMarker>>(new Map());
+  const [loadedRangeMs, setLoadedRangeMs] = useState<number>(globalCache.rangeMs);
+  const cacheRangeMsRef = useRef<number>(globalCache.rangeMs);
+  const [cacheRangeMs, setCacheRangeMs] = useState<number>(globalCache.rangeMs);
   const [cacheRevision, setCacheRevision] = useState(0);
 
   const refreshTimerRef = useRef<number | null>(null);
-  const lastRevisionRef = useRef<number>(0);
+  const lastRevisionRef = useRef<number>(globalCache.lastRevision);
   const latestLoadedRangeRef = useRef<number>(loadedRangeMs);
+
   useEffect(() => {
     latestLoadedRangeRef.current = loadedRangeMs;
   }, [loadedRangeMs]);
@@ -31,11 +49,12 @@ export function useActivityMonitor() {
   const mergeIntoCache = useCallback(
     (data: { windows: TimeWindow[]; longEvents: LongEventMarker[] }) => {
       for (const w of data.windows) {
-        cacheWindowsRef.current.set(w.id, w);
+        globalCache.windows.set(w.id, w);
       }
       for (const e of data.longEvents) {
-        cacheLongEventsRef.current.set(e.id, e);
+        globalCache.longEvents.set(e.id, e);
       }
+      globalCache.hasLoadedOnce = true;
       setCacheRevision((x) => x + 1);
     },
     []
@@ -60,8 +79,9 @@ export function useActivityMonitor() {
         const result = await window.activityMonitorApi.getTimeline({ fromTs, toTs: now });
 
         if (result.success && result.data) {
-          cacheRangeMsRef.current = Math.max(cacheRangeMsRef.current, rangeMs);
-          setCacheRangeMs(cacheRangeMsRef.current);
+          globalCache.rangeMs = Math.max(globalCache.rangeMs, rangeMs);
+          cacheRangeMsRef.current = globalCache.rangeMs;
+          setCacheRangeMs(globalCache.rangeMs);
           mergeIntoCache(result.data);
         } else {
           setError(result.error?.message || "Failed to fetch timeline");
@@ -126,11 +146,11 @@ export function useActivityMonitor() {
     const effectiveRangeMs = Math.min(loadedRangeMs, cacheRangeMs);
     const fromTs = now - effectiveRangeMs;
 
-    const windows = Array.from(cacheWindowsRef.current.values())
+    const windows = Array.from(globalCache.windows.values())
       .filter((w) => w.windowEnd > fromTs && w.windowStart < now)
       .sort((a, b) => a.windowStart - b.windowStart);
 
-    const events = Array.from(cacheLongEventsRef.current.values())
+    const events = Array.from(globalCache.longEvents.values())
       .filter((e) => e.startTs < now && e.endTs > fromTs)
       .sort((a, b) => a.startTs - b.startTs);
 
@@ -160,6 +180,7 @@ export function useActivityMonitor() {
 
   // Fetch event details
   const getEventDetails = useCallback(async (eventId: number): Promise<ActivityEvent | null> => {
+    console.log("Fetching event details for eventId:", eventId);
     try {
       const result = await window.activityMonitorApi.getEventDetails({ eventId });
       if (result.success && result.data) {
@@ -172,27 +193,21 @@ export function useActivityMonitor() {
     }
   }, []);
 
-  // Initial load (2h)
+  // Initial load or refresh if already loaded
   useEffect(() => {
-    void fetchTimeline({ rangeMs: 2 * 60 * 60 * 1000, merge: false, markLoading: true });
-    setLoadedRangeMs(2 * 60 * 60 * 1000);
-  }, [fetchTimeline]);
-
-  // Idle prefetch to 24h (non-blocking)
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (cacheRangeMsRef.current < 24 * 60 * 60 * 1000) {
-        void fetchTimeline({ rangeMs: 24 * 60 * 60 * 1000, merge: true, markLoading: false });
-      }
-    }, 1200);
-    return () => window.clearTimeout(timer);
+    void fetchTimeline({
+      rangeMs: globalCache.rangeMs,
+      merge: false,
+      markLoading: !globalCache.hasLoadedOnce,
+    });
   }, [fetchTimeline]);
 
   // Subscribe to main-process timeline change notifications
   useEffect(() => {
     const unsubscribe = window.activityMonitorApi.onTimelineChanged(
       (payload: ActivityTimelineChangedPayload) => {
-        if (payload.revision <= lastRevisionRef.current) return;
+        if (payload.revision <= globalCache.lastRevision) return;
+        globalCache.lastRevision = payload.revision;
         lastRevisionRef.current = payload.revision;
         scheduleRefresh();
       }

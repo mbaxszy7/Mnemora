@@ -5,6 +5,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { VectorIndexService } from "./vector-index-service";
 import { vectorStoreConfig } from "./config";
 
+vi.mock("../logger", () => ({
+  getLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  })),
+}));
+
 // Minimal DB mock to satisfy vector-index-service load/reset calls
 const mockEmbeddingBuffer = Buffer.from(new Float32Array([0, 0, 0, 0]).buffer);
 

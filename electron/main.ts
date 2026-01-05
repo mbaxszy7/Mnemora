@@ -233,13 +233,26 @@ class AppLifecycleController {
     registerMonitoringHandlers();
     this.logger.info("IPC handlers registered");
   }
-
   private initPowerMonitor(): void {
     try {
       powerMonitorService.initialize();
       this.logger.info("Power monitor initialized");
     } catch (error) {
       this.logger.error({ error }, "Failed to initialize power monitor");
+    }
+  }
+
+  private async initMonitoringServer(): Promise<void> {
+    if (!isDev) return;
+
+    try {
+      await monitoringServer.start();
+      this.logger.info(
+        { port: monitoringServer.getPort() },
+        "Monitoring server auto-started in dev mode"
+      );
+    } catch (error) {
+      this.logger.error({ error }, "Failed to auto-start monitoring server");
     }
   }
 
@@ -254,6 +267,8 @@ class AppLifecycleController {
     await this.initAIService();
     // 5. Initialize power monitor (non-critical)
     this.initPowerMonitor();
+    // 6. Initialize monitoring server (dev only)
+    await this.initMonitoringServer();
     // Initialize processing pipeline after DB is ready (but do not start capture)
     screenCaptureModule.initializeProcessingPipeline();
   }

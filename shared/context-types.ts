@@ -65,6 +65,8 @@ export interface ExpandedContextNode {
   screenshotIds: number[];
   /** Event timestamp */
   eventTime?: number;
+  /** Creation timestamp */
+  createdAt?: number;
 }
 
 /**
@@ -164,8 +166,6 @@ export interface SearchAnswer {
   bullets?: string[];
   /** Citations referencing nodes/screenshots */
   citations: SearchAnswerCitation[];
-  /** Suggested follow-up questions */
-  followUps?: string[];
   /** Confidence score (0-1) */
   confidence: number;
 }

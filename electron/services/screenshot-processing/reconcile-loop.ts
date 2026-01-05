@@ -1,22 +1,9 @@
 import { eq, and, or, lt, isNull, lte, desc, ne, inArray, asc, isNotNull } from "drizzle-orm";
 import { getDb } from "../../database";
-import {
-  batches,
-  contextNodes,
-  screenshots,
-  vectorDocuments,
-  activitySummaries,
-  activityEvents,
-} from "../../database/schema";
+import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import {
-  batchConfig,
-  evidenceConfig,
-  reconcileConfig,
-  retryConfig,
-  activitySummaryConfig,
-} from "./config";
+import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
 import { vectorDocumentService } from "./vector-document-service";
@@ -26,7 +13,6 @@ import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
 import { runVlmOnBatch } from "./vlm-processor";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
-import { activityMonitorService } from "./activity-monitor-service";
 
 import type { VLMIndexResult } from "./schemas";
 import type {
@@ -59,34 +45,6 @@ export class ReconcileLoop {
   private isProcessing = false;
   private wakeScheduled = false;
   private wakeRequested = false;
-
-  private captureActive = false;
-  private captureActiveSince: number | null = null;
-  private lastActivitySeedAt = 0;
-
-  setCaptureActive(active: boolean, ts = Date.now()): void {
-    const prev = this.captureActive;
-    this.captureActive = active;
-    if (active && !this.captureActiveSince) {
-      this.captureActiveSince = ts;
-    }
-    if (!active) {
-      this.captureActiveSince = null;
-    }
-    if (prev !== active) {
-      this.wake();
-    }
-  }
-
-  private alignToWindowStart(ts: number, intervalMs: number): number {
-    const d = new Date(ts);
-    d.setSeconds(0, 0);
-    const mins = d.getMinutes();
-    const intervalMinutes = Math.max(1, Math.round(intervalMs / 60000));
-    const alignedMins = Math.floor(mins / intervalMinutes) * intervalMinutes;
-    d.setMinutes(alignedMins);
-    return d.getTime();
-  }
 
   /**
    * Start the reconcile loop
@@ -202,41 +160,6 @@ export class ReconcileLoop {
       consider(index.nextRunAt ?? now);
     }
 
-    const summary = db
-      .select({ nextRunAt: activitySummaries.nextRunAt })
-      .from(activitySummaries)
-      .where(
-        and(
-          or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
-          lt(activitySummaries.attempts, retryConfig.maxAttempts)
-        )
-      )
-      .orderBy(asc(activitySummaries.nextRunAt))
-      .limit(1)
-      .get();
-    if (summary) {
-      consider(summary.nextRunAt ?? now);
-    }
-
-    const eventDetails = db
-      .select({ nextRunAt: activityEvents.detailsNextRunAt })
-      .from(activityEvents)
-      .where(
-        and(
-          or(
-            eq(activityEvents.detailsStatus, "pending"),
-            eq(activityEvents.detailsStatus, "failed")
-          ),
-          lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .orderBy(asc(activityEvents.detailsNextRunAt))
-      .limit(1)
-      .get();
-    if (eventDetails) {
-      consider(eventDetails.nextRunAt ?? now);
-    }
-
     const orphan = db
       .select({ createdAt: screenshots.createdAt })
       .from(screenshots)
@@ -256,10 +179,6 @@ export class ReconcileLoop {
       const minAgeMs = batchConfig.batchTimeoutMs + 5000;
       const eligibleAt = orphan.createdAt + minAgeMs;
       consider(eligibleAt <= now ? now : eligibleAt);
-    }
-
-    if (activitySummaryConfig.enabled && this.captureActive && this.captureActiveSince != null) {
-      consider(this.lastActivitySeedAt + 60_000);
     }
 
     if (next == null) {
@@ -438,77 +357,8 @@ export class ReconcileLoop {
     this.wakeScheduled = false; // Clear wake flag at start of run
 
     try {
-      const db = getDb();
-
       // 1. Recover stale 'running' states
       await this.recoverStaleStates();
-
-      if (activitySummaryConfig.enabled) {
-        const now = Date.now();
-        const intervalMs = activitySummaryConfig.generationIntervalMs;
-        const safetyLagMs = 5 * 60 * 1000; // allow pipeline to finish
-        if (
-          this.captureActive &&
-          this.captureActiveSince &&
-          now - this.lastActivitySeedAt > 60 * 1000
-        ) {
-          // Seed only complete windows that ended at least safetyLagMs ago
-          const lastCompleteWindowEnd = this.alignToWindowStart(now - safetyLagMs, intervalMs);
-
-          // Find latest existing window end
-          const latest = db
-            .select({ windowEnd: activitySummaries.windowEnd })
-            .from(activitySummaries)
-            .orderBy(desc(activitySummaries.windowEnd))
-            .limit(1)
-            .get();
-          const latestWindowEnd = latest?.windowEnd ?? 0;
-
-          // Start from captureActiveSince aligned to next boundary to avoid partial tail
-          const seedFromAligned =
-            this.alignToWindowStart(this.captureActiveSince, intervalMs) + intervalMs;
-          const seedFrom = Math.max(latestWindowEnd, seedFromAligned);
-
-          let insertedAny = false;
-          for (
-            let windowStart = seedFrom;
-            windowStart + intervalMs <= lastCompleteWindowEnd;
-            windowStart += intervalMs
-          ) {
-            const windowEnd = windowStart + intervalMs;
-            const idempotencyKey = `win_${windowStart}_${windowEnd}`;
-            const nextRunAt = windowEnd + safetyLagMs;
-            const res = db
-              .insert(activitySummaries)
-              .values({
-                windowStart,
-                windowEnd,
-                idempotencyKey,
-                title: null,
-                summary: "",
-                highlights: null,
-                stats: null,
-                status: "pending",
-                attempts: 0,
-                nextRunAt,
-                errorCode: null,
-                errorMessage: null,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .onConflictDoNothing({ target: activitySummaries.idempotencyKey })
-              .run();
-            if (res.changes > 0) {
-              insertedAny = true;
-            }
-          }
-          if (insertedAny) {
-            this.wakeRequested = true;
-          }
-
-          this.lastActivitySeedAt = now;
-        }
-      }
 
       const records = await this.scanPendingRecords();
 
@@ -616,16 +466,11 @@ export class ReconcileLoop {
     const indexRecords = records.filter(
       (r) => r.table === "vector_documents" && r.subtask === "index"
     );
-    const summaryRecords = records.filter((r) => r.table === "activity_summaries");
-    const eventRecords = records.filter((r) => r.table === "activity_events");
-
     logger.debug(
       {
         mergeCount: mergeRecords.length,
         embeddingCount: embeddingRecords.length,
         indexCount: indexRecords.length,
-        summaryCount: summaryRecords.length,
-        eventCount: eventRecords.length,
       },
       "Processing other records concurrently"
     );
@@ -636,8 +481,6 @@ export class ReconcileLoop {
       this.processRecordsSequentially(mergeRecords, "merge"),
       this.processRecordsSequentially(embeddingRecords, "embedding"),
       this.processRecordsSequentially(indexRecords, "index"),
-      this.processRecordsSequentially(summaryRecords, "summary"),
-      this.processRecordsSequentially(eventRecords, "event"),
     ]);
   }
 
@@ -903,70 +746,7 @@ export class ReconcileLoop {
       });
     }
 
-    // 3. Activity Summaries
-    const summaryRows = db
-      .select({
-        id: activitySummaries.id,
-        status: activitySummaries.status,
-        attempts: activitySummaries.attempts,
-        nextRunAt: activitySummaries.nextRunAt,
-      })
-      .from(activitySummaries)
-      .where(
-        and(
-          or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
-          or(isNull(activitySummaries.nextRunAt), lte(activitySummaries.nextRunAt, now)),
-          lt(activitySummaries.attempts, retryConfig.maxAttempts)
-        )
-      )
-      .limit(limit)
-      .all();
-
-    const summariesPending: PendingRecord[] = summaryRows.map((r) => ({
-      id: r.id,
-      table: "activity_summaries",
-      status: r.status as "pending" | "failed",
-      attempts: r.attempts,
-      nextRunAt: r.nextRunAt ?? undefined,
-    }));
-
-    // 4. Activity Event Details
-    const eventDetailsRows = db
-      .select({
-        id: activityEvents.id,
-        status: activityEvents.detailsStatus,
-        attempts: activityEvents.detailsAttempts,
-        nextRunAt: activityEvents.detailsNextRunAt,
-      })
-      .from(activityEvents)
-      .where(
-        and(
-          or(
-            eq(activityEvents.detailsStatus, "pending"),
-            eq(activityEvents.detailsStatus, "failed")
-          ),
-          or(isNull(activityEvents.detailsNextRunAt), lte(activityEvents.detailsNextRunAt, now)),
-          lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .limit(limit)
-      .all();
-
-    const eventDetailsPending: PendingRecord[] = eventDetailsRows.map((r) => ({
-      id: r.id,
-      table: "activity_events",
-      status: r.status as "pending" | "failed",
-      attempts: r.attempts,
-      nextRunAt: r.nextRunAt ?? undefined,
-    }));
-
-    return [
-      ...batchesPending,
-      ...mergesPending,
-      ...embeddingsPending,
-      ...summariesPending,
-      ...eventDetailsPending,
-    ];
+    return [...batchesPending, ...mergesPending, ...embeddingsPending];
   }
 
   private async processRecord(record: PendingRecord): Promise<void> {
@@ -984,12 +764,6 @@ export class ReconcileLoop {
           // Default to embedding if undefined or explicitly "embedding"
           await this.processVectorDocumentEmbeddingRecord(record);
         }
-        return;
-      case "activity_summaries":
-        await this.processActivitySummaryRecord(record);
-        return;
-      case "activity_events":
-        await this.processActivityEventRecord(record);
         return;
     }
   }
@@ -1630,111 +1404,6 @@ export class ReconcileLoop {
     }
 
     logger.info({ sourceId: node.id, targetId: target.id }, "Merged node into target");
-  }
-
-  private async processActivitySummaryRecord(record: PendingRecord): Promise<void> {
-    const db = getDb();
-    const summary = db
-      .select()
-      .from(activitySummaries)
-      .where(eq(activitySummaries.id, record.id))
-      .get();
-
-    if (!summary || (summary.status !== "pending" && summary.status !== "failed")) {
-      return;
-    }
-
-    const claimedAttempts = summary.attempts + 1;
-
-    try {
-      const claim = await db
-        .update(activitySummaries)
-        .set({ status: "running", attempts: claimedAttempts, updatedAt: Date.now() })
-        .where(
-          and(
-            eq(activitySummaries.id, record.id),
-            or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed"))
-          )
-        )
-        .run();
-
-      if (claim.changes === 0) {
-        return;
-      }
-
-      const success = await activityMonitorService.generateWindowSummary(
-        summary.windowStart,
-        summary.windowEnd
-      );
-
-      if (!success) {
-        throw new Error("Generation failed");
-      }
-    } catch (error) {
-      const nextRunAt = this.calculateNextRun(claimedAttempts);
-      await db
-        .update(activitySummaries)
-        .set({
-          status: "failed",
-          attempts: claimedAttempts,
-          nextRunAt,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          updatedAt: Date.now(),
-        })
-        .where(eq(activitySummaries.id, record.id))
-        .run();
-    }
-  }
-
-  private async processActivityEventRecord(record: PendingRecord): Promise<void> {
-    const db = getDb();
-    const event = db.select().from(activityEvents).where(eq(activityEvents.id, record.id)).get();
-
-    if (!event || (event.detailsStatus !== "pending" && event.detailsStatus !== "failed")) {
-      return;
-    }
-
-    const currentAttempts = event.detailsAttempts || 0;
-    const claimedAttempts = currentAttempts + 1;
-
-    try {
-      const claim = await db
-        .update(activityEvents)
-        .set({ detailsStatus: "running", detailsAttempts: claimedAttempts, updatedAt: Date.now() })
-        .where(
-          and(
-            eq(activityEvents.id, record.id),
-            or(
-              eq(activityEvents.detailsStatus, "pending"),
-              eq(activityEvents.detailsStatus, "failed")
-            )
-          )
-        )
-        .run();
-
-      if (claim.changes === 0) {
-        return;
-      }
-
-      const success = await activityMonitorService.generateEventDetails(event.id);
-
-      if (!success) {
-        throw new Error("Details generation failed");
-      }
-    } catch (error) {
-      const nextRunAt = this.calculateNextRun(claimedAttempts);
-      await db
-        .update(activityEvents)
-        .set({
-          detailsStatus: "failed",
-          detailsAttempts: claimedAttempts,
-          detailsNextRunAt: nextRunAt,
-          detailsErrorMessage: error instanceof Error ? error.message : String(error),
-          updatedAt: Date.now(),
-        })
-        .where(eq(activityEvents.id, record.id))
-        .run();
-    }
   }
 
   /**

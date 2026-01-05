@@ -38,39 +38,12 @@ export class Semaphore {
       });
     });
   }
-
-  /**
-   * Try to acquire a permit without waiting.
-   * Returns a release function if successful, null otherwise.
-   */
-  tryAcquire(): (() => void) | null {
-    if (this.permits > 0) {
-      this.permits--;
-      return () => this.release();
-    }
-    return null;
-  }
-
   private release(): void {
     this.permits++;
     const next = this.waiting.shift();
     if (next) {
       next();
     }
-  }
-
-  /**
-   * Get the number of available permits
-   */
-  available(): number {
-    return this.permits;
-  }
-
-  /**
-   * Get the number of waiting acquires
-   */
-  waiting_count(): number {
-    return this.waiting.length;
   }
 }
 

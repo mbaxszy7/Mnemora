@@ -11,6 +11,17 @@
 
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import crypto from "node:crypto";
+
+vi.mock("../logger", () => ({
+  getLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  })),
+}));
+
 import { SourceBufferRegistry, type ScreenshotInput } from "./source-buffer-registry";
 import { batchConfig, sourceBufferConfig } from "./config";
 import type { SourceKey } from "./types";

@@ -61,6 +61,7 @@ class AIRequestTraceBuffer extends EventEmitter {
       errorPreview: trace.errorPreview
         ? truncate(trace.errorPreview, MAX_ERROR_PREVIEW_CHARS)
         : undefined,
+      images: trace.images,
     };
 
     // Add to appropriate buffer

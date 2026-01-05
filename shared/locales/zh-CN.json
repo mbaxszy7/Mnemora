@@ -11,6 +11,10 @@
       "loading": "加载中...",
       "error": "发生错误",
       "success": "成功"
+    },
+    "dateFormats": {
+      "fullDate": "yyyy年M月d日",
+      "shortDate": "MM/dd"
     }
   },
   "nav": {
@@ -290,7 +294,16 @@
     "timeline": {
       "title": "24 小时时间线",
       "windows": "{{count}} 个时间窗口",
-      "longEvents": "{{count}} 个长事件"
+      "longEvents": "{{count}} 个长事件",
+      "range2h": "2 小时",
+      "range6h": "6 小时",
+      "range24h": "24 小时",
+      "loadingTo6h": "正在加载到 6 小时…",
+      "loadingTo24h": "正在加载到 24 小时…",
+      "loadingGeneric": "正在加载…",
+      "loadedRecent": "已加载最近 {{label}}",
+      "loadTo6h": "加载到 6 小时",
+      "loadTo24h": "加载到 24 小时"
     },
     "summary": {
       "selectWindow": "选择一个时间窗口",
@@ -302,6 +315,9 @@
     "event": {
       "longEvent": "长事件",
       "noDetails": "暂无详情",
+      "durationH": "{{h}} 小时",
+      "durationM": "{{m}} 分钟",
+      "durationHM": "{{h}} 小时 {{m}} 分钟",
       "kinds": {
         "coding": "编码",
         "meeting": "会议",
@@ -322,6 +338,7 @@
     "matchedNodes": "匹配记录",
     "relatedEvents": "相关事件",
     "tryDifferentQuery": "尝试不同的搜索词",
+    "important": "重要记录",
     "kinds": {
       "event": "事件",
       "knowledge": "知识",

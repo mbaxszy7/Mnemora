@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useViewTransition } from "@/components/core/view-transition";
 import type { SearchResult, ExpandedContextNode } from "@shared/context-types";
 
@@ -54,64 +55,73 @@ function NodeCard({ node }: { node: ExpandedContextNode }) {
   };
 
   return (
-    <motion.div
-      className="rounded-lg border border-border/50 bg-card/50 overflow-hidden"
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      whileHover={{ scale: 1.01 }}
-      transition={{ duration: 0.2 }}
-    >
-      <div className="px-4 py-3">
-        <div className="flex items-start gap-3">
-          {/* Kind badge */}
-          <Badge variant="secondary" className={kindColors[node.kind] || "bg-secondary"}>
-            {t(`searchResults.kinds.${node.kind}`, node.kind)}
-          </Badge>
+    <TooltipProvider delayDuration={300}>
+      <motion.div
+        className="rounded-lg border border-border/50 bg-card/50 overflow-hidden"
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        whileHover={{ scale: 1.01 }}
+        transition={{ duration: 0.2 }}
+      >
+        <div className="px-4 py-3">
+          <div className="flex items-start gap-3">
+            {/* Kind badge */}
+            <Badge variant="secondary" className={kindColors[node.kind] || "bg-secondary"}>
+              {t(`searchResults.kinds.${node.kind}`, node.kind)}
+            </Badge>
 
-          {/* Content */}
-          <div className="flex-1 min-w-0">
-            <h4 className="text-sm font-medium mb-1">{node.title}</h4>
-            <p className="text-xs text-muted-foreground line-clamp-2">{node.summary}</p>
+            {/* Content */}
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-medium mb-1">{node.title}</h4>
+              <p className="text-xs text-muted-foreground line-clamp-2">{node.summary}</p>
 
-            {/* Meta info */}
-            <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
-              {node.eventTime && (
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" />
-                  {format(new Date(node.eventTime), "MM/dd HH:mm")}
-                </span>
-              )}
-              {node.keywords.length > 0 && (
-                <div className="flex items-center gap-1">
-                  {node.keywords.slice(0, 3).map((keyword) => (
-                    <Badge key={keyword} variant="outline" className="text-[10px] px-1.5 py-0">
-                      {keyword}
-                    </Badge>
-                  ))}
-                </div>
-              )}
+              {/* Meta info */}
+              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                {node.eventTime && (
+                  <span className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {format(new Date(node.eventTime), "MM/dd HH:mm")}
+                  </span>
+                )}
+                {node.keywords.length > 0 && (
+                  <div className="flex items-center gap-1">
+                    {node.keywords.slice(0, 3).map((keyword) => (
+                      <Badge key={keyword} variant="outline" className="text-[10px] px-1.5 py-0">
+                        {keyword}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Importance indicator */}
+            {node.importance >= 7 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1 cursor-help">
+                    <Sparkles className="h-4 w-4 text-amber-500" />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p>{t("searchResults.important")}</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
-
-          {/* Importance indicator */}
-          {node.importance >= 7 && (
-            <div className="flex items-center gap-1">
-              <Sparkles className="h-4 w-4 text-amber-500" />
-            </div>
-          )}
         </div>
-      </div>
 
-      {/* Importance bar */}
-      {node.importance >= 7 && (
-        <motion.div
-          className="h-0.5 bg-linear-to-r from-amber-500 to-orange-500"
-          initial={{ scaleX: 0 }}
-          animate={{ scaleX: 1 }}
-          transition={{ delay: 0.2, duration: 0.3 }}
-        />
-      )}
-    </motion.div>
+        {/* Importance bar */}
+        {node.importance >= 7 && (
+          <motion.div
+            className="h-0.5 bg-linear-to-r from-amber-500 to-orange-500"
+            initial={{ scaleX: 0 }}
+            animate={{ scaleX: 1 }}
+            transition={{ delay: 0.2, duration: 0.3 }}
+          />
+        )}
+      </motion.div>
+    </TooltipProvider>
   );
 }
 
@@ -148,7 +158,7 @@ export default function SearchResultsPage() {
   const hasAnswer = result.answer && result.answer.answer;
   const hasNodes = result.nodes.length > 0;
   const hasRelatedEvents = result.relatedEvents.length > 0;
-
+  console.log(query, deepSearch, result);
   return (
     <motion.div
       className="h-[calc(100vh-88px)] flex flex-col -mt-2"
@@ -166,7 +176,7 @@ export default function SearchResultsPage() {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium truncate">{query}</span>
+            <div className="text-sm font-medium truncate">{query}</div>
             {deepSearch && (
               <Badge variant="secondary" className="text-xs">
                 <Sparkles className="h-3 w-3 mr-1" />
@@ -175,7 +185,9 @@ export default function SearchResultsPage() {
             )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {t("searchResults.resultCount", { count: result.nodes.length })}
+            {t("searchResults.resultCount", {
+              count: result.nodes.length + result.relatedEvents.length,
+            })}
           </p>
         </div>
       </div>
@@ -212,55 +224,8 @@ export default function SearchResultsPage() {
                   ))}
                 </div>
               )}
-
-              {/* Follow-ups */}
-              {result.answer!.followUps && result.answer!.followUps.length > 0 && (
-                <div className="mt-4 pt-4 border-t border-border/30">
-                  <p className="text-xs text-muted-foreground mb-2">
-                    {t("searchResults.followUpQuestions")}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {result.answer!.followUps.map((followUp, i) => (
-                      <Badge
-                        key={i}
-                        variant="outline"
-                        className="text-xs cursor-pointer hover:bg-secondary"
-                      >
-                        {followUp}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
             </motion.div>
           )}
-
-          {/* Matched Nodes */}
-          {hasNodes && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.15 }}
-            >
-              <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
-                <FileText className="h-4 w-4 text-blue-500" />
-                {t("searchResults.matchedNodes")}
-              </h3>
-              <div className="space-y-3">
-                {result.nodes.map((node, i) => (
-                  <motion.div
-                    key={node.id || i}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2 + i * 0.05 }}
-                  >
-                    <NodeCard node={node} />
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
           {/* Related Events */}
           {hasRelatedEvents && (
             <motion.div
@@ -279,6 +244,31 @@ export default function SearchResultsPage() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.3 + i * 0.05 }}
+                  >
+                    <NodeCard node={node} />
+                  </motion.div>
+                ))}
+              </div>
+            </motion.div>
+          )}
+          {/* Matched Nodes */}
+          {hasNodes && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.15 }}
+            >
+              <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-500" />
+                {t("searchResults.matchedNodes")}
+              </h3>
+              <div className="space-y-3">
+                {result.nodes.map((node, i) => (
+                  <motion.div
+                    key={node.id || i}
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2 + i * 0.05 }}
                   >
                     <NodeCard node={node} />
                   </motion.div>

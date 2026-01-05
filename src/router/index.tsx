@@ -32,23 +32,8 @@ function PageShellSkeleton() {
 
 function HomePageSkeleton() {
   return (
-    <div className="h-[calc(100vh-88px)] flex flex-col -mt-2">
-      <div className="px-2">
-        <Skeleton className="h-12 w-full rounded-xl" />
-      </div>
-      <div className="flex-1 flex gap-4 overflow-hidden px-2 pb-2 mt-4">
-        <div className="w-80 shrink-0 space-y-3">
-          <Skeleton className="h-6 w-28" />
-          <div className="space-y-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <Skeleton key={i} className="h-14 w-full rounded-lg" />
-            ))}
-          </div>
-        </div>
-        <div className="flex-1 min-w-0">
-          <Skeleton className="h-full w-full rounded-xl" />
-        </div>
-      </div>
+    <div className="h-[calc(100vh-88px)] flex flex-col items-center justify-center -mt-22 px-2">
+      <Skeleton className="h-10 w-full max-w-4xl rounded-xl opacity-50" />
     </div>
   );
 }

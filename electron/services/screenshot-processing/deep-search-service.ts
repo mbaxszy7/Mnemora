@@ -116,7 +116,6 @@ You will receive:
   "citations": [                // References to source nodes/screenshots
     { "nodeId": number, "screenshotId": number, "quote": string }
   ],
-  "followUps": string[],        // Suggested follow-up questions (≤5)
   "confidence": number          // 0-1, based on evidence quality
 }
 
@@ -206,8 +205,23 @@ export class DeepSearchService {
       const canonicalCandidatesJson = JSON.stringify(CANONICAL_APP_CANDIDATES, null, 2);
       const modelName = aiService.getTextModelName();
 
-      const prompt = `Current time: ${new Date(nowTs).toISOString()}
+      // Calculate helpful time reference points for LLM
+      const nowDate = new Date(nowTs);
+      const todayStartLocal = new Date(nowDate);
+      todayStartLocal.setHours(0, 0, 0, 0);
+      const todayEndLocal = new Date(nowDate);
+      todayEndLocal.setHours(23, 59, 59, 999);
+
+      const prompt = `Current time: ${nowDate.toISOString()}
+Current Unix timestamp (ms): ${nowTs}
 Timezone: ${timezone}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${todayStartLocal.getTime()}
+- Today end (23:59:59 local): ${todayEndLocal.getTime()}
+- Yesterday start: ${todayStartLocal.getTime() - 86400000}
+- Yesterday end: ${todayEndLocal.getTime() - 86400000}
+- One week ago: ${nowTs - 7 * 86400000}
 
 ## Canonical App Candidates (for filtersPatch.appHint)
 ${canonicalCandidatesJson}
@@ -216,6 +230,12 @@ ${canonicalCandidatesJson}
 - filtersPatch.appHint MUST be a canonical name from the list above.
 - If the user query uses an alias like "chrome", "google chrome", etc., map it to the canonical app name.
 - If you cannot confidently map to one canonical app, OMIT filtersPatch.appHint.
+
+## Time calculation rules (critical)
+- ALWAYS use the Time Reference Points above for calculating filtersPatch.timeRange.
+- For "today", use Today start and Today end timestamps directly.
+- For "yesterday", use Yesterday start and Yesterday end timestamps directly.
+- Do NOT calculate Unix timestamps from scratch - use the provided reference points!
 
 User query: "${query}"
 

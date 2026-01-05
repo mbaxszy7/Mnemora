@@ -175,6 +175,32 @@
     }
 
     .preview-content.error { color: var(--accent-red); }
+    
+    .preview-images {
+      display: flex;
+      gap: 12px;
+      margin-top: 12px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+    }
+    
+    .preview-image-container {
+      flex: 0 0 auto;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      overflow: hidden;
+      background: #000;
+    }
+    
+    .preview-image {
+      display: block;
+      height: 120px;
+      width: auto;
+      cursor: zoom-in;
+      transition: opacity 0.2s;
+    }
+    
+    .preview-image:hover { opacity: 0.8; }
 
     .empty-state { text-align: center; padding: 40px 20px; color: var(--text-muted); }
 
@@ -429,6 +455,18 @@
       elements.requestsBody.innerHTML = requests.slice().reverse().slice(0, MAX_ITEMS).map((req, idx) => {
         const preview = req.status === 'succeeded' ? (req.responsePreview || 'No preview') : (req.errorPreview || 'No error details');
         const previewClass = req.status === 'failed' ? 'error' : '';
+        
+        let imagesHtml = '';
+        if (req.images && req.images.length > 0) {
+          imagesHtml = `<div class="preview-images">
+            ${req.images.map(img => `
+              <div class="preview-image-container">
+                <img src="${img}" class="preview-image" onclick="window.open('${img}')" title="Click to view full size">
+              </div>
+            `).join('')}
+          </div>`;
+        }
+
         return `
           <tr class="data-row" onclick="togglePreview('req-${idx}')">
             <td class="time">${formatTime(req.ts)}</td>
@@ -439,7 +477,10 @@
             <td class="status ${req.status}">${req.status}</td>
           </tr>
           <tr class="preview-row" id="preview-req-${idx}">
-            <td colspan="6" class="preview-cell"><div class="preview-content ${previewClass}">${escapeHtml(preview)}</div></td>
+            <td colspan="6" class="preview-cell">
+              <div class="preview-content ${previewClass}">${escapeHtml(preview)}</div>
+              ${imagesHtml}
+            </td>
           </tr>`;
       }).join('');
     }

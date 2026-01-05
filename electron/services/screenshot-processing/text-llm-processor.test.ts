@@ -22,6 +22,16 @@ import type {
   SourceKey,
 } from "./types";
 
+vi.mock("../logger", () => ({
+  getLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  })),
+}));
+
 vi.mock("../usage/llm-usage-service", () => ({
   llmUsageService: {
     logEvent: vi.fn().mockResolvedValue(undefined),

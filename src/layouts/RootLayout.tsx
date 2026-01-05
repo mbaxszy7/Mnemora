@@ -1,18 +1,12 @@
 import { useNavigate, Outlet } from "react-router-dom";
 import { useEffect } from "react";
-import { useInitServices } from "@/hooks/use-capture-source";
 import { useAiFuseToast } from "@/hooks/use-ai-fuse-toast";
 
 export default function RootLayout() {
-  const { initServices } = useInitServices();
   const navigate = useNavigate();
 
   // Listen for AI failure circuit breaker events
   useAiFuseToast();
-
-  useEffect(() => {
-    initServices();
-  }, [initServices]);
 
   useEffect(() => {
     const cleanup = window.appApi.onNavigate((path) => {

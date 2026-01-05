@@ -1,4 +1,4 @@
-import { motion } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 import { format } from "date-fns";
 import type { TimeWindow } from "./types";
 
@@ -7,6 +7,7 @@ interface TimelineBlockProps {
   isSelected: boolean;
   hasLongEvent?: boolean;
   onClick: () => void;
+  variants?: Variants;
 }
 
 // App icon color mapping
@@ -24,13 +25,20 @@ const appColors: Record<string, string> = {
   Twitter: "bg-sky-500",
 };
 
-export function TimelineBlock({ window, isSelected, hasLongEvent, onClick }: TimelineBlockProps) {
+export function TimelineBlock({
+  window,
+  isSelected,
+  hasLongEvent,
+  onClick,
+  variants,
+}: TimelineBlockProps) {
   const startTime = format(new Date(window.windowStart), "HH:mm");
   const endTime = format(new Date(window.windowEnd), "HH:mm");
 
   return (
     <motion.div
       layout
+      variants={variants}
       onClick={onClick}
       className={`
         relative cursor-pointer rounded-lg p-3 mb-2
@@ -41,9 +49,6 @@ export function TimelineBlock({ window, isSelected, hasLongEvent, onClick }: Tim
             : "bg-card hover:bg-secondary/80 border border-transparent"
         }
       `}
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      whileHover={{ scale: 1.01, x: 2 }}
       whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
     >

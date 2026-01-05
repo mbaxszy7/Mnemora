@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { ActivityEvent } from "./types";
+import { cn } from "@/lib/utils";
 
 const MarkdownContent = lazy(() =>
   import("./MarkdownContent").then((m) => ({
@@ -89,8 +90,11 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
   const durationMinutes = Math.round(event.durationMs / 60000);
   const durationText =
     durationMinutes >= 60
-      ? `${Math.floor(durationMinutes / 60)}h ${durationMinutes % 60}m`
-      : `${durationMinutes}m`;
+      ? t("activityMonitor.event.durationHM", {
+          h: Math.floor(durationMinutes / 60),
+          m: durationMinutes % 60,
+        })
+      : t("activityMonitor.event.durationM", { m: durationMinutes });
 
   interface KindStyle {
     icon: React.ElementType;
@@ -138,7 +142,7 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
     >
       {/* Header */}
       <motion.div
-        className="px-4 py-3 cursor-pointer"
+        className={cn("px-4 py-3 ", event.isLong ? "cursor-pointer" : "")}
         onClick={handleExpand}
         whileHover={{ backgroundColor: "hsl(var(--secondary) / 0.3)" }}
         transition={{ duration: 0.15 }}

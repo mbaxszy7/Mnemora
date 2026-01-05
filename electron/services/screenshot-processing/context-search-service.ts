@@ -160,6 +160,18 @@ export class ContextSearchService {
 
       // 8. Fetch related events
       const relatedEvents = nodes.filter((n) => n.kind === "event");
+      let otherNodes = nodes.filter((n) => n.kind !== "event");
+
+      // Sort otherNodes by kindHint if present (prioritize requested kind)
+      if (queryPlan?.kindHint) {
+        otherNodes = [...otherNodes].sort((a, b) => {
+          const aMatches = a.kind === queryPlan!.kindHint;
+          const bMatches = b.kind === queryPlan!.kindHint;
+          if (aMatches && !bMatches) return -1;
+          if (!aMatches && bMatches) return 1;
+          return 0; // Maintain relative semantic score order
+        });
+      }
 
       // Deep Search: Answer Synthesis
       let answer = undefined;
@@ -171,7 +183,7 @@ export class ContextSearchService {
       }
 
       return {
-        nodes,
+        nodes: otherNodes,
         relatedEvents,
         evidence,
         queryPlan: queryPlan ?? undefined,
@@ -201,8 +213,9 @@ export class ContextSearchService {
     let result = nodes.filter((node) => {
       // Time range filter
       if (filters.timeRange) {
-        if (!node.eventTime) return false;
-        if (node.eventTime < filters.timeRange.start || node.eventTime > filters.timeRange.end) {
+        const nodeTime = node.eventTime || node.createdAt;
+        if (!nodeTime) return false;
+        if (nodeTime < filters.timeRange.start || nodeTime > filters.timeRange.end) {
           return false;
         }
       }

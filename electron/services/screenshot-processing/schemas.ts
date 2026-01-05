@@ -477,7 +477,6 @@ export const SearchAnswerSchema = z.object({
   answer: z.string().min(1),
   bullets: z.array(z.string()).optional(),
   citations: z.array(SearchAnswerCitationSchema).default([]),
-  followUps: z.array(z.string()).optional(),
   confidence: z.number(),
 });
 
@@ -489,9 +488,6 @@ export const SearchAnswerProcessedSchema = SearchAnswerSchema.transform((val) =>
   }
   if (val.citations) {
     result.citations = val.citations.slice(0, 20);
-  }
-  if (val.followUps) {
-    result.followUps = val.followUps.slice(0, 5);
   }
 
   // Cross-field validation: if high confidence but no citations, lower confidence

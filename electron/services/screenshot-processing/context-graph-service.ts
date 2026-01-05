@@ -647,6 +647,7 @@ export class ContextGraphService {
       mergedFromIds: safeJsonParse<number[] | undefined>(record.mergedFromIds, undefined),
       screenshotIds: [], // Will be populated separately if needed
       eventTime: record.eventTime ?? undefined,
+      createdAt: record.createdAt,
     };
   }
 }

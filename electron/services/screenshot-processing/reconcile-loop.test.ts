@@ -146,14 +146,14 @@ describe("ReconcileLoop", () => {
     it("should consider orphan screenshot eligibility time", () => {
       const now = 100_000;
 
+      // Only 5 queries now (batches, context_nodes mergeStatus, vectorDocs embedding, vectorDocs index, orphan screenshots)
+      // Activity summaries and events are handled by ActivityTimelineScheduler
       mockDb.get
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce(null)
-        .mockReturnValueOnce({ createdAt: 30_000 });
+        .mockReturnValueOnce(null) // batches
+        .mockReturnValueOnce(null) // context_nodes mergeStatus
+        .mockReturnValueOnce(null) // vectorDocuments embedding
+        .mockReturnValueOnce(null) // vectorDocuments index
+        .mockReturnValueOnce({ createdAt: 30_000 }); // orphan screenshot
 
       const nextRunAt = (
         reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }

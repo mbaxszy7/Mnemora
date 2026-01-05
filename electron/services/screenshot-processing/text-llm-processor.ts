@@ -129,7 +129,7 @@ Node schema:
 - "importance": integer 0-10
 - "confidence": integer 0-10
 - "screenshot_ids": array of database screenshot IDs
-- "event_time": timestamp in milliseconds (optional)
+- "event_time": timestamp in milliseconds (required for all nodes)
 
 Edge schema:
 - "from_index": integer (index into nodes)
@@ -140,7 +140,7 @@ Hard Rules:
 1. Each VLM segment MUST produce at least one event node.
 2. Each derived item MUST produce a separate node and an edge from its source event.
 3. "screenshot_ids" MUST be database IDs (use Screenshot Mapping).
-4. "event_time" should be the midpoint timestamp of the segment screenshots (milliseconds).
+4. "event_time" MUST be provided for ALL nodes (including derived ones), using the midpoint timestamp of the segment screenshots (milliseconds).
 5. Do not output markdown, explanations, or extra text.`;
 
 const TEXT_LLM_MERGE_SYSTEM_PROMPT = `You are a top AI analyst and information integration expert.
@@ -206,7 +206,8 @@ export class TextLLMProcessor {
       let pendingNodes: PendingNode[];
       try {
         pendingNodes = this.convertTextLLMExpandResultToPendingNodes(
-          await this.callTextLLMForExpansion(vlmIndex, batch, evidencePacks)
+          await this.callTextLLMForExpansion(vlmIndex, batch, evidencePacks),
+          batch
         );
       } catch (error) {
         logger.warn(
@@ -529,7 +530,12 @@ Return the JSON now:`;
     return packs;
   }
 
-  private convertTextLLMExpandResultToPendingNodes(result: TextLLMExpandResult): PendingNode[] {
+  private convertTextLLMExpandResultToPendingNodes(
+    result: TextLLMExpandResult,
+    batch: Batch
+  ): PendingNode[] {
+    const screenshotTsMap = new Map<number, number>(batch.screenshots.map((s) => [s.id, s.ts]));
+
     const pendingNodes: PendingNode[] = result.nodes.map((node) => {
       const entities: EntityRef[] = (node.entities ?? []).map((e) => ({
         name: e.name,
@@ -537,6 +543,27 @@ Return the JSON now:`;
         entityType: e.entity_type,
         confidence: e.confidence,
       }));
+
+      let eventTime = node.event_time;
+
+      // Auto-fill eventTime for Event nodes if missing
+      if (node.kind === "event" && eventTime === undefined) {
+        if (node.screenshot_ids && node.screenshot_ids.length > 0) {
+          const timestamps = node.screenshot_ids
+            .map((id) => screenshotTsMap.get(id))
+            .filter((ts): ts is number => ts !== undefined);
+
+          if (timestamps.length > 0) {
+            // Midpoint of screenshots
+            eventTime = Math.floor((Math.min(...timestamps) + Math.max(...timestamps)) / 2);
+          }
+        }
+
+        // Final fallback if still empty
+        if (eventTime === undefined) {
+          eventTime = Math.floor((batch.tsStart + batch.tsEnd) / 2);
+        }
+      }
 
       return {
         kind: node.kind,
@@ -548,7 +575,7 @@ Return the JSON now:`;
         importance: node.importance,
         confidence: node.confidence,
         screenshotIds: node.screenshot_ids ?? [],
-        eventTime: node.event_time,
+        eventTime,
       };
     });
 
@@ -587,6 +614,11 @@ Return the JSON now:`;
       }
 
       node.sourceEventIndex = sourceEventIndex;
+
+      // Inherit eventTime if missing (derived nodes)
+      if (node.eventTime === undefined && sourceEventIndex !== undefined) {
+        node.eventTime = pendingNodes[sourceEventIndex].eventTime;
+      }
     }
 
     return pendingNodes;
@@ -655,28 +687,32 @@ Return the JSON now:`;
         segment.derived.knowledge,
         "knowledge",
         eventNodeIndex,
-        screenshotIds
+        screenshotIds,
+        eventTime
       );
       this.addDerivedNodes(
         pendingNodes,
         segment.derived.state,
         "state_snapshot",
         eventNodeIndex,
-        screenshotIds
+        screenshotIds,
+        eventTime
       );
       this.addDerivedNodes(
         pendingNodes,
         segment.derived.procedure,
         "procedure",
         eventNodeIndex,
-        screenshotIds
+        screenshotIds,
+        eventTime
       );
       this.addDerivedNodes(
         pendingNodes,
         segment.derived.plan,
         "plan",
         eventNodeIndex,
-        screenshotIds
+        screenshotIds,
+        eventTime
       );
     }
 
@@ -691,7 +727,8 @@ Return the JSON now:`;
     items: DerivedItem[],
     kind: ContextKind,
     sourceEventIndex: number,
-    screenshotIds: number[]
+    screenshotIds: number[],
+    eventTime: number
   ): void {
     for (const item of items) {
       // Build summary including steps for procedures
@@ -713,6 +750,7 @@ Return the JSON now:`;
         confidence: 5,
         screenshotIds,
         sourceEventIndex,
+        eventTime,
       });
     }
   }

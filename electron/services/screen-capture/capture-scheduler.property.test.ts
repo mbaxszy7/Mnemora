@@ -8,6 +8,17 @@ import type {
   SchedulerStateEvent,
   CaptureResult,
 } from "./types";
+import { vi } from "vitest";
+
+vi.mock("../logger", () => ({
+  getLogger: vi.fn(() => ({
+    info: vi.fn(),
+    error: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  })),
+}));
 
 type CaptureResultWithScreenId = CaptureResult & { screenId: string };
 

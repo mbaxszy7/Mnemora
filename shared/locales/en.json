@@ -11,6 +11,10 @@
       "loading": "Loading...",
       "error": "An error occurred",
       "success": "Success"
+    },
+    "dateFormats": {
+      "fullDate": "MMM d, yyyy",
+      "shortDate": "MM/dd"
     }
   },
   "nav": {
@@ -289,7 +293,16 @@
     "timeline": {
       "title": "24 Hour Timeline",
       "windows": "{{count}} windows",
-      "longEvents": "{{count}} long events"
+      "longEvents": "{{count}} long events",
+      "range2h": "2 hours",
+      "range6h": "6 hours",
+      "range24h": "24 hours",
+      "loadingTo6h": "Loading up to 6 hours…",
+      "loadingTo24h": "Loading up to 24 hours…",
+      "loadingGeneric": "Loading…",
+      "loadedRecent": "Loaded last {{label}}",
+      "loadTo6h": "Load Last 6h",
+      "loadTo24h": "Load Last 24h"
     },
     "summary": {
       "selectWindow": "Select a time window",
@@ -301,6 +314,9 @@
     "event": {
       "longEvent": "Long Event",
       "noDetails": "No details",
+      "durationH": "{{h}}h",
+      "durationM": "{{m}}m",
+      "durationHM": "{{h}}h {{m}}m",
       "kinds": {
         "coding": "Coding",
         "meeting": "Meeting",
@@ -321,6 +337,7 @@
     "matchedNodes": "Matched Records",
     "relatedEvents": "Related Events",
     "tryDifferentQuery": "Try a different search query",
+    "important": "Important record",
     "kinds": {
       "event": "Event",
       "knowledge": "Knowledge",

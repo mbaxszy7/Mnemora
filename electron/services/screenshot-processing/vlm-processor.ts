@@ -255,8 +255,16 @@ class VLMProcessor {
 
     // Add images
     for (const screenshot of shard.screenshots) {
+      logger.info(
+        {
+          screenshotId: screenshot.id,
+          base64: !!screenshot.base64,
+          meta: screenshot.meta,
+        },
+        "Adding screenshot to VLM request"
+      );
       if (screenshot.base64) {
-        const mime = screenshot.meta.mime || "image/png";
+        const mime = screenshot.meta.mime || "image/jpeg";
         userContent.push({
           type: "image",
           image: `data:${mime};base64,${screenshot.base64}`,
@@ -440,6 +448,9 @@ class VLMProcessor {
       durationMs: totalMs,
       status: "succeeded",
       responsePreview: JSON.stringify(result, null, 2),
+      images: shard.screenshots
+        .filter((s) => s.base64)
+        .map((s) => `data:${s.meta.mime || "image/jpeg"};base64,${s.base64}`),
     });
 
     logger.info(
@@ -487,6 +498,9 @@ class VLMProcessor {
       durationMs: totalMs,
       status: "failed",
       errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      images: shard.screenshots
+        .filter((s) => s.base64)
+        .map((s) => `data:${s.meta.mime || "image/jpeg"};base64,${s.base64}`),
     });
 
     logger.error(

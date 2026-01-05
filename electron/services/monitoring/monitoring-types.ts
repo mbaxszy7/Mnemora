@@ -88,6 +88,7 @@ export interface AIRequestTrace {
   status: "succeeded" | "failed";
   responsePreview?: string;
   errorPreview?: string;
+  images?: string[]; // Base64 data URLs
 }
 
 // ============================================================================

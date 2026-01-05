@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { Semaphore, aiSemaphore } from "./ai-semaphore";
 
+interface SemaphoreInternals {
+  permits: number;
+  waiting: Array<() => void>;
+}
+
 describe("Semaphore", () => {
   describe("constructor", () => {
     it("should throw error if permits <= 0", () => {
@@ -10,8 +15,8 @@ describe("Semaphore", () => {
 
     it("should initialize with correct permit count", () => {
       const sem = new Semaphore(3);
-      expect(sem.available()).toBe(3);
-      expect(sem.waiting_count()).toBe(0);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(3);
+      expect((sem as unknown as SemaphoreInternals).waiting.length).toBe(0);
     });
   });
 
@@ -20,16 +25,16 @@ describe("Semaphore", () => {
       const sem = new Semaphore(2);
 
       const release1 = await sem.acquire();
-      expect(sem.available()).toBe(1);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(1);
 
       const release2 = await sem.acquire();
-      expect(sem.available()).toBe(0);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(0);
 
       release1();
-      expect(sem.available()).toBe(1);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(1);
 
       release2();
-      expect(sem.available()).toBe(2);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(2);
     });
 
     it("should wait when no permits available", async () => {
@@ -37,7 +42,7 @@ describe("Semaphore", () => {
 
       // Acquire the only permit
       const release1 = await sem.acquire();
-      expect(sem.available()).toBe(0);
+      expect((sem as unknown as SemaphoreInternals).permits).toBe(0);
 
       // Start acquiring second permit (will wait)
       let acquired = false;
@@ -48,7 +53,7 @@ describe("Semaphore", () => {
 
       // Should not have acquired yet
       expect(acquired).toBe(false);
-      expect(sem.waiting_count()).toBe(1);
+      expect((sem as unknown as SemaphoreInternals).waiting.length).toBe(1);
 
       // Release first permit
       release1();
@@ -56,7 +61,7 @@ describe("Semaphore", () => {
       // Now second should acquire
       const release2 = await acquirePromise;
       expect(acquired).toBe(true);
-      expect(sem.waiting_count()).toBe(0);
+      expect((sem as unknown as SemaphoreInternals).waiting.length).toBe(0);
 
       release2();
     });
@@ -82,7 +87,7 @@ describe("Semaphore", () => {
         return r;
       });
 
-      expect(sem.waiting_count()).toBe(3);
+      expect((sem as unknown as SemaphoreInternals).waiting.length).toBe(3);
 
       // Release permits one by one
       release1();
@@ -97,38 +102,6 @@ describe("Semaphore", () => {
 
       // Should have been processed in order
       expect(order).toEqual([1, 2, 3]);
-    });
-  });
-
-  describe("tryAcquire", () => {
-    it("should return release function when permits available", () => {
-      const sem = new Semaphore(2);
-
-      const release1 = sem.tryAcquire();
-      expect(release1).not.toBeNull();
-      expect(sem.available()).toBe(1);
-
-      const release2 = sem.tryAcquire();
-      expect(release2).not.toBeNull();
-      expect(sem.available()).toBe(0);
-
-      release1!();
-      release2!();
-      expect(sem.available()).toBe(2);
-    });
-
-    it("should return null when no permits available", () => {
-      const sem = new Semaphore(1);
-
-      const release = sem.tryAcquire();
-      expect(release).not.toBeNull();
-      expect(sem.available()).toBe(0);
-
-      const shouldBeNull = sem.tryAcquire();
-      expect(shouldBeNull).toBeNull();
-      expect(sem.available()).toBe(0);
-
-      release!();
     });
   });
 });

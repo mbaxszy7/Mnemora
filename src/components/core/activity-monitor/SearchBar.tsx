@@ -1,21 +1,22 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { Search, Sparkles, Settings, X, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useViewTransition } from "../view-transition";
 import { useContextSearch } from "@/hooks/use-context-search";
 import type { SearchResult } from "@shared/context-types";
+import { useViewTransition } from "../view-transition";
 
 interface SearchBarProps {
   onSearchStart?: (query: string, deepSearch: boolean) => void;
-  onSearchComplete?: (result: SearchResult) => void;
+  onSearchComplete?: (result: SearchResult, query: string, deepSearch: boolean) => void;
   onSearchCancel?: () => void;
   onDeepSearchChange?: (enabled: boolean) => void;
+  variants?: Variants;
 }
 
 export function SearchBar({
@@ -23,6 +24,7 @@ export function SearchBar({
   onSearchComplete,
   onSearchCancel,
   onDeepSearchChange,
+  variants,
 }: SearchBarProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
@@ -99,7 +101,7 @@ export function SearchBar({
       });
 
       if (result.success && result.data) {
-        onSearchComplete?.(result.data);
+        onSearchComplete?.(result.data, query.trim(), deepSearch);
       }
     } catch {
       // Search was cancelled or failed
@@ -127,12 +129,7 @@ export function SearchBar({
   const showSearchButton = query.trim().length > 0;
 
   return (
-    <motion.div
-      className="flex items-center gap-4 px-2 py-3"
-      initial={{ opacity: 0, y: -10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-    >
+    <motion.div layout className="flex items-center gap-4 px-2 py-3 w-full" variants={variants}>
       {/* Search Input */}
       <form onSubmit={handleSubmit} className="flex-1 relative">
         <motion.div

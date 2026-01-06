@@ -43,6 +43,7 @@ import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiSemaphore } from "./ai-semaphore";
 import { aiConcurrencyConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
 
 const logger = getLogger("text-llm-processor");
 
@@ -1047,6 +1048,8 @@ Return the JSON now:`;
         responsePreview: JSON.stringify(result, null, 2),
       });
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       return result as TextLLMExpandResult;
     } catch (err) {
       const durationMs = Date.now() - startTime;
@@ -1069,6 +1072,8 @@ Return the JSON now:`;
         },
         "Text LLM expansion generateObject call failed"
       );
+
+      aiConcurrencyTuner.recordFailure("text", err);
       throw err;
     } finally {
       clearTimeout(timeoutId);
@@ -1176,6 +1181,8 @@ Return the JSON object now:`;
         responsePreview: JSON.stringify(result, null, 2),
       });
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       return result as TextLLMMergeResult;
     } catch (err) {
       const durationMs = Date.now() - startTime;
@@ -1199,6 +1206,8 @@ Return the JSON object now:`;
         },
         "Text LLM merge generateObject call failed"
       );
+
+      aiConcurrencyTuner.recordFailure("text", err);
       throw err;
     } finally {
       clearTimeout(timeoutId);

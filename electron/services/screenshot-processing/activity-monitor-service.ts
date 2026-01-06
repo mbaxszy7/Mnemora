@@ -43,6 +43,7 @@ import {
 import { activitySummaryConfig, retryConfig, aiConcurrencyConfig } from "./config";
 import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiSemaphore } from "./ai-semaphore";
+import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
 
 const logger = getLogger("activity-monitor-service");
 
@@ -177,16 +178,14 @@ class ActivityMonitorService {
       .orderBy(activitySummaries.windowStart);
 
     // Map to TimeWindow format
-    const windows: TimeWindow[] = summaries
-      .filter((s) => s.title !== "No Data")
-      .map((s: ActivitySummaryRecord) => ({
-        id: s.id,
-        windowStart: s.windowStart,
-        windowEnd: s.windowEnd,
-        title: s.title,
-        status: normalizeSummaryStatus(s.status),
-        stats: parseJsonSafe<ActivityStats | null>(s.stats, null),
-      }));
+    const windows: TimeWindow[] = summaries.map((s: ActivitySummaryRecord) => ({
+      id: s.id,
+      windowStart: s.windowStart,
+      windowEnd: s.windowEnd,
+      title: s.title,
+      status: normalizeSummaryStatus(s.status),
+      stats: parseJsonSafe<ActivityStats | null>(s.stats, null),
+    }));
 
     // Query long events that overlap with the range
     const events = await db
@@ -472,6 +471,8 @@ class ActivityMonitorService {
             status: "succeeded",
             updatedAt: Date.now(),
             nextRunAt: null,
+            errorCode: null,
+            errorMessage: null,
           })
           .where(
             and(
@@ -509,9 +510,7 @@ class ActivityMonitorService {
         const nextRunAt = Date.now() + 5 * 60 * 1000;
 
         // If we are just waiting for VLM, don't count this as a failure attempt.
-        // We set attempts back to the previous value so it doesn't burn through retries.
-        // The scheduler already incremented it to 'attempts', so we keep it there if VLM is done,
-        // or decrement if VLM is still working.
+        // The scheduler already incremented it when claiming; roll it back only while VLM is still processing.
         const newAttempts = pendingVlmCount > 0 ? Math.max(0, attempts - 1) : attempts;
 
         // Only stop retries if we've exhausted attempts AND VLM has finished processing all screens
@@ -625,8 +624,7 @@ class ActivityMonitorService {
 **Hard Output Requirements**:
 1) Return ONLY a JSON object. No markdown fences. No explanations.
 2) Do not invent facts. Every claim must be grounded in the provided Context Nodes.
-3) In the markdown "summary" field, EVERY bullet must cite relevant node ids using "(node: <id1>, <id2>)".
-4) The markdown "summary" MUST contain exactly these 4 sections (in this order):
+3) The markdown "summary" MUST contain exactly these 4 sections (in this order):
    - ## Core Tasks & Projects
    - ## Key Discussion & Decisions
    - ## Documents
@@ -703,6 +701,8 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
       const { object: rawData, usage } = llmResult;
       const data = ActivityWindowSummaryLLMProcessedSchema.parse(rawData);
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       // Log usage
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -736,6 +736,9 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
           highlights: JSON.stringify(data.highlights),
           stats: JSON.stringify(finalStats),
           status: "succeeded",
+          nextRunAt: null,
+          errorCode: null,
+          errorMessage: null,
           updatedAt: Date.now(),
         })
         .where(
@@ -848,6 +851,8 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
 
       // Record failure for circuit breaker
       aiFailureCircuitBreaker.recordFailure("text", error);
+
+      aiConcurrencyTuner.recordFailure("text", error);
 
       await db
         .update(activitySummaries)
@@ -1019,6 +1024,8 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
       const { object: rawData, usage } = llmResult;
       const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       // Log usage
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -1066,6 +1073,8 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
 
       // Record failure for circuit breaker
       aiFailureCircuitBreaker.recordFailure("text", error);
+
+      aiConcurrencyTuner.recordFailure("text", error);
 
       await db
         .update(activityEvents)

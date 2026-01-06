@@ -30,8 +30,9 @@ import {
 } from "./schemas";
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
 import { llmUsageService } from "../usage/llm-usage-service";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiSemaphore } from "./ai-semaphore";
+import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 
 const logger = getLogger("vlm-processor");
@@ -417,6 +418,8 @@ class VLMProcessor {
   }): VLMIndexResult {
     const { shard, result, timings, usage, processStartTime, aiService } = args;
 
+    aiConcurrencyTuner.recordSuccess("vlm");
+
     logger.debug(
       {
         shardIndex: shard.shardIndex,
@@ -476,6 +479,8 @@ class VLMProcessor {
   }): void {
     const { shard, timings, processStartTime, aiService, error } = args;
     const totalMs = Date.now() - processStartTime;
+
+    aiConcurrencyTuner.recordFailure("vlm", error);
 
     // Log failure usage (unknown tokens)
     llmUsageService.logEvent({
@@ -839,10 +844,7 @@ ${
     let nextIndex = 0;
 
     // Use global VLM concurrency limit from AI Semaphore config
-    const workerCount = Math.max(
-      1,
-      Math.min(aiConcurrencyConfig.vlmGlobalConcurrency, shards.length)
-    );
+    const workerCount = Math.max(1, Math.min(aiSemaphore.getLimit("vlm"), shards.length));
     const workers = Array.from({ length: workerCount }, async () => {
       while (true) {
         const current = nextIndex;

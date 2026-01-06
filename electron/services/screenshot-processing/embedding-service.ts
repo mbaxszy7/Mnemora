@@ -6,6 +6,7 @@ import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiSemaphore } from "./ai-semaphore";
 import { aiConcurrencyConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
 
 const logger = getLogger("embedding-service");
 
@@ -63,6 +64,8 @@ export class EmbeddingService {
         responsePreview: `Embedding generated: ${result.embedding.length} dimensions`,
       });
 
+      aiConcurrencyTuner.recordSuccess("embedding");
+
       return new Float32Array(result.embedding);
     } catch (error) {
       clearTimeout(timeoutId);
@@ -86,6 +89,8 @@ export class EmbeddingService {
 
       // Record failure for circuit breaker
       aiFailureCircuitBreaker.recordFailure("embedding", error);
+
+      aiConcurrencyTuner.recordFailure("embedding", error);
 
       throw error;
     } finally {

@@ -368,7 +368,7 @@ export class ActivityTimelineScheduler {
     // const fallbackStart = Math.min(this.startedAt, now - 24 * 60 * 60 * 1000);
     // const seedFrom = latestWindowEnd > 0 ? latestWindowEnd : this.alignToWindowStart(fallbackStart);
     const seedFromAligned = this.alignToWindowStart(this.startedAt);
-    const seedFrom = Math.max(latestWindowEnd, seedFromAligned);
+    const seedFrom = latestWindowEnd > 0 ? latestWindowEnd : seedFromAligned;
 
     let insertedCount = 0;
     for (
@@ -452,9 +452,7 @@ export class ActivityTimelineScheduler {
       .limit(5) // Process up to 5 at a time
       .all();
 
-    for (const row of pendingRows) {
-      await this.processSummaryRecord(row);
-    }
+    await Promise.allSettled(pendingRows.map((row) => this.processSummaryRecord(row)));
   }
 
   /**
@@ -554,9 +552,7 @@ export class ActivityTimelineScheduler {
       .limit(3) // Process up to 3 at a time
       .all();
 
-    for (const row of pendingRows) {
-      await this.processEventDetailsRecord(row);
-    }
+    await Promise.allSettled(pendingRows.map((row) => this.processEventDetailsRecord(row)));
   }
 
   /**

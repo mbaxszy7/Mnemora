@@ -26,8 +26,9 @@ import type {
   ContextKind,
 } from "./types";
 import { aiSemaphore } from "./ai-semaphore";
-import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 import { aiConcurrencyConfig } from "./config";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
 
 const logger = getLogger("deep-search-service");
 
@@ -286,11 +287,15 @@ Parse this query and return the structured search parameters.`;
         responsePreview: JSON.stringify(parsed, null, 2),
       });
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       logger.debug({ durationMs, confidence: parsed.confidence }, "Query understanding completed");
 
       return parsed;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+
+      aiConcurrencyTuner.recordFailure("text", error);
 
       // Record failed usage
       try {
@@ -425,6 +430,8 @@ Parse this query and return the structured search parameters.`;
         responsePreview: JSON.stringify(parsed, null, 2),
       });
 
+      aiConcurrencyTuner.recordSuccess("text");
+
       if (!parsed) {
         logger.warn("Answer synthesis: null result from generateObject");
         return null;
@@ -435,6 +442,8 @@ Parse this query and return the structured search parameters.`;
       return parsed;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+
+      aiConcurrencyTuner.recordFailure("text", error);
 
       // Record failed usage
       try {

@@ -194,25 +194,25 @@ export function getMockSummary(windowStart: number, windowEnd: number): WindowSu
   const titles = ["深度编码：VLM 模块优化", "会议与协作时段", "技术文档整理", "休息与恢复"];
 
   const summaryContent = `## Core Tasks & Projects
-- 持续开发 VLM 处理模块，优化批处理逻辑和错误重试机制 (node: ctx-001)
-- 重构 reconcile-loop 状态机，支持多任务并发调度 (node: ctx-002)
-- 完善 Activity Monitor 前端组件，添加 framer-motion 动画 (node: ctx-003)
-- 优化截图去重算法，提升 pHash 计算效率 (node: ctx-004)
+- 持续开发 VLM 处理模块，优化批处理逻辑和错误重试机制
+- 重构 reconcile-loop 状态机，支持多任务并发调度
+- 完善 Activity Monitor 前端组件，添加 framer-motion 动画
+- 优化截图去重算法，提升 pHash 计算效率
 
 ## Key Discussion & Decisions
-- 确定 20min 窗口划分方案，对齐本地时区边界，避免跨天问题 (node: mtg-001)
-- 长事件阈值定为 30min，由后端规则计算而非 LLM 判断 (node: mtg-002)
-- Summary 生成使用严格 JSON schema，防止 LLM 幻觉输出 (node: mtg-003)
+- 确定 20min 窗口划分方案，对齐本地时区边界，避免跨天问题
+- 长事件阈值定为 30min，由后端规则计算而非 LLM 判断
+- Summary 生成使用严格 JSON schema，防止 LLM 幻觉输出
 
 ## Documents
-- [VLM Processor API Doc](file:///docs/vlm-api.md) — 视觉语言模型处理器接口文档 (node: doc-001)
-- [Activity Monitor Design](file:///docs/am-design.md) — Activity Monitor 界面设计规范 (node: doc-002)
-- [Context Graph Schema](file:///docs/context-graph.md) — 上下文图谱数据库设计 (node: doc-003)
+- [VLM Processor API Doc](file:///docs/vlm-api.md) — 视觉语言模型处理器接口文档
+- [Activity Monitor Design](file:///docs/am-design.md) — Activity Monitor 界面设计规范
+- [Context Graph Schema](file:///docs/context-graph.md) — 上下文图谱数据库设计
 
 ## Next Steps
-- 添加 Activity Monitor 单元测试覆盖，确保组件稳定性 (node: task-001)
-- 部署 staging 环境验证，进行端到端测试 (node: task-002)
-- 完成 event details 的 lazy on-demand 生成逻辑 (node: task-003)`;
+- 添加 Activity Monitor 单元测试覆盖，确保组件稳定性
+- 部署 staging 环境验证，进行端到端测试
+- 完成 event details 的 lazy on-demand 生成逻辑`;
 
   return {
     windowStart,

@@ -105,19 +105,37 @@ interface AIConcurrencyConfig {
   embeddingGlobalConcurrency: number;
   /** VLM request timeout in milliseconds (default: 120000 = 2min) */
   vlmTimeoutMs: number;
-  /** Text LLM request timeout in milliseconds (default: 60000 = 1min) */
+  /** Text LLM request timeout in milliseconds (default: 120000 = 2min) */
   textTimeoutMs: number;
   /** Embedding request timeout in milliseconds (default: 30000 = 30s) */
   embeddingTimeoutMs: number;
+
+  adaptiveEnabled: boolean;
+  adaptiveMinConcurrency: number;
+  adaptiveWindowSize: number;
+  adaptiveFailureRateThreshold: number;
+  adaptiveConsecutiveFailureThreshold: number;
+  adaptiveCooldownMs: number;
+  adaptiveRecoveryStep: number;
+  adaptiveRecoverySuccessThreshold: number;
 }
 
 export const aiConcurrencyConfig: AIConcurrencyConfig = {
-  vlmGlobalConcurrency: 2,
-  textGlobalConcurrency: 3,
-  embeddingGlobalConcurrency: 5,
+  vlmGlobalConcurrency: 10,
+  textGlobalConcurrency: 10,
+  embeddingGlobalConcurrency: 10,
   vlmTimeoutMs: 120000, // 2 minutes
-  textTimeoutMs: 60000, // 1 minute
+  textTimeoutMs: 120000, // 2 minutes
   embeddingTimeoutMs: 30000, // 30 seconds
+
+  adaptiveEnabled: true,
+  adaptiveMinConcurrency: 1,
+  adaptiveWindowSize: 20,
+  adaptiveFailureRateThreshold: 0.2,
+  adaptiveConsecutiveFailureThreshold: 2,
+  adaptiveCooldownMs: 30000,
+  adaptiveRecoveryStep: 1,
+  adaptiveRecoverySuccessThreshold: 20,
 };
 
 // ============================================================================
@@ -196,23 +214,25 @@ export const evidenceConfig: EvidenceConfig = {
 interface ReconcileConfig {
   /** Scan interval in milliseconds (default: 30000 = 30s) */
   scanIntervalMs: number;
-  /** Number of records to process per scan (default: 50) */
-  batchSize: number;
   /** Threshold for considering a running record as stale in milliseconds (default: 300000 = 5min) */
   staleRunningThresholdMs: number;
   /** Whether to enable the reconcile loop (default: true) */
   enabled: boolean;
-  /** Maximum number of batches to process concurrently (default: 3) */
-  batchConcurrency: number;
 }
 
 export const reconcileConfig: ReconcileConfig = {
   scanIntervalMs: 30000,
-  batchSize: 5,
   staleRunningThresholdMs: 600000,
   enabled: true,
-  batchConcurrency: 2,
 };
+
+const processingConfigInternal = {
+  batch: batchConfig,
+  reconcile: reconcileConfig,
+  ai: aiConcurrencyConfig,
+};
+
+export const processingConfig = processingConfigInternal;
 
 // ============================================================================
 // Activity Summary Configuration

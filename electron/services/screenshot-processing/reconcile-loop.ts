@@ -4,6 +4,7 @@ import { batches, contextNodes, screenshots, vectorDocuments } from "../../datab
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
+import { aiSemaphore } from "./ai-semaphore";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
 import { vectorDocumentService } from "./vector-document-service";
@@ -28,7 +29,7 @@ import type {
 import type { ContextNodeRecord } from "../../database/schema";
 
 const logger = getLogger("reconcile-loop");
-const IDLE_SCAN_INTERVAL_MS = 2 * 60 * 1000;
+const IDLE_SCAN_INTERVAL_MS = reconcileConfig.scanIntervalMs;
 
 function getCanonicalAppCandidates(): string[] {
   return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
@@ -45,6 +46,50 @@ export class ReconcileLoop {
   private isProcessing = false;
   private wakeScheduled = false;
   private wakeRequested = false;
+
+  private clampInt(value: number, min: number, max: number): number {
+    const v = Math.floor(value);
+    if (!Number.isFinite(v)) return min;
+    return Math.min(max, Math.max(min, v));
+  }
+
+  /**
+   * Internal scan limit for DB queries.
+   * Derived from current concurrency so we fetch enough work to keep workers busy,
+   * but never fetch unbounded rows.
+   */
+  private getScanLimit(): number {
+    const batchWorkers = this.getBatchWorkerLimit();
+    const mergeWorkers = this.getMergeWorkerLimit();
+    const embeddingWorkers = this.getEmbeddingWorkerLimit();
+    const indexWorkers = this.getIndexWorkerLimit();
+
+    // Fetch a few multiples of worker count to reduce re-scans while tasks are claimed.
+    const derived = (batchWorkers + mergeWorkers + embeddingWorkers + indexWorkers) * 4;
+    return this.clampInt(derived, 20, 200);
+  }
+
+  private getBatchWorkerLimit(): number {
+    // Batch processing ultimately consumes VLM permits. Keep a small pool so we don't
+    // spawn too many batch-level orchestrations that will just contend on the same semaphore.
+    const vlmLimit = aiSemaphore.getLimit("vlm");
+    return this.clampInt(Math.ceil(vlmLimit / 2), 1, 4);
+  }
+
+  private getMergeWorkerLimit(): number {
+    const textLimit = aiSemaphore.getLimit("text");
+    return this.clampInt(textLimit, 1, 10);
+  }
+
+  private getEmbeddingWorkerLimit(): number {
+    const embeddingLimit = aiSemaphore.getLimit("embedding");
+    return this.clampInt(embeddingLimit, 1, 10);
+  }
+
+  private getIndexWorkerLimit(): number {
+    // Indexing is local CPU/IO bound; cap to a reasonable upper limit.
+    return 10;
+  }
 
   /**
    * Start the reconcile loop
@@ -194,6 +239,8 @@ export class ReconcileLoop {
     const minAgeMs = batchConfig.batchTimeoutMs + 5000;
     const cutoffCreatedAt = now - minAgeMs;
 
+    const limit = this.getScanLimit();
+
     const existingBatchRows = db
       .select({ id: batches.id, screenshotIds: batches.screenshotIds })
       .from(batches)
@@ -208,7 +255,7 @@ export class ReconcileLoop {
         )
       )
       .orderBy(desc(batches.updatedAt))
-      .limit(reconcileConfig.batchSize)
+      .limit(limit)
       .all();
 
     for (const row of existingBatchRows) {
@@ -250,7 +297,7 @@ export class ReconcileLoop {
         )
       )
       .orderBy(asc(screenshots.sourceKey), asc(screenshots.ts))
-      .limit(reconcileConfig.batchSize)
+      .limit(limit)
       .all();
 
     if (candidates.length === 0) {
@@ -422,7 +469,7 @@ export class ReconcileLoop {
    * Uses Promise.allSettled to ensure one failure doesn't block others
    */
   private async processBatchesConcurrently(records: PendingRecord[]): Promise<void> {
-    const concurrency = reconcileConfig.batchConcurrency;
+    const concurrency = this.getBatchWorkerLimit();
 
     logger.info(
       { totalBatches: records.length, concurrency },
@@ -477,30 +524,48 @@ export class ReconcileLoop {
 
     // Process all types in parallel
     await Promise.allSettled([
-      // Process each type sequentially within its group
-      this.processRecordsSequentially(mergeRecords, "merge"),
-      this.processRecordsSequentially(embeddingRecords, "embedding"),
-      this.processRecordsSequentially(indexRecords, "index"),
+      this.processRecordsWithConcurrency(mergeRecords, this.getMergeWorkerLimit(), "merge"),
+      this.processRecordsWithConcurrency(
+        embeddingRecords,
+        this.getEmbeddingWorkerLimit(),
+        "embedding"
+      ),
+      this.processRecordsWithConcurrency(indexRecords, this.getIndexWorkerLimit(), "index"),
     ]);
   }
 
   /**
    * Process a group of records sequentially
    */
-  private async processRecordsSequentially(
+  private async processRecordsWithConcurrency(
     records: PendingRecord[],
+    concurrency: number,
     groupName: string
   ): Promise<void> {
-    for (const record of records) {
-      try {
-        await this.processRecord(record);
-      } catch (error) {
-        logger.error(
-          { group: groupName, recordId: record.id, error: String(error) },
-          "Failed to process record in group"
-        );
+    if (records.length === 0) return;
+
+    const workerCount = Math.max(1, Math.min(concurrency, records.length));
+    let nextIndex = 0;
+
+    const workers = Array.from({ length: workerCount }, async () => {
+      while (true) {
+        const current = nextIndex;
+        nextIndex++;
+        if (current >= records.length) return;
+
+        const record = records[current];
+        try {
+          await this.processRecord(record);
+        } catch (error) {
+          logger.error(
+            { group: groupName, recordId: record.id, error: String(error) },
+            "Failed to process record in group"
+          );
+        }
       }
-    }
+    });
+
+    await Promise.all(workers);
   }
 
   /**
@@ -615,7 +680,7 @@ export class ReconcileLoop {
   private async scanPendingRecords(): Promise<PendingRecord[]> {
     const db = getDb();
     const now = Date.now();
-    const limit = reconcileConfig.batchSize;
+    const limit = this.getScanLimit();
 
     // Note: We no longer scan screenshots directly.
     // All screenshots are processed through batches.

@@ -1,10 +1,13 @@
-import { inArray, eq, and } from "drizzle-orm";
+import { inArray, eq, and, gte, or, like, lte } from "drizzle-orm";
 import { getDb } from "../../database";
 import {
   vectorDocuments,
   contextNodes,
   screenshots,
   contextScreenshotLinks,
+  activityEvents,
+  activitySummaries,
+  entityAliases,
 } from "../../database/schema";
 import { ErrorCode, ServiceError } from "@shared/errors";
 import { getLogger } from "../logger";
@@ -38,18 +41,19 @@ export class ContextSearchService {
    * With optional Deep Search: LLM query understanding + answer synthesis
    */
   async search(query: SearchQuery, abortSignal?: AbortSignal): Promise<SearchResult> {
-    const { query: queryText, filters, topK = 20, deepSearch = false } = query;
+    const { query: queryText, filters, topK = 20, deepSearch = true } = query;
 
     try {
       let queryPlan: SearchQueryPlan | null = null;
       let embeddingText = queryText;
       let effectiveFilters = filters;
 
+      const nowTs = Date.now();
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
       // Deep Search: Query Understanding
       if (deepSearch) {
         logger.debug({ queryText }, "Deep Search enabled, understanding query");
-        const nowTs = Date.now();
-        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
         queryPlan = await deepSearchService.understandQuery(
           queryText,
@@ -75,45 +79,275 @@ export class ContextSearchService {
         }
       }
 
-      // 1. Generate query embedding
-      const queryEmbedding = await embeddingService.embed(embeddingText, abortSignal);
+      // 1. Direct Retrieval: SQL Fallback for Keywords & Entities
+      const db = getDb();
+      let keywordNodes: ExpandedContextNode[] = [];
 
-      // 2. Search vector index
-      const matches = await vectorIndexService.search(queryEmbedding, topK);
-      if (matches.length === 0) {
-        return {
-          nodes: [],
-          relatedEvents: [],
-          evidence: [],
-          queryPlan: queryPlan ?? undefined,
-        };
+      // Expand search terms with entities/keywords from query plan
+      const searchTerms = new Set<string>();
+      if (queryPlan) {
+        queryPlan.extractedEntities?.forEach((e) => searchTerms.add(e.name));
+        queryPlan.keywords?.forEach((k) => searchTerms.add(k));
       }
 
-      // Map docId to its match info (score)
-      const matchMap = new Map(matches.map((m) => [m.docId, m]));
-      const docIds = matches.map((m) => m.docId);
+      if (searchTerms.size > 0) {
+        logger.debug({ terms: Array.from(searchTerms) }, "Performing keyword SQL search");
 
-      // 3. Look up vector documents to get refIds (node IDs)
-      const db = getDb();
-      const docs = db
-        .select({ id: vectorDocuments.id, refId: vectorDocuments.refId })
-        .from(vectorDocuments)
-        .where(inArray(vectorDocuments.id, docIds))
-        .all();
+        // Resolve aliases for found entities to catch more nodes
+        const aliasRecords = db
+          .select()
+          .from(entityAliases)
+          .where(
+            or(...Array.from(searchTerms).map((term) => like(entityAliases.alias, `%${term}%`)))
+          )
+          .all();
 
-      // Create a map of refId to its best index score
+        const resolvedEntityIds = Array.from(new Set(aliasRecords.map((a) => a.entityId)));
+
+        // Search nodes by title, summary, or resolved entity IDs
+        const conditions = [
+          or(
+            ...Array.from(searchTerms).map((term) => like(contextNodes.title, `%${term}%`)),
+            ...Array.from(searchTerms).map((term) => like(contextNodes.summary, `%${term}%`)),
+            resolvedEntityIds.length > 0 ? inArray(contextNodes.id, resolvedEntityIds) : undefined
+          ),
+        ];
+
+        if (effectiveFilters?.timeRange) {
+          conditions.push(gte(contextNodes.eventTime, effectiveFilters.timeRange.start));
+          conditions.push(lte(contextNodes.eventTime, effectiveFilters.timeRange.end));
+        }
+
+        const sqlMatches = db
+          .select()
+          .from(contextNodes)
+          .where(and(...conditions))
+          .all();
+
+        keywordNodes = sqlMatches.map((record) => contextGraphService.recordToExpandedNode(record));
+        // Apply filters to keyword results
+        keywordNodes = this.applyFilters(keywordNodes, effectiveFilters, db);
+      }
+
+      // 1b. Direct Retrieval: High Importance/Confidence nodes via Filters
+      let filteredNodes: ExpandedContextNode[] = [];
+      if (effectiveFilters) {
+        logger.debug("Performing direct filtered search for high-importance nodes");
+        const filteredNodeConditions = [
+          gte(contextNodes.importance, 7),
+          gte(contextNodes.confidence, 9),
+        ];
+
+        if (effectiveFilters.timeRange) {
+          filteredNodeConditions.push(
+            gte(contextNodes.eventTime, effectiveFilters.timeRange.start)
+          );
+          filteredNodeConditions.push(lte(contextNodes.eventTime, effectiveFilters.timeRange.end));
+        }
+
+        const filteredNodeRecords = db
+          .select()
+          .from(contextNodes)
+          .where(and(...filteredNodeConditions))
+          .all();
+
+        filteredNodes = filteredNodeRecords.map((record) =>
+          contextGraphService.recordToExpandedNode(record)
+        );
+        // Apply more specific filters (timeRange, entities, appHint)
+        filteredNodes = this.applyFilters(filteredNodes, effectiveFilters, db);
+        logger.debug({ count: filteredNodes.length }, "Direct filtered search completed");
+      }
+
+      // 2. Semantic Search (Vector Index)
+      let semanticNodes: ExpandedContextNode[] = [];
       const nodeScoreMap = new Map<number, number>();
-      for (const doc of docs) {
-        const match = matchMap.get(doc.id);
-        if (match) {
-          const currentScore = nodeScoreMap.get(doc.refId) ?? Infinity;
-          // HNSW scores: lower is better (distance)
-          nodeScoreMap.set(doc.refId, Math.min(currentScore, match.score));
+
+      // Generate query embedding
+      const queryEmbedding = await embeddingService.embed(embeddingText, abortSignal);
+
+      // Search vector index
+      const matches = await vectorIndexService.search(queryEmbedding, topK);
+      if (matches.length > 0) {
+        // Map docId to its match info (score)
+        const matchMap = new Map(matches.map((m) => [m.docId, m]));
+        const docIds = matches.map((m) => m.docId);
+
+        // Look up vector documents to get refIds (node IDs)
+        const docs = db
+          .select({ id: vectorDocuments.id, refId: vectorDocuments.refId })
+          .from(vectorDocuments)
+          .where(inArray(vectorDocuments.id, docIds))
+          .all();
+
+        // Create a map of refId to its best index score
+        for (const doc of docs) {
+          const match = matchMap.get(doc.id);
+          if (match) {
+            const currentScore = nodeScoreMap.get(doc.refId) ?? Infinity;
+            // HNSW scores: lower is better (distance)
+            nodeScoreMap.set(doc.refId, Math.min(currentScore, match.score));
+          }
+        }
+
+        const semanticNodeIds = Array.from(nodeScoreMap.keys());
+        if (semanticNodeIds.length > 0) {
+          const semanticNodeRecords = db
+            .select()
+            .from(contextNodes)
+            .where(inArray(contextNodes.id, semanticNodeIds))
+            .all();
+
+          semanticNodes = semanticNodeRecords.map((record) =>
+            contextGraphService.recordToExpandedNode(record)
+          );
+          // Apply filters to semantic results too
+          semanticNodes = this.applyFilters(semanticNodes, effectiveFilters, db);
         }
       }
 
-      const nodeIds = Array.from(nodeScoreMap.keys());
-      if (nodeIds.length === 0) {
+      // 3. Combine and Merge Results
+      const combinedNodeMap = new Map<number, ExpandedContextNode>();
+
+      // Add direct filtered nodes first
+      for (const node of filteredNodes) {
+        if (node.id !== undefined) combinedNodeMap.set(node.id, node);
+      }
+
+      // Add keyword fallback nodes
+      for (const node of keywordNodes) {
+        if (node.id !== undefined && !combinedNodeMap.has(node.id)) {
+          combinedNodeMap.set(node.id, node);
+        }
+      }
+
+      // Add semantic nodes
+      for (const node of semanticNodes) {
+        if (node.id !== undefined && !combinedNodeMap.has(node.id)) {
+          combinedNodeMap.set(node.id, node);
+        }
+      }
+
+      // 3b. Temporal Expansion: Fetch neighbors for top results
+      const pivotNodes = Array.from(combinedNodeMap.values()).slice(0, 5);
+      const ranges = pivotNodes
+        .filter((n) => n.eventTime)
+        .map((n) => ({
+          start: n.eventTime! - 120000,
+          end: n.eventTime! + 120000,
+        }));
+
+      if (ranges.length > 0) {
+        const neighborRecords = db
+          .select()
+          .from(contextNodes)
+          .where(
+            or(
+              ...ranges.map((r) =>
+                and(gte(contextNodes.eventTime, r.start), lte(contextNodes.eventTime, r.end))
+              )
+            )
+          )
+          .limit(10)
+          .all();
+
+        for (const record of neighborRecords) {
+          if (!combinedNodeMap.has(record.id)) {
+            const node = contextGraphService.recordToExpandedNode(record);
+            // Neighbor expansion should generally stay within the requested filters if present
+            const filtered = this.applyFilters([node], effectiveFilters, db);
+            if (filtered.length > 0) {
+              combinedNodeMap.set(record.id, node);
+            }
+          }
+        }
+      }
+
+      // 3c. Cross-Table Retrieval: Activity Events & Summaries
+      const eventConditions = [
+        or(
+          ...Array.from(searchTerms).map((term) => like(activityEvents.title, `%${term}%`)),
+          ...Array.from(searchTerms).map((term) => like(activityEvents.details, `%${term}%`))
+        ),
+      ];
+
+      if (effectiveFilters?.timeRange) {
+        eventConditions.push(gte(activityEvents.startTs, effectiveFilters.timeRange.start));
+        eventConditions.push(lte(activityEvents.startTs, effectiveFilters.timeRange.end));
+      }
+
+      const matchedEvents = db
+        .select()
+        .from(activityEvents)
+        .where(and(...eventConditions))
+        .limit(5)
+        .all();
+
+      const summaryConditions = [
+        or(
+          ...Array.from(searchTerms).map((term) => like(activitySummaries.title, `%${term}%`)),
+          ...Array.from(searchTerms).map((term) => like(activitySummaries.summary, `%${term}%`))
+        ),
+      ];
+
+      if (effectiveFilters?.timeRange) {
+        summaryConditions.push(
+          gte(activitySummaries.windowStart, effectiveFilters.timeRange.start)
+        );
+        summaryConditions.push(lte(activitySummaries.windowStart, effectiveFilters.timeRange.end));
+      }
+
+      const matchedSummaries = db
+        .select()
+        .from(activitySummaries)
+        .where(and(...summaryConditions))
+        .limit(3)
+        .all();
+
+      // Map and add to combined results
+      const tempCrossNodes: ExpandedContextNode[] = [];
+      matchedEvents.forEach((e) => {
+        tempCrossNodes.push({
+          id: -e.id,
+          kind: "event",
+          title: `Summary: ${e.title}`,
+          summary: e.details ?? "",
+          eventTime: e.startTs,
+          keywords: [],
+          entities: [],
+          importance: e.importance,
+          confidence: e.confidence / 10,
+          screenshotIds: JSON.parse(e.nodeIds ?? "[]"),
+        });
+      });
+
+      matchedSummaries.forEach((s) => {
+        tempCrossNodes.push({
+          id: -10000 - s.id,
+          kind: "knowledge",
+          title: s.title ?? "Period Summary",
+          summary: s.summary,
+          eventTime: s.windowStart,
+          keywords: JSON.parse(s.highlights ?? "[]"),
+          entities: [],
+          importance: 7,
+          confidence: 9,
+          screenshotIds: [],
+        });
+      });
+
+      // Apply filters to cross-table results
+      const filteredCrossNodes = this.applyFilters(tempCrossNodes, effectiveFilters, db);
+      for (const node of filteredCrossNodes) {
+        if (!combinedNodeMap.has(node.id!)) {
+          combinedNodeMap.set(node.id!, node);
+        }
+      }
+
+      const nodes = Array.from(combinedNodeMap.values());
+
+      if (nodes.length === 0) {
+        logger.info({ searchQuery: embeddingText }, "No nodes matched filters or semantic search");
         return {
           nodes: [],
           relatedEvents: [],
@@ -122,25 +356,28 @@ export class ContextSearchService {
         };
       }
 
-      // 4. Fetch context nodes
-      const queryNodes = db.select().from(contextNodes).where(inArray(contextNodes.id, nodeIds));
-
-      const nodeRecords = queryNodes.all();
-
-      // Convert to expanded nodes
-      let nodes = nodeRecords.map((record) => contextGraphService.recordToExpandedNode(record));
-
-      // 5. Apply filters (MVP filtering at result level)
-      nodes = this.applyFilters(nodes, effectiveFilters, db);
-
-      // 6. Sort results by score (distance, ascending)
+      // 4. Sort results with Importance-Weighted Ranking
+      // FinalScore = SemanticDistance * (1.2 - (importance / 10))
+      // Lower score is better (HNSW distance)
       nodes.sort((a, b) => {
-        const scoreA = nodeScoreMap.get(a.id!) ?? Infinity;
-        const scoreB = nodeScoreMap.get(b.id!) ?? Infinity;
-        return scoreA - scoreB;
+        // Direct matches or keyword matches have score 0 (best)
+        const scoreA = nodeScoreMap.get(a.id!) ?? 0;
+        const scoreB = nodeScoreMap.get(b.id!) ?? 0;
+
+        const weightA = 1.2 - (a.importance ?? 5) / 10;
+        const weightB = 1.2 - (b.importance ?? 5) / 10;
+
+        const finalA = scoreA * weightA;
+        const finalB = scoreB * weightB;
+
+        // Prioritize direct matches (score 0)
+        if (scoreA === 0 && scoreB !== 0) return -1;
+        if (scoreA !== 0 && scoreB === 0) return 1;
+
+        return finalA - finalB;
       });
 
-      // 7. Backfill nodeId -> screenshotIds[] and fetch evidence (screenshots)
+      // 5. Backfill nodeId -> screenshotIds[] and fetch evidence (screenshots)
       const finalNodeIds = nodes.map((n) => n.id!).filter(Boolean);
       const screenshotIdsByNodeId = this.getScreenshotIdsByNodeIds(finalNodeIds);
 
@@ -178,12 +415,18 @@ export class ContextSearchService {
       if (deepSearch && nodes.length > 0) {
         logger.debug({ nodeCount: nodes.length }, "Synthesizing answer");
         answer =
-          (await deepSearchService.synthesizeAnswer(queryText, nodes, evidence, abortSignal)) ??
-          undefined;
+          (await deepSearchService.synthesizeAnswer(
+            queryText,
+            nodes,
+            evidence,
+            nowTs,
+            timezone,
+            abortSignal
+          )) ?? undefined;
       }
 
       return {
-        nodes: otherNodes,
+        nodes: otherNodes.filter((n) => n.kind === queryPlan!.kindHint),
         relatedEvents,
         evidence,
         queryPlan: queryPlan ?? undefined,
@@ -318,13 +561,12 @@ export class ContextSearchService {
     return screenshotRecords
       .map((s) => ({
         screenshotId: s.id,
-        ts: s.ts,
-        filePath: s.filePath ?? undefined,
-        storageState: s.storageState,
+        timestamp: s.ts,
         appHint: s.appHint ?? undefined,
         windowTitle: s.windowTitle ?? undefined,
+        uiTextSnippets: s.uiTextSnippets ? JSON.parse(s.uiTextSnippets) : undefined,
       }))
-      .sort((a, b) => b.ts - a.ts);
+      .sort((a, b) => b.timestamp - a.timestamp);
   }
 
   /**

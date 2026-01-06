@@ -1,3 +1,5 @@
+import { SupportedLanguage } from "./i18n-types";
+
 export type LLMConfigMode = "unified" | "separate";
 
 export interface LLMEndpointConfig {
@@ -9,6 +11,7 @@ export interface LLMEndpointConfig {
 export interface UnifiedLLMConfig {
   mode: "unified";
   config: LLMEndpointConfig;
+  language?: SupportedLanguage;
 }
 
 export interface SeparateLLMConfig {
@@ -16,6 +19,7 @@ export interface SeparateLLMConfig {
   vlm: LLMEndpointConfig;
   textLlm: LLMEndpointConfig;
   embeddingLlm: LLMEndpointConfig;
+  language?: SupportedLanguage;
 }
 
 export type LLMConfig = UnifiedLLMConfig | SeparateLLMConfig;

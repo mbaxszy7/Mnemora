@@ -11,6 +11,7 @@ import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { llmUsageService } from "../usage/llm-usage-service";
+import { promptTemplates } from "./prompt-templates";
 import {
   SearchQueryPlanSchema,
   SearchQueryPlanProcessedSchema,
@@ -60,78 +61,9 @@ const CANONICAL_APP_CANDIDATES = getCanonicalAppCandidates();
 // System Prompts
 // ============================================================================
 
-const QUERY_UNDERSTANDING_SYSTEM_PROMPT = `You are a search query analyzer. Your task is to parse a user's natural language query and extract structured search parameters.
-
-## Output Schema (JSON only)
-
-{
-  "embeddingText": string,      // Optimized text for semantic search (normalized entities, clear intent)
-  "filtersPatch": {             // Optional extracted filters
-    "timeRange": { "start": number, "end": number },  // Unix timestamps in milliseconds
-    "appHint": string,          // Application name if mentioned (MUST be one of Canonical App Candidates)
-    "entities": string[]        // Entity names mentioned (0-20, see rules)
-  },
-  "kindHint": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile",
-  "extractedEntities": string[], // 0-20 canonical named entities (see rules)
-  "timeRangeReasoning": string, // Brief explanation of time parsing (debug; must not include sensitive content)
-  "confidence": number          // 0-1, your confidence in the extraction
-}
-
-## Rules
-
-1. **embeddingText**: Rephrase the query for better semantic matching. Remove filler words, normalize entity names.
-2. **filtersPatch.timeRange**: Only include if user explicitly mentions time (e.g., "yesterday", "last week", "in March").
-3. **filtersPatch.appHint**: Only include if user mentions a specific application. If provided, it MUST be one of the Canonical App Candidates provided in the prompt.
-4. **Do NOT include threadId** in filtersPatch - that's user-controlled context.
-5. **kindHint**: Infer what type of information the user is looking for.
-6. **confidence**: Set lower if query is ambiguous or you're uncertain about extractions.
-7. **extractedEntities** rules (same constraints as VLM entities):
-   - 0-20 canonical named entities across the query.
-   - Only meaningful named entities (person/project/team/org/app/repo/issue/ticket like "ABC-123").
-   - EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
-   - EXCLUDE URLs without meaningful names.
-   - Deduplicate and prefer canonical names.
-
-## Important
-
-- Return ONLY valid JSON, no markdown or explanations.
-- If you cannot parse the query meaningfully, set confidence to 0.`;
-
-const ANSWER_SYNTHESIS_SYSTEM_PROMPT = `You are a context-aware answer synthesizer. Your task is to generate a concise, accurate answer based on search results.
-
-## Input
-
-You will receive:
-1. The user's original query
-2. Retrieved context nodes with these fields:
-   - id, kind, title, summary, keywords, entities, eventTime, threadId, screenshotIds
-3. Screenshot evidence with these fields:
-   - screenshotId, ts, appHint, windowTitle, storageState
-
-## Output Schema (JSON only)
-
-{
-  "answerTitle": string,        // Optional short title for the answer (≤100 chars)
-  "answer": string,             // Main answer text (concise, factual)
-  "bullets": string[],          // Key bullet points (≤8 items)
-  "citations": [                // References to source nodes/screenshots
-    { "nodeId": number, "screenshotId": number, "quote": string }
-  ],
-  "confidence": number          // 0-1, based on evidence quality
-}
-
-## Rules
-
-1. **Faithfulness**: ONLY use information from the provided context. Do NOT invent facts.
-2. **Citations required**: Every claim must have at least one citation. Use nodeId or screenshotId from the input.
-3. **Quote**: Short excerpt (≤80 chars) from the source as evidence. No sensitive information.
-4. **Confidence**: Set lower if evidence is sparse or contradictory. Set very low if no relevant evidence.
-5. **answer**: Keep concise and directly address the query.
-
-## Important
-
-- Return ONLY valid JSON, no markdown or explanations.
-- If no relevant information is found, set confidence to 0.1 and explain in the answer.`;
+// ============================================================================
+// Helper Types for Payload Building
+// ============================================================================
 
 // ============================================================================
 // Helper Types for Payload Building
@@ -144,7 +76,8 @@ interface NodePayload {
   summary: string;
   keywords: string[];
   entities: string[];
-  eventTime?: number;
+  eventTime: number;
+  localTime: string;
   threadId?: string;
   screenshotIds: number[];
   score?: number;
@@ -152,11 +85,10 @@ interface NodePayload {
 
 interface EvidencePayload {
   screenshotId: number;
-  ts: number;
+  timestamp: number;
+  localTime: string;
   appHint?: string;
   windowTitle?: string;
-  storageState: string;
-  ocrExcerpt?: string;
   uiSnippets?: string[];
 }
 
@@ -213,38 +145,22 @@ export class DeepSearchService {
       const todayEndLocal = new Date(nowDate);
       todayEndLocal.setHours(23, 59, 59, 999);
 
-      const prompt = `Current time: ${nowDate.toISOString()}
-Current Unix timestamp (ms): ${nowTs}
-Timezone: ${timezone}
-
-## Time Reference Points (Unix milliseconds, use these for time calculations!)
-- Today start (00:00:00 local): ${todayStartLocal.getTime()}
-- Today end (23:59:59 local): ${todayEndLocal.getTime()}
-- Yesterday start: ${todayStartLocal.getTime() - 86400000}
-- Yesterday end: ${todayEndLocal.getTime() - 86400000}
-- One week ago: ${nowTs - 7 * 86400000}
-
-## Canonical App Candidates (for filtersPatch.appHint)
-${canonicalCandidatesJson}
-
-## App mapping rules (critical)
-- filtersPatch.appHint MUST be a canonical name from the list above.
-- If the user query uses an alias like "chrome", "google chrome", etc., map it to the canonical app name.
-- If you cannot confidently map to one canonical app, OMIT filtersPatch.appHint.
-
-## Time calculation rules (critical)
-- ALWAYS use the Time Reference Points above for calculating filtersPatch.timeRange.
-- For "today", use Today start and Today end timestamps directly.
-- For "yesterday", use Yesterday start and Yesterday end timestamps directly.
-- Do NOT calculate Unix timestamps from scratch - use the provided reference points!
-
-User query: "${query}"
-
-Parse this query and return the structured search parameters.`;
+      const prompt = promptTemplates.getQueryUnderstandingUserPrompt({
+        nowDate,
+        nowTs,
+        timezone,
+        todayStart: todayStartLocal.getTime(),
+        todayEnd: todayEndLocal.getTime(),
+        yesterdayStart: todayStartLocal.getTime() - 86400000,
+        yesterdayEnd: todayEndLocal.getTime() - 86400000,
+        weekAgo: nowTs - 7 * 86400000,
+        canonicalCandidatesJson,
+        userQuery: query,
+      });
 
       const { object: rawResult, usage } = await generateObject({
         model: aiService.getTextClient(),
-        system: QUERY_UNDERSTANDING_SYSTEM_PROMPT,
+        system: promptTemplates.getQueryUnderstandingSystemPrompt(),
         schema: SearchQueryPlanSchema,
         prompt,
         abortSignal: controller.signal,
@@ -351,6 +267,8 @@ Parse this query and return the structured search parameters.`;
     query: string,
     nodes: ExpandedContextNode[],
     evidence: ScreenshotEvidence[],
+    nowTs: number,
+    timezone: string,
     abortSignal?: AbortSignal
   ): Promise<SearchAnswer | null> {
     if (nodes.length === 0) {
@@ -380,19 +298,22 @@ Parse this query and return the structured search parameters.`;
       // Build LLM payload
       const { nodesPayload, evidencePayload, globalSummary } = this.buildLLMPayload(
         nodes,
-        evidence
+        evidence,
+        timezone
       );
 
       const prompt = this.buildAnswerSynthesisPrompt(
         query,
         nodesPayload,
         evidencePayload,
-        globalSummary
+        globalSummary,
+        nowTs,
+        timezone
       );
 
       const { object: rawResult, usage } = await generateObject({
         model: aiService.getTextClient(),
-        system: ANSWER_SYNTHESIS_SYSTEM_PROMPT,
+        system: promptTemplates.getAnswerSynthesisSystemPrompt(),
         schema: SearchAnswerSchema,
         prompt,
         abortSignal: controller.signal,
@@ -534,7 +455,8 @@ Parse this query and return the structured search parameters.`;
 
   private buildLLMPayload(
     nodes: ExpandedContextNode[],
-    evidence: ScreenshotEvidence[]
+    evidence: ScreenshotEvidence[],
+    timezone: string
   ): {
     nodesPayload: NodePayload[];
     evidencePayload: EvidencePayload[];
@@ -549,7 +471,8 @@ Parse this query and return the structured search parameters.`;
       summary: this.truncateText(node.summary, MAX_CHARS_PER_NODE_SUMMARY),
       keywords: node.keywords.slice(0, MAX_KEYWORDS_PER_NODE),
       entities: node.entities.slice(0, MAX_ENTITIES_PER_NODE).map((e) => e.name),
-      eventTime: node.eventTime,
+      eventTime: node.eventTime ?? 0,
+      localTime: this.formatTime(node.eventTime, timezone),
       threadId: node.threadId,
       screenshotIds: node.screenshotIds.slice(0, MAX_SCREENSHOT_IDS_PER_NODE),
     }));
@@ -567,18 +490,17 @@ Parse this query and return the structured search parameters.`;
       const aLinked = nodeScreenshotIds.has(a.screenshotId) ? 1 : 0;
       const bLinked = nodeScreenshotIds.has(b.screenshotId) ? 1 : 0;
       if (aLinked !== bLinked) return bLinked - aLinked;
-      return b.ts - a.ts;
+      return b.timestamp - a.timestamp;
     });
 
     const limitedEvidence = sortedEvidence.slice(0, MAX_EVIDENCE);
     const evidencePayload: EvidencePayload[] = limitedEvidence.map((e) => ({
       screenshotId: e.screenshotId,
-      ts: e.ts,
+      timestamp: e.timestamp,
+      localTime: this.formatTime(e.timestamp, timezone),
       appHint: e.appHint,
       windowTitle: e.windowTitle,
-      storageState: e.storageState,
-      // Note: ocrExcerpt and uiSnippets would come from extended evidence
-      // For now we only have the basic ScreenshotEvidence fields
+      uiSnippets: e.uiTextSnippets, // Map from EvidencePack fields
     }));
 
     // Build global summary
@@ -593,7 +515,7 @@ Parse this query and return the structured search parameters.`;
   ): GlobalSummary {
     // Time span
     const nodeTimes = nodes.map((n) => n.eventTime).filter((t): t is number => t !== undefined);
-    const evidenceTimes = evidence.map((e) => e.ts);
+    const evidenceTimes = evidence.map((e) => e.timestamp);
     const allTimes = [...nodeTimes, ...evidenceTimes];
     const minTs = allTimes.length > 0 ? Math.min(...allTimes) : 0;
     const maxTs = allTimes.length > 0 ? Math.max(...allTimes) : 0;
@@ -641,24 +563,38 @@ Parse this query and return the structured search parameters.`;
     query: string,
     nodes: NodePayload[],
     evidence: EvidencePayload[],
-    globalSummary: GlobalSummary
+    globalSummary: GlobalSummary,
+    nowTs: number,
+    timezone: string
   ): string {
-    return `## User Query
-"${query}"
+    const nowDate = new Date(nowTs);
+    const localTime = nowDate.toLocaleString("sv-SE", { timeZone: timezone, hour12: false });
 
-## Global Summary
-- Time span: ${new Date(globalSummary.resultTimeSpan[0]).toISOString()} to ${new Date(globalSummary.resultTimeSpan[1]).toISOString()}
-- Top apps: ${globalSummary.topApps.map((a) => `${a.appHint} (${a.count})`).join(", ") || "none"}
-- Top entities: ${globalSummary.topEntities.join(", ") || "none"}
-- Kinds: ${globalSummary.kindsBreakdown.map((k) => `${k.kind}: ${k.count}`).join(", ")}
+    const formattedTimeSpanStart = this.formatTime(globalSummary.resultTimeSpan[0], timezone);
+    const formattedTimeSpanEnd = this.formatTime(globalSummary.resultTimeSpan[1], timezone);
+    const topAppsStr =
+      globalSummary.topApps.map((a) => `${a.appHint} (${a.count})`).join(", ") || "none";
+    const topEntitiesStr = globalSummary.topEntities.join(", ") || "none";
+    const kindsStr = globalSummary.kindsBreakdown.map((k) => `${k.kind}: ${k.count}`).join(", ");
 
-## Context Nodes (${nodes.length})
-${JSON.stringify(nodes, null, 2)}
+    return promptTemplates.getAnswerSynthesisUserPrompt({
+      userQuery: query,
+      localTime,
+      timeZone: timezone,
+      nowDate,
+      formattedTimeSpanStart,
+      formattedTimeSpanEnd,
+      topAppsStr,
+      topEntitiesStr,
+      kindsStr,
+      nodesJson: JSON.stringify(nodes, null, 2),
+      evidenceJson: JSON.stringify(evidence, null, 2),
+    });
+  }
 
-## Screenshot Evidence (${evidence.length})
-${JSON.stringify(evidence, null, 2)}
-
-Based on the above context, provide a structured answer to the user's query.`;
+  private formatTime(ts: number | undefined, timezone: string): string {
+    if (!ts) return "unknown";
+    return new Date(ts).toLocaleString("sv-SE", { timeZone: timezone, hour12: false });
   }
 
   private truncateText(text: string, maxLength: number): string {

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { SupportedLanguage, DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES } from "@shared/i18n-types";
 import { detectLanguageFromLocale } from "@shared/i18n-utils";
 import { getLogger } from "./logger";
+import { llmConfigService } from "./llm-config-service";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -45,9 +46,13 @@ class MainI18nService {
 
     this.i18nInstance = i18next.createInstance();
     const localesPath = this.getLocalesPath();
-    const initialLanguage = this.detectSystemLanguage();
 
-    this.logger.info({ localesPath, initialLanguage }, "Initializing i18n service");
+    // Priority: 1. Saved preference from DB, 2. System language
+    const config = await llmConfigService.loadConfiguration();
+    const savedLanguage = config?.language;
+    const initialLanguage = savedLanguage ?? this.detectSystemLanguage();
+
+    this.logger.info({ localesPath, initialLanguage, savedLanguage }, "Initializing i18n service");
 
     await this.i18nInstance.use(Backend).init({
       lng: initialLanguage,
@@ -85,14 +90,31 @@ class MainI18nService {
       return;
     }
 
+    this.logger.info({ lang }, "Changing language in main process");
     await this.i18nInstance.changeLanguage(lang);
-    this.logger.info({ language: lang }, "Language changed");
+
+    // Update language in DB
+    try {
+      const config = await llmConfigService.loadConfiguration();
+      this.logger.info({ hasConfig: !!config }, "Loaded configuration for language update");
+
+      if (config) {
+        config.language = lang;
+        await llmConfigService.saveConfiguration(config);
+        this.logger.info({ language: lang }, "Language changed and saved to DB");
+      } else {
+        this.logger.warn("Could not save language: LLM configuration not found");
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Failed to save language preference to DB");
+    }
   }
 
   getCurrentLanguage(): SupportedLanguage {
     if (!this.initialized || !this.i18nInstance) {
       return DEFAULT_LANGUAGE;
     }
+    this.logger.info({ language: this.i18nInstance.language }, "Current language");
     return this.i18nInstance.language as SupportedLanguage;
   }
 

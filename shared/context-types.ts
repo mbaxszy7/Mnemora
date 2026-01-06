@@ -108,15 +108,13 @@ export interface ScreenshotEvidence {
   /** Screenshot ID */
   screenshotId: number;
   /** Capture timestamp */
-  ts: number;
-  /** File path (if available) */
-  filePath?: string;
-  /** Storage state */
-  storageState: StorageState;
+  timestamp: number;
   /** Application hint */
   appHint?: string;
   /** Window title */
   windowTitle?: string;
+  /** High-value UI text snippets */
+  uiTextSnippets?: string[];
 }
 
 // ============================================================================
@@ -135,7 +133,9 @@ export interface SearchQueryPlan {
   /** Hint for result kind (used for ranking, not filtering) */
   kindHint?: "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile";
   /** Entities extracted from query */
-  extractedEntities?: string[];
+  extractedEntities?: EntityRef[];
+  /** Keywords extracted from query for exact matching */
+  keywords?: string[];
   /** Reasoning for time range extraction (debug only) */
   timeRangeReasoning?: string;
   /** Confidence score (0-1), low confidence = skip filtersPatch */

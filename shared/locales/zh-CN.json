@@ -15,6 +15,11 @@
     "dateFormats": {
       "fullDate": "yyyy年M月d日",
       "shortDate": "MM/dd"
+    },
+    "actions": {
+      "showMore": "显示更多",
+      "showLess": "收起",
+      "moreCount": "还有 {{count}} 个"
     }
   },
   "nav": {
@@ -265,7 +270,7 @@
       "capturePausedDescription": "截图暂停期间将不会生成新的总结。"
     },
     "search": {
-      "placeholder": "自然语言搜索活动记录...",
+      "placeholder": "用 AI 搜索我的活动记录...",
       "deepSearch": "深度搜索",
       "deepSearchTooltip": "启用 AI 深度分析，以获得更详细的回答"
     },
@@ -303,7 +308,10 @@
       "loadingGeneric": "正在加载…",
       "loadedRecent": "已加载最近 {{label}}",
       "loadTo6h": "加载到 6 小时",
-      "loadTo24h": "加载到 24 小时"
+      "loadTo24h": "加载到 24 小时",
+      "today": "今天",
+      "yesterday": "昨天",
+      "dateHeader": "{{date}}"
     },
     "summary": {
       "selectWindow": "选择一个时间窗口",
@@ -318,6 +326,11 @@
       "durationH": "{{h}} 小时",
       "durationM": "{{m}} 分钟",
       "durationHM": "{{h}} 小时 {{m}} 分钟",
+      "loading": {
+        "preparing": "正在整理记录详情...",
+        "analyzing": "AI 正在深度分析活动联系...",
+        "drafting": "正在撰写深加工报告..."
+      },
       "kinds": {
         "coding": "编码",
         "meeting": "会议",

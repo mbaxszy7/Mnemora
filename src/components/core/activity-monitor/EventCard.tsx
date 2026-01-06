@@ -84,6 +84,9 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [localDetails, setLocalDetails] = useState<string | null>(event.details);
   const [isFetching, setIsFetching] = useState(false);
+  const [loadingPhase, setLoadingPhase] = useState<"preparing" | "analyzing" | "drafting">(
+    "preparing"
+  );
 
   const startTime = format(new Date(event.startTs), "HH:mm");
   const endTime = format(new Date(event.endTs), "HH:mm");
@@ -114,19 +117,34 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
   const handleExpand = async () => {
     if (!event.isLong) return;
 
-    if (!isExpanded && !localDetails && onFetchDetails) {
+    // Toggle expand state
+    const willExpand = !isExpanded;
+    setIsExpanded(willExpand);
+
+    // If expanding and no details yet, fetch them
+    if (willExpand && !localDetails && onFetchDetails) {
       setIsFetching(true);
+      setLoadingPhase("preparing");
+
+      // Rotate loading phases
+      const phaseTimer = setInterval(() => {
+        setLoadingPhase((current) => {
+          if (current === "preparing") return "analyzing";
+          if (current === "analyzing") return "drafting";
+          return "drafting";
+        });
+      }, 3500);
+
       try {
         const result = await onFetchDetails(event.id);
         if (result && result.details) {
           setLocalDetails(result.details);
         }
       } finally {
+        clearInterval(phaseTimer);
         setIsFetching(false);
       }
     }
-
-    setIsExpanded(!isExpanded);
   };
 
   return (
@@ -214,9 +232,40 @@ export function EventCard({ event, onFetchDetails }: EventCardProps) {
           >
             <div className="px-4 pb-4 pt-2 border-t border-border/30">
               {isFetching ? (
-                <div className="py-8 flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
-                  <span className="text-xs">{t("common.messages.loading")}</span>
+                <div className="py-10 flex flex-col items-center justify-center gap-4">
+                  <div className="relative">
+                    <motion.div
+                      className="h-10 w-10 rounded-full border-t-2 border-primary"
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    />
+                    <motion.div
+                      className="absolute inset-0 h-10 w-10 rounded-full border-2 border-primary/20"
+                      initial={{ scale: 0.8, opacity: 0.5 }}
+                      animate={{ scale: 1.2, opacity: 0 }}
+                      transition={{ duration: 1.5, repeat: Infinity, ease: "easeOut" }}
+                    />
+                  </div>
+                  <div className="flex flex-col items-center gap-1">
+                    <AnimatePresence mode="wait">
+                      <motion.span
+                        key={loadingPhase}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        className="text-xs font-medium text-primary/80"
+                      >
+                        {loadingPhase === "preparing"
+                          ? t("activityMonitor.event.loading.preparing")
+                          : loadingPhase === "analyzing"
+                            ? t("activityMonitor.event.loading.analyzing")
+                            : t("activityMonitor.event.loading.drafting")}
+                      </motion.span>
+                    </AnimatePresence>
+                    <span className="text-[10px] text-muted-foreground animate-pulse">
+                      {t("common.messages.loading")}
+                    </span>
+                  </div>
                 </div>
               ) : localDetails ? (
                 <Suspense fallback={<MarkdownSkeleton />}>

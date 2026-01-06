@@ -64,7 +64,10 @@ const i18nApi: I18nApi = {
   },
 
   async getLanguage(): Promise<SupportedLanguage> {
-    return ipcRenderer.invoke(IPC_CHANNELS.I18N_GET_LANGUAGE);
+    const result = (await ipcRenderer.invoke(
+      IPC_CHANNELS.I18N_GET_LANGUAGE
+    )) as IPCResult<SupportedLanguage>;
+    return result.success && result.data ? result.data : "en";
   },
 
   /**
@@ -72,7 +75,10 @@ const i18nApi: I18nApi = {
    * @returns System language ('en' or 'zh-CN')
    */
   async getSystemLanguage(): Promise<SupportedLanguage> {
-    return ipcRenderer.invoke(IPC_CHANNELS.I18N_GET_SYSTEM_LANGUAGE);
+    const result = (await ipcRenderer.invoke(
+      IPC_CHANNELS.I18N_GET_SYSTEM_LANGUAGE
+    )) as IPCResult<SupportedLanguage>;
+    return result.success && result.data ? result.data : "en";
   },
 };
 

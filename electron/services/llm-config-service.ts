@@ -16,6 +16,7 @@ import {
   CapabilityValidationResult,
 } from "@shared/llm-config-types";
 import { encodeApiKey, decodeApiKey, isEndpointConfigComplete } from "@shared/llm-config-utils";
+import { SupportedLanguage } from "@shared/i18n-types";
 
 const logger = getLogger("llm-config-service");
 
@@ -156,6 +157,7 @@ export class LLMConfigService {
           apiKey: decodeApiKey(record.unifiedApiKey),
           model: record.unifiedModel,
         },
+        language: (record.language as SupportedLanguage) || "en",
       };
     } else {
       // Separate mode
@@ -189,6 +191,7 @@ export class LLMConfigService {
           apiKey: decodeApiKey(record.embeddingApiKey),
           model: record.embeddingModel,
         },
+        language: (record.language as SupportedLanguage) || "en",
       };
     }
   }
@@ -205,6 +208,7 @@ export class LLMConfigService {
         unifiedBaseUrl: config.config.baseUrl,
         unifiedApiKey: encodeApiKey(config.config.apiKey),
         unifiedModel: config.config.model,
+        language: config.language || "en",
         // Clear separate mode fields
         vlmBaseUrl: null,
         vlmApiKey: null,
@@ -233,6 +237,7 @@ export class LLMConfigService {
         embeddingBaseUrl: config.embeddingLlm.baseUrl,
         embeddingApiKey: encodeApiKey(config.embeddingLlm.apiKey),
         embeddingModel: config.embeddingLlm.model,
+        language: config.language || "en",
       };
     }
   }

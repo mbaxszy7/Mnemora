@@ -3,19 +3,16 @@ import { useTranslation } from "react-i18next";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { Search, Sparkles, Settings, X, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
-import { Label } from "@/components/ui/label";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useContextSearch } from "@/hooks/use-context-search";
 import type { SearchResult } from "@shared/context-types";
 import { useViewTransition } from "../view-transition";
 
 interface SearchBarProps {
-  onSearchStart?: (query: string, deepSearch: boolean) => void;
-  onSearchComplete?: (result: SearchResult, query: string, deepSearch: boolean) => void;
+  onSearchStart?: (query: string) => void;
+  onSearchComplete?: (result: SearchResult, query: string) => void;
   onSearchCancel?: () => void;
-  onDeepSearchChange?: (enabled: boolean) => void;
   variants?: Variants;
 }
 
@@ -23,12 +20,10 @@ export function SearchBar({
   onSearchStart,
   onSearchComplete,
   onSearchCancel,
-  onDeepSearchChange,
   variants,
 }: SearchBarProps) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [deepSearch, setDeepSearch] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [hasPermissionIssue, setHasPermissionIssue] = useState(false);
@@ -91,24 +86,24 @@ export function SearchBar({
     if (!query.trim() || isSearching) return;
 
     setIsSearching(true);
-    onSearchStart?.(query, deepSearch);
+    onSearchStart?.(query.trim());
 
     try {
       const result = await search({
         query: query.trim(),
-        deepSearch,
+        deepSearch: true,
         topK: 20,
       });
 
       if (result.success && result.data) {
-        onSearchComplete?.(result.data, query.trim(), deepSearch);
+        onSearchComplete?.(result.data, query.trim());
       }
     } catch {
       // Search was cancelled or failed
     } finally {
       setIsSearching(false);
     }
-  }, [query, deepSearch, isSearching, search, onSearchStart, onSearchComplete]);
+  }, [query, isSearching, search, onSearchStart, onSearchComplete]);
 
   const handleCancel = useCallback(async () => {
     await cancel();
@@ -119,11 +114,6 @@ export function SearchBar({
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     handleSearch();
-  };
-
-  const handleDeepSearchChange = (checked: boolean) => {
-    setDeepSearch(checked);
-    onDeepSearchChange?.(checked);
   };
 
   const showSearchButton = query.trim().length > 0;
@@ -139,7 +129,10 @@ export function SearchBar({
           transition={{ duration: 0.2 }}
           className="relative rounded-lg flex"
         >
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="absolute left-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
+            <Search className="h-4 w-4 text-muted-foreground" />
+            <Sparkles className="h-3.5 w-3.5 text-primary/70" />
+          </div>
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -147,7 +140,7 @@ export function SearchBar({
             onBlur={() => setIsFocused(false)}
             disabled={isSearching}
             placeholder={t("activityMonitor.search.placeholder")}
-            className="pl-10 pr-12 h-10 bg-secondary/50 border-0 focus-visible:ring-0 focus-visible:ring-offset-0 disabled:opacity-70 disabled:cursor-not-allowed"
+            className="pl-14 pr-12 h-10 bg-secondary/30 border-0 focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:ring-offset-0 disabled:opacity-70 disabled:cursor-not-allowed placeholder:italic"
           />
           {/* Search/Cancel Button */}
           <AnimatePresence mode="wait">
@@ -200,42 +193,6 @@ export function SearchBar({
           )}
         </motion.div>
       </form>
-
-      {/* Deep Search Toggle */}
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <motion.div
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg bg-secondary/50 ${
-                isSearching ? "opacity-50 pointer-events-none" : ""
-              }`}
-              whileHover={{ scale: isSearching ? 1 : 1.02 }}
-              whileTap={{ scale: isSearching ? 1 : 0.98 }}
-            >
-              <Sparkles
-                className={`h-4 w-4 transition-colors ${
-                  deepSearch ? "text-amber-500" : "text-muted-foreground"
-                }`}
-              />
-              <Label
-                htmlFor="deep-search"
-                className="text-sm font-medium cursor-pointer select-none"
-              >
-                {t("activityMonitor.search.deepSearch")}
-              </Label>
-              <Switch
-                id="deep-search"
-                checked={deepSearch}
-                onCheckedChange={handleDeepSearchChange}
-                disabled={isSearching}
-              />
-            </motion.div>
-          </TooltipTrigger>
-          <TooltipContent side="bottom">
-            <p>{t("activityMonitor.search.deepSearchTooltip")}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
 
       {/* Settings Button */}
       <TooltipProvider delayDuration={300}>

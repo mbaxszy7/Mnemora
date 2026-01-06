@@ -38,7 +38,6 @@ function MarkdownSkeleton() {
 
 interface SearchResultsLocationState {
   query: string;
-  deepSearch: boolean;
   result: SearchResult;
 }
 
@@ -154,11 +153,11 @@ export default function SearchResultsPage() {
     );
   }
 
-  const { query, deepSearch, result } = state;
+  const { query, result } = state;
   const hasAnswer = result.answer && result.answer.answer;
   const hasNodes = result.nodes.length > 0;
   const hasRelatedEvents = result.relatedEvents.length > 0;
-  console.log(query, deepSearch, result);
+  console.log(query, result);
   return (
     <motion.div
       className="h-[calc(100vh-88px)] flex flex-col -mt-2"
@@ -177,12 +176,6 @@ export default function SearchResultsPage() {
           <div className="flex items-center gap-2">
             <Search className="h-4 w-4 text-muted-foreground" />
             <div className="text-sm font-medium truncate">{query}</div>
-            {deepSearch && (
-              <Badge variant="secondary" className="text-xs">
-                <Sparkles className="h-3 w-3 mr-1" />
-                {t("activityMonitor.search.deepSearch")}
-              </Badge>
-            )}
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {t("searchResults.resultCount", {

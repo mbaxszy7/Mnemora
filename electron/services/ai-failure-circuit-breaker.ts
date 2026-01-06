@@ -32,7 +32,7 @@ type CaptureControlCallbacks = {
 };
 
 class AIFailureCircuitBreaker {
-  private readonly windowMs = 60_000;
+  private readonly windowMs = 30 * 1000;
   private readonly threshold = 3;
 
   private events: FailureEvent[] = [];
@@ -153,9 +153,6 @@ class AIFailureCircuitBreaker {
       if (result.success) {
         logger.info("LLM configuration validated successfully - resuming capture");
 
-        // Reset the circuit breaker
-        this.reset();
-
         // Restart screen capture via callback
         if (this.shouldAutoResumeCapture && this.captureControlCallbacks?.start) {
           try {
@@ -164,6 +161,8 @@ class AIFailureCircuitBreaker {
             logger.error({ error }, "Failed to restart screen capture after recovery");
           }
         }
+        // Reset the circuit breaker
+        this.reset();
       } else {
         logger.debug(
           {

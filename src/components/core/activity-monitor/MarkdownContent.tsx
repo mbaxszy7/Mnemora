@@ -37,16 +37,18 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
           </h4>
         ),
         ul: ({ children }) => (
-          <ul className={isCompact ? "space-y-1 mb-3" : "space-y-1.5 mb-4"}>{children}</ul>
+          <ul className={`${isCompact ? "space-y-1 mb-3" : "space-y-1.5 mb-4"} last:mb-0`}>
+            {children}
+          </ul>
         ),
         li: ({ children }) => (
-          <li className="text-sm text-muted-foreground flex items-center gap-2">
-            <span className="text-primary leading-relaxed">•</span>
-            <span className="flex-1">{children}</span>
+          <li className="text-sm text-muted-foreground flex items-start gap-2 last:mb-0">
+            <span className="text-primary leading-relaxed shrink-0 select-none mt-0.5">•</span>
+            <span className="flex-1 min-w-0">{children}</span>
           </li>
         ),
         p: ({ children }) => (
-          <p className={`text-sm text-muted-foreground ${isCompact ? "my-1.5" : "my-2"}`}>
+          <p className={`text-sm text-muted-foreground ${isCompact ? "my-1.5" : "my-2"} last:mb-0`}>
             {children}
           </p>
         ),

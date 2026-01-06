@@ -1,10 +1,10 @@
 import { useMemo } from "react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
-import { Clock, Loader2 } from "lucide-react";
-import { format } from "date-fns";
+import { Clock } from "lucide-react";
+import { format, isToday, isYesterday } from "date-fns";
+import { enUS, zhCN } from "date-fns/locale";
 import { useTranslation } from "react-i18next";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TimelineBlock } from "./TimelineBlock";
 import type { TimeWindow, LongEventMarker } from "./types";
@@ -54,9 +54,6 @@ interface TimelineProps {
   selectedWindowId: number | string | null;
   onSelectWindow: (windowId: number | string) => void;
   isLoading?: boolean;
-  isLoadingMore?: boolean;
-  loadedRangeMs?: number;
-  onLoadMore?: (target: "6h" | "24h") => void;
   variants?: Variants;
 }
 
@@ -66,9 +63,6 @@ export function Timeline({
   selectedWindowId,
   onSelectWindow,
   isLoading,
-  isLoadingMore,
-  loadedRangeMs,
-  onLoadMore,
   variants,
 }: TimelineProps) {
   const { t } = useTranslation();
@@ -102,21 +96,6 @@ export function Timeline({
 
   // Get current date for header
   const today = format(new Date(), t("common.dateFormats.fullDate"));
-
-  const loadedLabel =
-    loadedRangeMs && loadedRangeMs >= 24 * 60 * 60 * 1000
-      ? t("activityMonitor.timeline.range24h")
-      : loadedRangeMs && loadedRangeMs >= 6 * 60 * 60 * 1000
-        ? t("activityMonitor.timeline.range6h")
-        : t("activityMonitor.timeline.range2h");
-
-  const rangeText = isLoadingMore
-    ? loadedRangeMs && loadedRangeMs >= 6 * 60 * 60 * 1000
-      ? t("activityMonitor.timeline.loadingTo24h")
-      : loadedRangeMs && loadedRangeMs >= 2 * 60 * 60 * 1000
-        ? t("activityMonitor.timeline.loadingTo6h")
-        : t("activityMonitor.timeline.loadingGeneric")
-    : t("activityMonitor.timeline.loadedRecent", { label: loadedLabel });
 
   // Animation variants for staggered children
   const containerVariants = {
@@ -183,16 +162,55 @@ export function Timeline({
               animate="show"
               className="space-y-1"
             >
-              {windows.map((window) => (
-                <TimelineBlock
-                  key={window.id}
-                  window={window}
-                  isSelected={Number(selectedWindowId) === Number(window.id)}
-                  hasLongEvent={windowsWithLongEvents.has(window.id)}
-                  onClick={() => onSelectWindow(window.id)}
-                  variants={itemVariants}
-                />
-              ))}
+              {windows.map((window, index) => {
+                const windowDate = new Date(window.windowStart);
+                const currentDateStr = format(windowDate, "yyyy-MM-dd");
+                const prevWindow = index > 0 ? windows[index - 1] : null;
+                const prevDateStr = prevWindow
+                  ? format(new Date(prevWindow.windowStart), "yyyy-MM-dd")
+                  : null;
+                const showDateHeader = prevDateStr !== currentDateStr;
+
+                // Use date-fns locale based on i18n language
+                const locale = t("common.dateFormats.shortDate") === "MM/dd" ? enUS : zhCN;
+
+                // Determine date label using date-fns helpers
+                let dateLabel = "";
+                if (showDateHeader) {
+                  if (isToday(windowDate)) {
+                    dateLabel = t("activityMonitor.timeline.today");
+                  } else if (isYesterday(windowDate)) {
+                    dateLabel = t("activityMonitor.timeline.yesterday");
+                  } else {
+                    // Format with locale for proper date display
+                    dateLabel = format(windowDate, "MM/dd EEEE", { locale });
+                  }
+                }
+
+                return (
+                  <div key={window.id}>
+                    {showDateHeader && (
+                      <motion.div
+                        className="flex items-center gap-2 px-1 py-2 mt-2 first:mt-0"
+                        variants={itemVariants}
+                      >
+                        <div className="h-px flex-1 bg-border/60" />
+                        <span className="text-xs font-medium text-muted-foreground whitespace-nowrap">
+                          {dateLabel}
+                        </span>
+                        <div className="h-px flex-1 bg-border/60" />
+                      </motion.div>
+                    )}
+                    <TimelineBlock
+                      window={window}
+                      isSelected={Number(selectedWindowId) === Number(window.id)}
+                      hasLongEvent={windowsWithLongEvents.has(window.id)}
+                      onClick={() => onSelectWindow(window.id)}
+                      variants={itemVariants}
+                    />
+                  </div>
+                );
+              })}
             </motion.div>
           )}
         </AnimatePresence>
@@ -205,34 +223,12 @@ export function Timeline({
           <span>{t("activityMonitor.timeline.longEvents", { count: events.length })}</span>
         </div>
 
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground">{rangeText}</span>
-          <div className="flex items-center gap-2">
-            {loadedRangeMs && loadedRangeMs < 6 * 60 * 60 * 1000 && (
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={!!isLoadingMore}
-                onClick={() => onLoadMore?.("6h")}
-              >
-                {isLoadingMore ? <Loader2 className="animate-spin mr-2 h-3 w-3" /> : null}
-                {t("activityMonitor.timeline.loadTo6h")}
-              </Button>
-            )}
-            {loadedRangeMs &&
-              loadedRangeMs >= 6 * 60 * 60 * 1000 &&
-              loadedRangeMs < 24 * 60 * 60 * 1000 && (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={!!isLoadingMore}
-                  onClick={() => onLoadMore?.("24h")}
-                >
-                  {isLoadingMore ? <Loader2 className="animate-spin mr-2 h-3 w-3" /> : null}
-                  {t("activityMonitor.timeline.loadTo24h")}
-                </Button>
-              )}
-          </div>
+        <div className="mt-2">
+          <span className="text-xs text-muted-foreground">
+            {t("activityMonitor.timeline.loadedRecent", {
+              label: t("activityMonitor.timeline.range24h"),
+            })}
+          </span>
         </div>
       </motion.div>
     </div>

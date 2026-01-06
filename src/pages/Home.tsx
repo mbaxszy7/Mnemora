@@ -67,16 +67,8 @@ export default function HomePage() {
     show: { opacity: 1, scale: 1 },
   };
 
-  const {
-    timeline,
-    longEvents,
-    getSummary,
-    getEventDetails,
-    isLoadingTimeline,
-    isLoadingMore,
-    loadedRangeMs,
-    loadMore,
-  } = useActivityMonitor();
+  const { timeline, longEvents, getSummary, getEventDetails, isLoadingTimeline } =
+    useActivityMonitor();
 
   const [selectedWindowId, setSelectedWindowId] = useState<number | string | null>(null);
   const [selectedSummary, setSelectedSummary] = useState<WindowSummary | null>(null);
@@ -106,7 +98,7 @@ export default function HomePage() {
     if (showTimelineEmptyState) return;
 
     if (timeline.length > 0 && selectedWindowId === null) {
-      setSelectedWindowId(timeline[timeline.length - 1].id);
+      setSelectedWindowId(timeline[0].id);
     }
   }, [timeline, selectedWindowId, showTimelineEmptyState]);
 
@@ -167,18 +159,17 @@ export default function HomePage() {
     fetchSummary();
   }, [selectedWindowId, timeline, getSummary, showTimelineEmptyState]);
 
-  const handleSearchStart = useCallback((query: string, deepSearch: boolean) => {
-    console.log("Search started:", query, "Deep:", deepSearch);
+  const handleSearchStart = useCallback((query: string) => {
+    console.log("Search started:", query);
   }, []);
 
   const handleSearchComplete = useCallback(
-    (result: SearchResult, query: string, isDeepSearch: boolean) => {
+    (result: SearchResult, query: string) => {
       console.log("Search complete:", result);
       // Navigate to search results page with the result data
       navigate("/search-results", {
         state: {
           query,
-          deepSearch: isDeepSearch,
           result,
         },
       });
@@ -397,9 +388,6 @@ export default function HomePage() {
                         selectedWindowId={selectedWindowId}
                         onSelectWindow={setSelectedWindowId}
                         isLoading={isLoadingTimeline}
-                        isLoadingMore={isLoadingMore}
-                        loadedRangeMs={loadedRangeMs}
-                        onLoadMore={loadMore}
                         variants={itemVariants}
                       />
                     </motion.div>

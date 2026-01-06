@@ -1,8 +1,8 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useState } from "react";
 import { motion, AnimatePresence, type Variants } from "framer-motion";
 import { format } from "date-fns";
 import { useTranslation } from "react-i18next";
-import { FileText, Sparkles, BarChart3 } from "lucide-react";
+import { FileText, Highlighter, BarChart3, ChevronDown, ChevronUp } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -43,6 +43,7 @@ interface SummaryPanelProps {
 
 export function SummaryPanel({ summary, isLoading, onFetchDetails, variants }: SummaryPanelProps) {
   const { t } = useTranslation();
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // Return early if no summary and not loading
   if (!summary && !isLoading) {
@@ -108,26 +109,82 @@ export function SummaryPanel({ summary, isLoading, onFetchDetails, variants }: S
 
               {/* Highlights */}
               {(summary.highlights?.length ?? 0) > 0 && (
-                <motion.div
-                  className="flex flex-wrap gap-2 mt-3"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.2 }}
-                >
-                  {summary.highlights?.map((highlight, i) => (
+                <div className="mt-3">
+                  <div className="flex flex-wrap gap-2">
+                    {/* First highlight - always visible */}
                     <motion.div
-                      key={i}
                       initial={{ opacity: 0, scale: 0.8 }}
                       animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 0.2 + i * 0.05 }}
+                      transition={{ delay: 0.2 }}
                     >
                       <Badge variant="secondary" className="text-xs font-normal py-1">
-                        <Sparkles className="h-3 w-3 mr-1" />
-                        {highlight}
+                        <Highlighter className="h-3 w-3 mr-1" />
+                        {summary.highlights![0]}
                       </Badge>
                     </motion.div>
-                  ))}
-                </motion.div>
+
+                    {/* Expand/Collapse Toggle */}
+                    {summary.highlights!.length > 1 && (
+                      <motion.button
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        className="flex items-center"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ delay: 0.3 }}
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                      >
+                        <Badge
+                          variant="outline"
+                          className="text-[10px] uppercase tracking-wider font-semibold py-0.5 px-1.5 opacity-60 hover:opacity-100 transition-opacity cursor-pointer flex items-center gap-1"
+                        >
+                          {isExpanded ? (
+                            <>
+                              {t("common.actions.showLess")}
+                              <ChevronUp className="h-2.5 w-2.5" />
+                            </>
+                          ) : (
+                            <>
+                              {t("common.actions.moreCount", {
+                                count: summary.highlights!.length - 1,
+                              })}
+                              <ChevronDown className="h-2.5 w-2.5" />
+                            </>
+                          )}
+                        </Badge>
+                      </motion.button>
+                    )}
+                  </div>
+
+                  {/* Additional Highlights */}
+                  <AnimatePresence>
+                    {isExpanded && summary.highlights!.length > 1 && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3, ease: "easeInOut" }}
+                        className="overflow-hidden"
+                      >
+                        <div className="flex flex-wrap gap-2 pt-2">
+                          {summary.highlights!.slice(1).map((highlight, i) => (
+                            <motion.div
+                              key={i}
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: i * 0.05 }}
+                            >
+                              <Badge variant="secondary" className="text-xs font-normal py-1">
+                                <Highlighter className="h-3 w-3 mr-1" />
+                                {highlight}
+                              </Badge>
+                            </motion.div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               )}
             </div>
 
@@ -182,7 +239,7 @@ export function SummaryPanel({ summary, isLoading, onFetchDetails, variants }: S
                     transition={{ delay: 0.3 }}
                   >
                     <h3 className="text-base font-semibold mb-3 flex items-center gap-2">
-                      <Sparkles className="h-4 w-4 text-amber-500" />
+                      <Highlighter className="h-4 w-4 text-amber-500" />
                       {t("activityMonitor.summary.relatedEvents")}
                     </h3>
                     <div className="space-y-3">

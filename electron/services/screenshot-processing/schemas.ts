@@ -258,11 +258,11 @@ export type VLMScreenshotMeta = {
  */
 const EntityRefSchema = z.object({
   /** Entity ID (if matched) */
-  entity_id: z.number().int().positive().optional(),
+  entityId: z.number().int().positive().optional(),
   /** Entity name */
   name: z.string(),
   /** Entity type */
-  entity_type: EntityTypeSchema.optional(),
+  entityType: EntityTypeSchema.optional(),
   /** Confidence score (0-1) */
   confidence: z.number().optional(),
 });
@@ -435,7 +435,8 @@ export const SearchQueryPlanSchema = z.object({
   kindHint: z
     .enum(["event", "knowledge", "state_snapshot", "procedure", "plan", "entity_profile"])
     .optional(),
-  extractedEntities: z.array(z.string()).optional(),
+  extractedEntities: z.array(EntityRefSchema).optional(),
+  keywords: z.array(z.string()).optional(),
   timeRangeReasoning: z.string().optional(),
   confidence: z.number(),
 });

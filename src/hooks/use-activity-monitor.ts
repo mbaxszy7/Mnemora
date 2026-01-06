@@ -14,18 +14,19 @@ import type {
 const globalCache = {
   windows: new Map<number, TimeWindow>(),
   longEvents: new Map<number, LongEventMarker>(),
-  rangeMs: 2 * 60 * 60 * 1000,
+  rangeMs: 24 * 60 * 60 * 1000,
   lastRevision: 0,
   hasLoadedOnce: false,
 };
 
 export function useActivityMonitor() {
   // Initialize from global cache if available
+  // Note: Data from backend is already sorted (newest first)
   const [timeline, setTimeline] = useState<TimeWindow[]>(() => {
-    return Array.from(globalCache.windows.values()).sort((a, b) => a.windowStart - b.windowStart);
+    return Array.from(globalCache.windows.values()).sort((a, b) => b.windowStart - a.windowStart);
   });
   const [longEvents, setLongEvents] = useState<LongEventMarker[]>(() => {
-    return Array.from(globalCache.longEvents.values()).sort((a, b) => a.startTs - b.startTs);
+    return Array.from(globalCache.longEvents.values()).sort((a, b) => b.startTs - a.startTs);
   });
 
   // Only show initial loading if we've never loaded before
@@ -146,13 +147,15 @@ export function useActivityMonitor() {
     const effectiveRangeMs = Math.min(loadedRangeMs, cacheRangeMs);
     const fromTs = now - effectiveRangeMs;
 
+    // Filter cache items and sort descending (newest first)
+    // Map.values() preserves insertion order, so we must sort after merging new items.
     const windows = Array.from(globalCache.windows.values())
       .filter((w) => w.windowEnd > fromTs && w.windowStart < now)
-      .sort((a, b) => a.windowStart - b.windowStart);
+      .sort((a, b) => b.windowStart - a.windowStart);
 
     const events = Array.from(globalCache.longEvents.values())
       .filter((e) => e.startTs < now && e.endTs > fromTs)
-      .sort((a, b) => a.startTs - b.startTs);
+      .sort((a, b) => b.startTs - a.startTs);
 
     setTimeline(windows);
     setLongEvents(events);

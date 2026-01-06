@@ -21,6 +21,7 @@ import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { vlmConfig, aiConcurrencyConfig } from "./config";
+import { promptTemplates } from "./prompt-templates";
 import {
   VLMIndexResultSchema,
   VLMIndexResultProcessedSchema,
@@ -78,150 +79,6 @@ interface BatchProcessResult {
 // VLM System Prompt
 // ============================================================================
 
-const VLM_SYSTEM_PROMPT = `You are an expert screenshot analyst for a personal activity tracking system.
-
-Your goal is to produce a compact, fully structured JSON index that can be stored and used later without the images.
-
-Interpretation rules:
-- A "segment" represents ONE coherent user activity (an Event). If the batch contains multiple distinct activities, output multiple segments.
-  - The "derived" items are optional extractions tied to the segment's Event. They correspond to:
-    - knowledge: reusable facts/concepts (no user actions)
-    - state: a snapshot of some object's status at that time
-    - procedure: reusable step-by-step process inferred from a sequence
-    - plan: explicit future intentions/todos
-
-Extraction strategy:
-- Always extract the Event first (what current_user is doing).
-- Then proactively extract derived items when the screenshots contain them:
-  - docs/specs/architecture/config explanations => knowledge
-  - dashboards/boards/status panels/metrics => state
-  - reusable multi-step operational flow => procedure
-  - explicit todos/next steps/future goals => plan
-
-Style matching (very important):
-- event: MUST describe user behavior with subject "current_user" (e.g. "current_user editing...", "current_user debugging...").
-- knowledge/state/procedure: MUST NOT describe user behavior; describe the knowledge/state/process itself.
-- plan: MUST describe future intent/todo content.
-
-Subject identification:
-- "current_user" is the screen operator (the photographer of these screenshots).
-- Names visible in screenshots (people/orgs/etc.) are not automatically "current_user"; keep them as separate entities.
-
-## Output JSON (must be valid JSON and must follow this structure EXACTLY)
-{
-  "segments": [
-    {
-      "segment_id": "seg_1",
-      "screen_ids": [1, 2],
-      "event": {
-        "title": "current_user debugging CI pipeline in Jenkins",
-        "summary": "current_user reviewing failed build logs in Jenkins dashboard, investigating test failures",
-        "confidence": 8,
-        "importance": 7
-      },
-      "derived": {
-        "knowledge": [
-          {"title": "Jenkins pipeline configuration", "summary": "Pipeline uses 3 stages: build, test, deploy. Source URL: https://jenkins.example.com/job/main"}
-        ],
-        "state": [
-          {"title": "CI build status", "summary": "Build #456 failed at test stage with 2 failing unit tests", "object": "Jenkins pipeline"}
-        ],
-        "procedure": [],
-        "plan": []
-      },
-      "merge_hint": {
-        "decision": "NEW"
-      },
-      "keywords": ["debugging", "CI", "Jenkins", "build failure"]
-    }
-  ],
-  "entities": ["Jenkins", "Build #456"],
-  "screenshots": [
-    {
-      "screenshot_id": 123,
-      "app_guess": { "name": "Google Chrome", "confidence": 0.82 },
-      "ocr_text": "...",
-      "ui_text_snippets": ["Build #456 failed", "2 tests failed"]
-    }
-  ],
-  "notes": "Optional notes"
-}
-
-## Segment rules (Event extraction)
-- Output 1-4 segments total.
-- Each segment must be semantically coherent (one clear task/goal). Do NOT mix unrelated tasks into the same segment.
-- Prefer grouping adjacent screenshots that are part of the same activity.
-- "screen_ids" are 1-based indices within THIS batch (not database IDs).
-- "segment_id" must be unique within this JSON output (recommended format: "seg_<unique>").
-
-## event (title/summary) rules
-- Style: describe "who is doing what" in natural language. Use "current_user" as the subject.
-- title (<=100 chars): specific, action-oriented.
-- summary (<=200 chars): include concrete details (what app/page, what is being edited/viewed/decided, key identifiers like PR/issue IDs). Avoid vague phrases like "working on stuff".
-- confidence: 0-10 based on clarity of evidence.
-- importance: 0-10 based on how valuable this activity would be for later recall/search.
-
-## derived rules (CRITICAL - follow exact schema)
-- General: derived items must be grounded in visible evidence from the screenshots. Do NOT invent.
-- **IMPORTANT: ALL derived items (knowledge, state, procedure, plan) MUST have exactly these fields:**
-  - "title": string (<=100 chars) - a short descriptive title
-  - "summary": string (<=180 chars) - a brief description
-  - "steps": array of strings (ONLY for procedure items, each step <=80 chars)
-  - "object": string (OPTIONAL, only for state items to specify what is being tracked)
-- **Max 2 items per derived category (knowledge, state, procedure, plan)**
-
-### Derived item JSON examples (use EXACTLY this structure):
-- knowledge item: {"title": "API rate limiting rules", "summary": "Rate limit is 100 req/min per user. Source URL: https://docs.example.com/api"}
-- state item: {"title": "CI pipeline status", "summary": "Build #456 failed on test stage with 3 failing tests", "object": "CI pipeline"}
-- procedure item: {"title": "Deploy to production", "summary": "Standard deployment workflow for the main app", "steps": ["Run tests locally", "Create PR", "Wait for CI", "Merge and deploy"]}
-- plan item: {"title": "Refactor auth module", "summary": "Plan to migrate from JWT to session-based auth next sprint"}
-
-### What NOT to do (these will cause validation errors):
-- WRONG state: {"object": "Server", "status": "running", "details": "..."} - missing title and summary!
-- WRONG procedure: {"title": "...", "steps": [...]} - missing summary!
-- WRONG: more than 2 items in any derived category
-
-## merge_hint rules (thread continuity) - CRITICAL
-- Default: "decision" = "NEW" (use this in most cases)
-- Use "MERGE" ONLY if ALL of these conditions are met:
-  1. Recent threads are provided in the history context below
-  2. This segment is clearly continuing the SAME activity from a provided thread
-  3. You set "thread_id" to the EXACT thread_id from the provided history
-- **If no history is provided or you cannot match a thread_id, you MUST use "NEW"**
-- **NEVER use "MERGE" without providing a valid "thread_id" from the history**
-
-## keywords rules
-- 0-10 short keywords that help search (topic + action). Avoid overly broad terms.
-
-## Length Limits
-- title: max 100 characters.
-- summary: max 500 characters. Be concise but descriptive. If the screen contains complex data (e.g. database schema, code logic, log errors), include specific details in the summary.
-
-## entities rules
-- 0-20 canonical named entities across the whole batch (people/orgs/teams/apps/products/repos/projects/tickets like "ABC-123").
-- EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
-
-## screenshots evidence rules
-- Include one entry for EVERY screenshot in the input metadata.
-- "screenshot_id" must exactly match the database id from the input metadata.
-- app_guess (optional): Identify the main application shown in the screenshot.
-  - name: MUST be one of the provided canonical candidate apps OR one of: "unknown", "other".
-  - confidence: 0..1. Use >= 0.7 only when you are fairly sure.
-- ocr_text (optional, <=8000 chars): copy visible text in reading order; remove obvious noise/repeated boilerplate.
-- ui_text_snippets (optional, <=20 items, each <=200 chars): pick the highest-signal lines (titles, decisions, issue IDs, key chat messages). Deduplicate. Exclude timestamps-only lines, hashes, and directory paths.
-
-## Privacy / redaction
-- If you see secrets (API keys, tokens, passwords, private keys), replace the sensitive part with "***".
-
-## Hard rules
-1) Return ONLY a single JSON object matching the requested schema.
-2) Respect all max counts and length limits.
-3) Avoid abstract generalizations (e.g. "reviewed something", "worked on code"); include specific details visible in the screenshots.
-4) If something is absent, use empty arrays or omit optional fields; never hallucinate.
-5) ALL segments MUST have an "event" object with "title" and "summary" - this is mandatory.
-6) ALL derived items MUST have "title" and "summary" fields - no exceptions.
-7) The output MUST be a valid JSON object. Do not include markdown code blocks or any other text.`;
-
 // ============================================================================
 // VLMProcessor Class
 // ============================================================================
@@ -274,7 +131,7 @@ class VLMProcessor {
     }
 
     return {
-      system: VLM_SYSTEM_PROMPT,
+      system: promptTemplates.getVLMSystemPrompt(),
       userContent,
     };
   }
@@ -786,54 +643,18 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
 
     const degraded = options?.degraded === true;
 
-    return `Analyze the following ${screenshotMeta.length} screenshots and produce the structured JSON described in the system prompt.
-
-## Current User Time Context (for relative time interpretation)
-- local_time: ${localTime}
-- time_zone: ${timeZone}
-- utc_offset: ${utcOffset}
-- now_utc: ${now.toISOString()}
-
-## Screenshot Metadata (order = screen_id)
-${metaJson}
-
-## Canonical App Candidates (for app_guess.name)
-${appCandidatesJson}
-
-## App mapping rules (critical)
-- app_guess.name MUST be a canonical name from the list above.
-- If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
-- If you cannot confidently map to one canonical app, use "unknown" or "other" with low confidence.
-${historySection}
-## Field-by-field requirements
-- segments: max 4. Titles/summaries must be specific and human-readable. Keep confidence/importance on 0-10.
-- merge_hint: Use MERGE only when clearly continuing a provided thread_id from the history above; otherwise ALWAYS use NEW. Never use MERGE without a valid thread_id.
-- derived: CRITICAL SCHEMA - every derived item (knowledge/state/procedure/plan) MUST have both "title" and "summary" fields. Max 2 per category.
-  - Example state: {"title": "Build status", "summary": "CI build #123 failed on tests", "object": "CI pipeline"}
-  - Example procedure: {"title": "Deploy workflow", "summary": "Steps to deploy to prod", "steps": ["Build", "Test", "Deploy"]}
-  - WRONG: {"object": "X", "status": "Y", "details": "Z"} - this is INVALID, missing title/summary!
-- entities: Only meaningful named entities (person/project/team/org/app/repo/issue/ticket). Exclude generic tech/library/runtime terms (npm, node_modules, yarn, dist, build, .git), file paths, URLs without names, commands, or placeholders. Use canonical names; dedupe.
-- screenshots: For each screenshot_id from the metadata:
-  - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).
-  - app_guess: optional; if present must follow Canonical App Candidates + App mapping rules; confidence is 0..1.
-  - ui_text_snippets: pick 5-15 high-signal sentences/phrases (chat bubbles, titles, decisions, issue IDs). Drop duplicates, timestamps-only lines, hashes, directory paths.
-  - ocr_text: OPTIONAL. Only include when the screenshot is clearly text-heavy (documents, logs, long web pages). Keep it short and remove boilerplate; trimmed to 8000 chars.
-- notes: optional; only if useful.
-
-${
-  degraded
-    ? `## Degraded mode
-- Return the same JSON schema, but keep the output extremely compact.
-- Still include the screenshots array (one entry per screenshot_id), but OMIT ocr_text, ui_text_snippets, and notes unless absolutely necessary.
-- Focus on segments (event + merge_hint) and entities only.`
-    : ""
-}
-
-## Instructions
-1. Review all screenshots in order (1..${screenshotMeta.length}).
-2. Identify segments and assign screen_ids for each.
-3. Fill every field following the constraints above.
-4. Return ONLY the JSON object—no extra text or code fences.`;
+    return promptTemplates.getVLMUserPrompt({
+      screenshotMeta,
+      historyPack,
+      localTime,
+      timeZone,
+      utcOffset,
+      now,
+      metaJson,
+      appCandidatesJson,
+      historySection,
+      degraded,
+    });
   }
 
   /**

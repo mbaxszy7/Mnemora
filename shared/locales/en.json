@@ -15,6 +15,11 @@
     "dateFormats": {
       "fullDate": "MMM d, yyyy",
       "shortDate": "MM/dd"
+    },
+    "actions": {
+      "showMore": "Show More",
+      "showLess": "Show Less",
+      "moreCount": "+{{count}} more"
     }
   },
   "nav": {
@@ -264,7 +269,7 @@
       "capturePausedDescription": "New summaries will stop until you resume capture."
     },
     "search": {
-      "placeholder": "Search activity records with natural language...",
+      "placeholder": "Search activities with AI...",
       "deepSearch": "Deep Search",
       "deepSearchTooltip": "Enable AI deep analysis for more detailed answers"
     },
@@ -302,7 +307,10 @@
       "loadingGeneric": "Loading…",
       "loadedRecent": "Loaded last {{label}}",
       "loadTo6h": "Load Last 6h",
-      "loadTo24h": "Load Last 24h"
+      "loadTo24h": "Load Last 24h",
+      "today": "Today",
+      "yesterday": "Yesterday",
+      "dateHeader": "{{date}}"
     },
     "summary": {
       "selectWindow": "Select a time window",
@@ -317,6 +325,11 @@
       "durationH": "{{h}}h",
       "durationM": "{{m}}m",
       "durationHM": "{{h}}h {{m}}m",
+      "loading": {
+        "preparing": "Preparing activity details...",
+        "analyzing": "AI is analyzing connections...",
+        "drafting": "Drafting deep-dive report..."
+      },
       "kinds": {
         "coding": "Coding",
         "meeting": "Meeting",

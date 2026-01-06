@@ -58,7 +58,20 @@ export default function SplashScreen() {
       }
     };
 
+    // Preload 24 hours of timeline data during splash screen
+    const preloadTimeline = async () => {
+      try {
+        const now = Date.now();
+        const fromTs = now - 24 * 60 * 60 * 1000; // 24 hours
+        await window.activityMonitorApi.getTimeline({ fromTs, toTs: now });
+      } catch (error) {
+        console.error("Failed to preload timeline:", error);
+      }
+    };
+
+    // Run both in parallel
     checkConfig();
+    preloadTimeline();
   }, []);
 
   // Slogan rotation effect

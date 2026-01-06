@@ -107,6 +107,9 @@ export const llmConfig = sqliteTable("llm_config", {
   embeddingApiKey: text("embedding_api_key"), // base64 encoded
   embeddingModel: text("embedding_model"),
 
+  // UI / Localization
+  language: text("language").notNull().default("en"),
+
   // Timestamps
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

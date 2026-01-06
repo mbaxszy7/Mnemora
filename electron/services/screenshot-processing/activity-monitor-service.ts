@@ -43,12 +43,14 @@ import {
 import { activitySummaryConfig, retryConfig, aiConcurrencyConfig } from "./config";
 import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
 import { aiSemaphore } from "./ai-semaphore";
+import { promptTemplates } from "./prompt-templates";
 import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { mainI18n } from "../i18n-service";
 
 const logger = getLogger("activity-monitor-service");
 
-// 30 minutes threshold for long events
-const LONG_EVENT_THRESHOLD_MS = 30 * 60 * 1000;
+// 20 minutes threshold for long events
+const LONG_EVENT_THRESHOLD_MS = 20 * 60 * 1000;
 
 const EVENT_DETAILS_EVIDENCE_MAX_NODES = 50;
 const EVENT_DETAILS_EVIDENCE_MAX_CHARS = 24000;
@@ -175,7 +177,7 @@ class ActivityMonitorService {
       .where(
         and(lte(activitySummaries.windowStart, toTs), gte(activitySummaries.windowEnd, fromTs))
       )
-      .orderBy(activitySummaries.windowStart);
+      .orderBy(desc(activitySummaries.windowStart));
 
     // Map to TimeWindow format
     const windows: TimeWindow[] = summaries.map((s: ActivitySummaryRecord) => ({
@@ -198,7 +200,7 @@ class ActivityMonitorService {
           gt(activityEvents.endTs, fromTs)
         )
       )
-      .orderBy(activityEvents.startTs);
+      .orderBy(desc(activityEvents.startTs));
 
     // Map to LongEventMarker format
     const longEvents: LongEventMarker[] = events.map((e: ActivityEventRecord) => ({
@@ -613,32 +615,7 @@ class ActivityMonitorService {
       );
 
       // 4. Prompt Design
-      const systemPrompt = `You are a professional activity analysis assistant. Your job is to summarize the user's activity within a single 20-minute window.
-
-**Analysis Dimensions**:
-- **Application Usage**: what apps/tools were used
-- **Content Interaction**: what content was viewed/edited/decided
-- **Goal Behavior**: what goals were pursued
-- **Activity Pattern**: whether activity was focused or multi-threaded
-
-**Hard Output Requirements**:
-1) Return ONLY a JSON object. No markdown fences. No explanations.
-2) Do not invent facts. Every claim must be grounded in the provided Context Nodes.
-3) The markdown "summary" MUST contain exactly these 4 sections (in this order):
-   - ## Core Tasks & Projects
-   - ## Key Discussion & Decisions
-   - ## Documents
-   - ## Next Steps
-   If a section has no grounded items, output exactly one bullet: "- None".
-
-**JSON Fields**:
-- title: short title
-- summary: markdown with the four fixed sections
-- highlights: up to 5 short strings
-- stats: { top_apps: string[], top_entities: string[] } (must be consistent with provided Stats; do NOT introduce new apps/entities)
-- events: 1-3 event candidates with offsets within the window (minutes)
-
-Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).toLocaleTimeString()}`;
+      // System prompt is now handled by promptTemplates.getActivitySummarySystemPrompt()
 
       const userPrompt = JSON.stringify(
         {
@@ -686,9 +663,13 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         try {
           llmResult = await generateObject({
             model: aiService.getTextClient(),
-            system: systemPrompt,
+            system: promptTemplates.getActivitySummarySystemPrompt(),
             schema: ActivityWindowSummaryLLMSchema,
-            prompt: userPrompt,
+            prompt: promptTemplates.getActivitySummaryUserPrompt({
+              userPromptJson: userPrompt,
+              windowStart,
+              windowEnd,
+            }),
             abortSignal: controller.signal,
           });
         } finally {
@@ -768,22 +749,6 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         // Choose a stable eventKey. If a thread exists, try to merge across windows by continuity.
         let eventKey: string;
         if (threadId) {
-          // Guard: only merge across previous window if it exists (avoid merging over capture gaps)
-          const prevWindowExists = db
-            .select({ id: activitySummaries.id })
-            .from(activitySummaries)
-            .where(
-              and(
-                eq(
-                  activitySummaries.windowStart,
-                  windowStart - activitySummaryConfig.generationIntervalMs
-                ),
-                eq(activitySummaries.windowEnd, windowStart)
-              )
-            )
-            .limit(1)
-            .get();
-
           const candidate = await db
             .select({
               id: activityEvents.id,
@@ -806,7 +771,7 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
           const titleHash = Buffer.from(`${event.kind}:${event.title}`)
             .toString("hex")
             .slice(0, 16);
-          if (candidate.length > 0 && prevWindowExists) {
+          if (candidate.length > 0) {
             eventKey = candidate[0].eventKey;
           } else {
             eventKey = `thr_${threadId}_win_${windowStart}_evt_${idx}_${titleHash}`;
@@ -886,6 +851,7 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
     }
 
     try {
+      const startTime = Date.now();
       const eventRows = await db
         .select()
         .from(activityEvents)
@@ -894,6 +860,8 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
 
       if (eventRows.length === 0) return false;
       const event = eventRows[0];
+
+      const dataFetchStart = Date.now();
 
       const nodeIds = parseJsonSafe<number[]>(event.nodeIds, []);
       if (nodeIds.length === 0) {
@@ -958,21 +926,13 @@ Time Window: ${new Date(windowStart).toLocaleString()} - ${new Date(windowEnd).t
         time: eventTimeMs ? new Date(eventTimeMs).toLocaleString() : "unknown",
       }));
 
-      const systemPrompt = `You are a professional activity analysis assistant.
+      const dataFetchDuration = Date.now() - dataFetchStart;
+      logger.debug(
+        { eventId, nodeCount: nodeMap.size, durationMs: dataFetchDuration },
+        "Event details data fetch completed"
+      );
 
-Your job is to generate a detailed, factual deep-dive report for ONE activity event.
-
-**Quality Requirements**:
-- Faithful: Do NOT invent any facts (files, URLs, decisions, outcomes, numbers). Only use provided activity logs.
-- Traceable: Any non-trivial claim must cite evidence node ids in the markdown using "(node: <id1>, <id2>)".
-- Structured: Use clear headings and bullet lists where appropriate.
-
-**Hard Output Requirements**:
-1) Output MUST be a valid JSON object and MUST match the schema exactly.
-2) Output MUST be JSON only. No markdown fences. No extra text.
-
-**JSON Schema**:
-{ "details": "<markdown>" }`;
+      // System prompt is now handled by promptTemplates.getEventDetailsSystemPrompt()
 
       const userPrompt = JSON.stringify(
         {
@@ -993,7 +953,8 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
           },
           activityLogs: nodesData,
           outputSchema: {
-            details: "markdown string (must cite node ids as (node: <id1>, <id2>))",
+            details:
+              mainI18n.getCurrentLanguage() === "zh-CN" ? "markdown 字符串" : "markdown string",
           },
         },
         null,
@@ -1001,7 +962,11 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
       );
 
       // Use semaphore for concurrency control and AbortController for timeout
+      const aiStart = Date.now();
       const releaseText = await aiSemaphore.text.acquire();
+      const semaphoreWaitDuration = Date.now() - aiStart;
+      logger.debug({ eventId, waitMs: semaphoreWaitDuration }, "Event details semaphore acquired");
+
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
         const controller = new AbortController();
@@ -1009,9 +974,11 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
         try {
           llmResult = await generateObject({
             model: aiService.getTextClient(),
-            system: systemPrompt,
+            system: promptTemplates.getEventDetailsSystemPrompt(),
             schema: ActivityEventDetailsLLMSchema,
-            prompt: userPrompt,
+            prompt: promptTemplates.getEventDetailsUserPrompt({
+              userPromptJson: userPrompt,
+            }),
             abortSignal: controller.signal,
           });
         } finally {
@@ -1020,6 +987,9 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
       } finally {
         releaseText();
       }
+
+      const aiDuration = Date.now() - aiStart;
+      logger.info({ eventId, aiDurationMs: aiDuration }, "Event details AI generation completed");
 
       const { object: rawData, usage } = llmResult;
       const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
@@ -1053,6 +1023,12 @@ Your job is to generate a detailed, factual deep-dive report for ONE activity ev
         .run();
 
       emitActivityTimelineChanged(event.startTs, event.endTs);
+
+      const totalDuration = Date.now() - startTime;
+      logger.info(
+        { eventId, totalDurationMs: totalDuration },
+        "Event details updated successfully"
+      );
 
       return true;
     } catch (error) {

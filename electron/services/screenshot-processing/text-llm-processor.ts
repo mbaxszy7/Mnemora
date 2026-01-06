@@ -18,6 +18,7 @@ import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
 import { entityService } from "./entity-service";
 import { llmUsageService } from "../usage/llm-usage-service";
+import { promptTemplates } from "./prompt-templates";
 import {
   TextLLMExpandResultSchema,
   TextLLMExpandResultProcessedSchema,
@@ -99,70 +100,8 @@ interface PendingNode {
 }
 
 // ============================================================================
-// Text LLM System Prompt
+// TextLLMProcessor Class
 // ============================================================================
-
-const TEXT_LLM_SYSTEM_PROMPT = `You are a top AI analyst and context-structuring expert. Your task is to convert a VLM Index (segments + evidence) into a compact, queryable ContextGraph update.
-
-Core Principles:
-1. Faithfulness: Do not invent facts. Only use information present in the input.
-2. Content Fusion: Integrate related details into coherent nodes. Avoid fragmentation and redundancy.
-3. Traceability: Every node must reference database screenshot IDs via "screenshot_ids". Every derived node must be linked to its source event via an edge.
-4. Searchability: Titles and summaries must be specific (include concrete identifiers like file names, tickets, commands, UI labels when present). Keywords must be high-signal and deduplicated.
-5. Thread Continuity: Each event node must have "thread_id". Respect merge_hint: if decision is MERGE and thread_id is present, reuse it; otherwise create a new thread_id.
-
-Output Format:
-Return ONLY valid JSON with:
-- "nodes": array of nodes
-- "edges": array of edges (optional)
-
-Node schema:
-- "kind": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan"
-- "thread_id": string (required for kind="event", omit otherwise)
-- "title": string (<= 100 chars)
-- "summary": string (<= 200 chars)
-- "keywords": array of strings (max 10)
-- "entities": array of objects with:
-  - "name": string
-  - "entity_type": string (optional)
-  - "entity_id": number (optional)
-  - "confidence": number between 0 and 1 (optional)
-- "importance": integer 0-10
-- "confidence": integer 0-10
-- "screenshot_ids": array of database screenshot IDs
-- "event_time": timestamp in milliseconds (required for all nodes)
-
-Edge schema:
-- "from_index": integer (index into nodes)
-- "to_index": integer (index into nodes)
-- "edge_type": "event_produces_knowledge" | "event_updates_state" | "event_uses_procedure" | "event_suggests_plan"
-
-Hard Rules:
-1. Each VLM segment MUST produce at least one event node.
-2. Each derived item MUST produce a separate node and an edge from its source event.
-3. "screenshot_ids" MUST be database IDs (use Screenshot Mapping).
-4. "event_time" MUST be provided for ALL nodes (including derived ones), using the midpoint timestamp of the segment screenshots (milliseconds).
-5. Do not output markdown, explanations, or extra text.`;
-
-const TEXT_LLM_MERGE_SYSTEM_PROMPT = `You are a top AI analyst and information integration expert.
-
-Task:
-Merge two context nodes of the SAME kind into one coherent node.
-
-Core Principles:
-1. Faithfulness: Do not invent facts. Only use information present in the inputs.
-2. Content Fusion: Integrate complementary details into a single coherent title/summary; avoid redundant phrasing.
-3. Searchability: Use concrete identifiers (file names, tickets, commands, UI labels) when present.
-4. De-duplication: Keywords and entities must be deduplicated.
-
-Output Format:
-Return ONLY valid JSON object with fields:
-- title (<= 100 chars)
-- summary (<= 200 chars)
-- keywords (string[], max 10)
-- entities (array of objects with name, entity_type?, entity_id?, confidence?)
-
-Do not output markdown or extra text.`;
 
 // ============================================================================
 // TextLLMProcessor Class
@@ -385,8 +324,8 @@ export class TextLLMProcessor {
       const llmMerged = await this.callTextLLMForMerge(existingNode, newNode);
       const llmEntities: EntityRef[] = llmMerged.entities.map((e) => ({
         name: e.name,
-        entityId: e.entity_id,
-        entityType: e.entity_type,
+        entityId: e.entityId,
+        entityType: e.entityType,
         confidence: e.confidence,
       }));
 
@@ -470,39 +409,19 @@ export class TextLLMProcessor {
       window_title: s.meta.windowTitle,
     }));
 
-    return `Please expand the following VLM Index into storable context nodes.
-
-## Current User Time Context (for relative time interpretation)
-- local_time: ${localTime}
-- time_zone: ${timeZone}
-- utc_offset: ${utcOffset}
-- now_utc: ${now.toISOString()}
-
-## VLM Segments
-${segmentsJson}
-
-## Screenshot Mapping (screen_id -> database_id)
-${JSON.stringify(screenshotMapping, null, 2)}
-
-## Evidence Packs
-${evidenceJson}
-
-## Batch Info
-- Batch ID: ${batch.batchId}
-- Source Key: ${batch.sourceKey}
-- Time Range: ${new Date(batch.tsStart).toISOString()} to ${new Date(batch.tsEnd).toISOString()}
-
-## VLM Entities (batch-level candidates)
-${JSON.stringify(vlmIndex.entities ?? [], null, 2)}
-
-## Instructions
-1. Produce at least one event node for each segment.
-2. For each derived item (knowledge/state/procedure/plan), create a separate node and an edge from its source event.
-3. Convert segment screen_ids (1-based indexes) to database screenshot_ids using the Screenshot Mapping section.
-4. Use Evidence Packs (OCR + UI snippets) only to enrich specificity; do not invent any facts.
-5. Output must be strict JSON only (no markdown, no code fences, no extra commentary).
-
-Return the JSON now:`;
+    return promptTemplates.getTextLLMExpandUserPrompt({
+      localTime,
+      timeZone,
+      utcOffset,
+      now,
+      segmentsJson,
+      screenshotMappingJson: JSON.stringify(screenshotMapping, null, 2),
+      evidenceJson,
+      batchId: batch.batchId,
+      sourceKey: batch.sourceKey,
+      batchTimeRange: `${new Date(batch.tsStart).toISOString()} to ${new Date(batch.tsEnd).toISOString()}`,
+      vlmEntitiesJson: JSON.stringify(vlmIndex.entities ?? [], null, 2),
+    });
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -540,8 +459,8 @@ Return the JSON now:`;
     const pendingNodes: PendingNode[] = result.nodes.map((node) => {
       const entities: EntityRef[] = (node.entities ?? []).map((e) => ({
         name: e.name,
-        entityId: e.entity_id,
-        entityType: e.entity_type,
+        entityId: e.entityId,
+        entityType: e.entityType,
         confidence: e.confidence,
       }));
 
@@ -1012,7 +931,7 @@ Return the JSON now:`;
     try {
       const response = await generateObject({
         model: aiService.getTextClient(),
-        system: TEXT_LLM_SYSTEM_PROMPT,
+        system: promptTemplates.getTextLLMExpandSystemPrompt(),
         schema: TextLLMExpandResultSchema,
         messages: [
           {
@@ -1081,37 +1000,29 @@ Return the JSON now:`;
     }
   }
 
+  /**
+   * Build merge prompt for Text LLM
+   */
   private buildMergePrompt(
     existingNode: ExpandedContextNode,
     newNode: ExpandedContextNode
   ): string {
     const toLLMNode = (node: ExpandedContextNode) => ({
       kind: node.kind,
-      thread_id: node.threadId,
       title: node.title,
       summary: node.summary,
       keywords: node.keywords,
-      entities: node.entities.map((e) => ({
-        name: e.name,
-        entity_id: e.entityId,
-        entity_type: e.entityType,
-        confidence: e.confidence,
-      })),
+      entities: node.entities,
       importance: node.importance,
       confidence: node.confidence,
       screenshot_ids: node.screenshotIds,
       event_time: node.eventTime,
     });
 
-    return `Merge the following two context nodes into one.
-
-## Existing Node
-${JSON.stringify(toLLMNode(existingNode), null, 2)}
-
-## New Node
-${JSON.stringify(toLLMNode(newNode), null, 2)}
-
-Return the JSON object now:`;
+    return promptTemplates.getTextLLMMergeUserPrompt({
+      existingNodeJson: JSON.stringify(toLLMNode(existingNode), null, 2),
+      newNodeJson: JSON.stringify(toLLMNode(newNode), null, 2),
+    });
   }
 
   private async callTextLLMForMerge(
@@ -1137,7 +1048,7 @@ Return the JSON object now:`;
     try {
       const response = await generateObject({
         model: aiService.getTextClient(),
-        system: TEXT_LLM_MERGE_SYSTEM_PROMPT,
+        system: promptTemplates.getTextLLMMergeSystemPrompt(),
         schema: TextLLMMergeResultSchema,
         messages: [
           {

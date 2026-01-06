@@ -54,8 +54,6 @@ const LONG_EVENT_THRESHOLD_MS = 20 * 60 * 1000;
 
 const EVENT_DETAILS_EVIDENCE_MAX_NODES = 50;
 const EVENT_DETAILS_EVIDENCE_MAX_CHARS = 24000;
-const EVENT_DETAILS_NODE_TITLE_MAX_CHARS = 220;
-const EVENT_DETAILS_NODE_SUMMARY_MAX_CHARS = 900;
 
 let activityTimelineChangedRevision = 0;
 let activityTimelineChangedTimer: NodeJS.Timeout | null = null;
@@ -103,12 +101,6 @@ function parseJsonSafe<T>(json: string | null | undefined, fallback: T): T {
   } catch {
     return fallback;
   }
-}
-
-function truncateText(value: string | null | undefined, maxChars: number): string {
-  const v = value ?? "";
-  if (v.length <= maxChars) return v;
-  return `${v.slice(0, Math.max(0, maxChars - 12))}...(truncated)`;
 }
 
 function capJsonArrayByChars<T>(
@@ -453,6 +445,27 @@ class ActivityMonitorService {
       }
       const nodeCount = nodeIdsSet.size;
 
+      const pendingVlmCount =
+        screenshotCount === 0
+          ? 0
+          : db
+              .select({ id: screenshots.id })
+              .from(screenshots)
+              .where(
+                and(
+                  gte(screenshots.ts, windowStart),
+                  lt(screenshots.ts, windowEnd),
+                  or(
+                    inArray(screenshots.vlmStatus, ["pending", "running"]),
+                    and(
+                      eq(screenshots.vlmStatus, "failed"),
+                      lt(screenshots.vlmAttempts, retryConfig.maxAttempts)
+                    )
+                  )
+                )
+              )
+              .all().length;
+
       // Branch: No Data (no screenshots at all)
       if (screenshotCount === 0) {
         const emptySummary = buildEmptyWindowSummary();
@@ -488,34 +501,26 @@ class ActivityMonitorService {
       }
 
       // Branch: Processing (screens exist but no nodes yet)
-      if (screenshotCount > 0 && nodeCount === 0) {
-        // Check if VLM is still working on these screenshots (pending, running, or failed-with-retries)
-        const pendingVlmCount = db
-          .select({ id: screenshots.id })
-          .from(screenshots)
-          .where(
-            and(
-              gte(screenshots.ts, windowStart),
-              lt(screenshots.ts, windowEnd),
-              or(
-                inArray(screenshots.vlmStatus, ["pending", "running"]),
-                and(
-                  eq(screenshots.vlmStatus, "failed"),
-                  lt(screenshots.vlmAttempts, retryConfig.maxAttempts)
-                )
-              )
-            )
-          )
-          .all().length;
-
+      if (screenshotCount > 0 && (nodeCount === 0 || pendingVlmCount > 0)) {
         const attempts = summaryRow?.attempts ?? 0;
-        const nextRunAt = Date.now() + 5 * 60 * 1000;
+        const pendingRatio = pendingVlmCount > 0 ? pendingVlmCount / screenshotCount : 0;
 
-        // If we are just waiting for VLM, don't count this as a failure attempt.
-        // The scheduler already incremented it when claiming; roll it back only while VLM is still processing.
+        // 动态计算下一次重试时间（nextRunAt）：根据窗口内 VLM 仍未完成的占比来调整轮询频率。
+        // - pendingRatio 越高：说明还剩很多截图在跑 VLM，此时频繁轮询意义不大，适当拉长间隔降低 DB 压力
+        // - pendingRatio 越低：说明接近完成，为了更快从 "Processing" 切换到真实 summary，缩短间隔提升体验
+        // 该策略只影响 "Processing" 状态下的轮询，不影响真正的失败重试（failed/failed_permanent）路径。
+        const minDelayMs = 15_000;
+        const maxDelayMs = 120_000;
+        const delayMs = Math.round(minDelayMs + (maxDelayMs - minDelayMs) * pendingRatio);
+
+        // 叠加随机抖动：避免多个窗口在同一时刻集中醒来，造成突发的 DB/CPU 峰值。
+        const nextRunAt = Date.now() + delayMs + Math.floor(Math.random() * retryConfig.jitterMs);
+
+        // 只是在等待 VLM 时，不应该把这次当作失败重试。
+        // scheduler 在 claim 时会先 +1，这里在 VLM 仍未完成时把 attempts 回滚（避免把 "Processing" 等待耗尽重试次数）。
         const newAttempts = pendingVlmCount > 0 ? Math.max(0, attempts - 1) : attempts;
 
-        // Only stop retries if we've exhausted attempts AND VLM has finished processing all screens
+        // 只有在：重试次数耗尽 且 VLM 已经对窗口内所有截图处理完成 时，才允许 "Processing" 变成 "No Data" 并结束重试。
         const shouldStopRetry = newAttempts >= retryConfig.maxAttempts && pendingVlmCount === 0;
 
         const emptySummary = buildEmptyWindowSummary();
@@ -733,9 +738,12 @@ class ActivityMonitorService {
       emitActivityTimelineChanged(windowStart, windowEnd);
 
       // 6. Save Events
-      const mergeGapMs = activitySummaryConfig.generationIntervalMs + 5 * 60 * 1000;
+      // Allow small gaps when merging events across windows for the same threadId.
+      // This tolerates boundary jitter and LLM offsets when a continuous activity spans windows.
+      const mergeGapMs = activitySummaryConfig.generationIntervalMs + 2 * 60 * 1000;
       for (const [idx, event] of data.events.entries()) {
-        // Calculate absolute timestamps from offsets
+        // LLM returns start/end as minute offsets relative to windowStart.
+        // Convert them to absolute timestamps for persistence and cross-window merging.
         const startTs = windowStart + event.start_offset_min * 60 * 1000;
         const endTs = windowStart + event.end_offset_min * 60 * 1000;
 
@@ -904,8 +912,8 @@ class ActivityMonitorService {
         .map(({ node, apps }: { node: ContextNodeRecord; apps: Set<string> }) => ({
           id: node.id,
           kind: node.kind,
-          title: truncateText(node.title, EVENT_DETAILS_NODE_TITLE_MAX_CHARS),
-          summary: truncateText(node.summary, EVENT_DETAILS_NODE_SUMMARY_MAX_CHARS),
+          title: node.title,
+          summary: node.summary,
           apps: Array.from(apps),
           eventTimeMs: node.eventTime ?? null,
         }))

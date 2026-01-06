@@ -150,7 +150,7 @@ interface RetryConfig {
   maxAttempts: number;
   /** Backoff schedule in milliseconds (default: [5000, 20000, 60000, 300000]) */
   backoffScheduleMs: number[];
-  /** Random jitter to add to backoff in milliseconds (default: 1000) */
+  /** Random jitter to add to backoff in milliseconds (default: 5000) */
   jitterMs: number;
 }
 

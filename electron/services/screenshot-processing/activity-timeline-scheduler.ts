@@ -11,7 +11,7 @@
  * - Recover stale running states for activity tables
  */
 
-import { eq, and, lt, or, isNull, lte, desc, asc, gte } from "drizzle-orm";
+import { eq, and, lt, or, isNull, lte, desc, asc, gte, inArray } from "drizzle-orm";
 import { getDb } from "../../database";
 import { activitySummaries, activityEvents, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
@@ -30,7 +30,7 @@ export class ActivityTimelineScheduler {
   private isProcessing = false;
 
   private lastSeedAt = 0;
-  private startedAt: number | null = null;
+  private appStartedAt: number | null = null;
 
   /**
    * Start the scheduler
@@ -43,7 +43,7 @@ export class ActivityTimelineScheduler {
     if (this.isRunning) return;
 
     this.isRunning = true;
-    this.startedAt = Date.now();
+    this.appStartedAt = Date.now();
     logger.info("Activity timeline scheduler started");
 
     // Run first cycle soon after startup
@@ -80,18 +80,22 @@ export class ActivityTimelineScheduler {
     this.clearTimer();
     if (!this.isRunning) return;
 
-    // Compute earliest pending task time for dynamic scheduling
+    // 计算下一次需要执行的最早时间（nextRunAt），用于动态调度下一轮 cycle
     const earliestNextRun = this.computeEarliestNextRun();
     const now = Date.now();
     const defaultIntervalMs = activitySummaryConfig.generationIntervalMs;
 
-    // Use earliest nextRunAt if available, otherwise default interval
+    // 防 tight loop：即使任务已经 due（earliestNextRun <= now）或者马上 due，
+    // 也至少等待一个最小间隔再跑下一轮。
+    // 这样可以显著降低 CPU/DB 压力，并给 VLM/embedding 等异步流水线留出推进时间。
+    const minDelayMs = 10000;
+
+    // 如果有 earliestNextRun，则把 delay clamp 到 [minDelayMs, defaultIntervalMs]。
+    // - 不会因为 due task 导致 0ms/1s 紧循环
+    // - 也不会 sleep 超过默认周期（防止调度“睡过头”）
     let delayMs: number;
-    if (earliestNextRun !== null && earliestNextRun > now) {
-      delayMs = Math.min(earliestNextRun - now, defaultIntervalMs);
-    } else if (earliestNextRun !== null && earliestNextRun <= now) {
-      // Task is already due, run soon
-      delayMs = 1000;
+    if (earliestNextRun !== null) {
+      delayMs = Math.min(Math.max(earliestNextRun - now, minDelayMs), defaultIntervalMs);
     } else {
       delayMs = defaultIntervalMs;
     }
@@ -132,30 +136,30 @@ export class ActivityTimelineScheduler {
       .get();
     if (summary) {
       consider(summary.nextRunAt ?? now);
-    }
-
-    // Check activity_events
-    const eventDetails = db
-      .select({ nextRunAt: activityEvents.detailsNextRunAt })
-      .from(activityEvents)
-      .where(
-        and(
-          or(
-            eq(activityEvents.detailsStatus, "pending"),
-            eq(activityEvents.detailsStatus, "failed")
-          ),
-          lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
+    } else {
+      // Check activity_events only when there are no pending summaries
+      const eventDetails = db
+        .select({ nextRunAt: activityEvents.detailsNextRunAt })
+        .from(activityEvents)
+        .where(
+          and(
+            or(
+              eq(activityEvents.detailsStatus, "pending"),
+              eq(activityEvents.detailsStatus, "failed")
+            ),
+            lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
+          )
         )
-      )
-      .orderBy(asc(activityEvents.detailsNextRunAt))
-      .limit(1)
-      .get();
-    if (eventDetails) {
-      consider(eventDetails.nextRunAt ?? now);
+        .orderBy(asc(activityEvents.detailsNextRunAt))
+        .limit(1)
+        .get();
+      if (eventDetails) {
+        consider(eventDetails.nextRunAt ?? now);
+      }
     }
 
     // Also consider seed timing
-    if (this.startedAt != null) {
+    if (this.appStartedAt != null) {
       consider(this.lastSeedAt + 60_000);
     }
 
@@ -186,7 +190,9 @@ export class ActivityTimelineScheduler {
       await this.processPendingSummaries();
 
       // 5. Process pending event details
-      await this.processPendingEventDetails();
+      if (!this.hasPendingSummary()) {
+        await this.processPendingEventDetails();
+      }
     } catch (error) {
       logger.error(
         { error: error instanceof Error ? error.message : String(error) },
@@ -199,6 +205,23 @@ export class ActivityTimelineScheduler {
         this.scheduleNext();
       }
     }
+  }
+
+  private hasPendingSummary(): boolean {
+    const db = getDb();
+    const row = db
+      .select({ id: activitySummaries.id })
+      .from(activitySummaries)
+      .where(
+        and(
+          or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
+          lt(activitySummaries.attempts, retryConfig.maxAttempts)
+        )
+      )
+      .limit(1)
+      .get();
+
+    return row != null;
   }
 
   /**
@@ -336,13 +359,12 @@ export class ActivityTimelineScheduler {
    * Seed pending windows for completed time periods
    */
   private async seedPendingWindows(): Promise<void> {
-    if (!this.startedAt) {
+    if (!this.appStartedAt) {
       return;
     }
 
     const now = Date.now();
     const intervalMs = activitySummaryConfig.generationIntervalMs;
-    const safetyLagMs = 5 * 60 * 1000; // 5 min buffer for VLM pipeline
 
     // Only seed once per minute to avoid redundant work
     if (now - this.lastSeedAt < 60_000) {
@@ -351,8 +373,8 @@ export class ActivityTimelineScheduler {
 
     const db = getDb();
 
-    // Only seed windows that have completed (ended at least safetyLagMs ago)
-    const lastCompleteWindowEnd = this.alignToWindowStart(now - safetyLagMs);
+    // Only seed windows that have completed
+    const lastCompleteWindowEnd = this.alignToWindowStart(now);
 
     // Find latest existing window end
     const latest = db
@@ -364,11 +386,8 @@ export class ActivityTimelineScheduler {
     const latestWindowEnd = latest?.windowEnd ?? 0;
 
     // Start from latest existing window end
-    // If no windows exist, fallback to 24 hours ago or startedAt (whichever is earlier)
-    // const fallbackStart = Math.min(this.startedAt, now - 24 * 60 * 60 * 1000);
-    // const seedFrom = latestWindowEnd > 0 ? latestWindowEnd : this.alignToWindowStart(fallbackStart);
-    const seedFromAligned = this.alignToWindowStart(this.startedAt);
-    const seedFrom = latestWindowEnd > 0 ? latestWindowEnd : seedFromAligned;
+    const seedFrom =
+      latestWindowEnd > 0 ? latestWindowEnd : this.alignToWindowStart(this.appStartedAt);
 
     let insertedCount = 0;
     for (
@@ -390,8 +409,48 @@ export class ActivityTimelineScheduler {
         continue;
       }
 
+      // 计算当前窗口内截图总数与“VLM 已完成”的截图数。
+      // 这里的“VLM 已完成”定义为：
+      // - vlmStatus == succeeded / failed_permanent
+      // - 或 vlmStatus == failed 但已经达到最大重试次数（vlmAttempts >= maxAttempts）
+      // 目的：让 seed 的 completed 判定不再单纯依赖时间（windowEnd），而是依赖 VLM 进度。
+
+      const totalScreenshotCount = db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(and(gte(screenshots.ts, windowStart), lt(screenshots.ts, windowEnd)))
+        .all().length;
+
+      const completedVlmCount = db
+        .select({ id: screenshots.id })
+        .from(screenshots)
+        .where(
+          and(
+            gte(screenshots.ts, windowStart),
+            lt(screenshots.ts, windowEnd),
+            or(
+              inArray(screenshots.vlmStatus, ["succeeded", "failed_permanent"]),
+              and(
+                eq(screenshots.vlmStatus, "failed"),
+                gte(screenshots.vlmAttempts, retryConfig.maxAttempts)
+              )
+            )
+          )
+        )
+        .all().length;
+
+      // 允许在 VLM 有“足够进展”时就 seed window。
+      // 这样 timeline 上能尽早出现该 window，并在 summary 生成逻辑里显示为 "Processing"，
+      // 而不是因为等待“100% VLM 完成”导致 window 长时间不出现（或卡住）。
+      const minCompletionRatio = 0.3;
+      const completionRatio =
+        totalScreenshotCount > 0 ? completedVlmCount / totalScreenshotCount : 0;
+      if (completionRatio < minCompletionRatio) {
+        continue;
+      }
+
       const idempotencyKey = `win_${windowStart}_${windowEnd}`;
-      const nextRunAt = windowEnd + safetyLagMs;
+      const nextRunAt = windowEnd;
 
       const res = db
         .insert(activitySummaries)
@@ -549,7 +608,7 @@ export class ActivityTimelineScheduler {
         )
       )
       .orderBy(asc(activityEvents.updatedAt))
-      .limit(3) // Process up to 3 at a time
+      .limit(2) // Process up to 2 at a time
       .all();
 
     await Promise.allSettled(pendingRows.map((row) => this.processEventDetailsRecord(row)));
@@ -621,10 +680,10 @@ export class ActivityTimelineScheduler {
   }
 
   /**
-   * Calculate next run time - fixed 5 minute delay
+   * Calculate next run time - fixed 2 minute delay
    */
   private calculateNextRun(): number {
-    return Date.now() + 5 * 60 * 1000; // 5 minutes
+    return Date.now() + 2 * 60 * 1000; // 2 minutes
   }
 }
 

@@ -61,12 +61,12 @@ function truncateTo(maxLen: number) {
  * Schema for derived items (knowledge, state, procedure, plan)
  */
 const DerivedItemSchema = z.object({
-  /** Title of the derived item (≤100 chars) */
-  title: z.string(),
+  /** Title of the derived item (≤200 chars) */
+  title: z.string().max(200),
   /** Summary of the derived item (≤500 chars) */
-  summary: z.string(),
+  summary: z.string().max(500),
   /** Steps for procedures (optional) */
-  steps: z.array(z.string()).optional(),
+  steps: z.array(z.string().max(80)).optional(),
   /** Object being tracked for state snapshots (optional) */
   object: z.string().optional(),
 });
@@ -74,7 +74,7 @@ const DerivedItemSchema = z.object({
 const DerivedItemProcessedSchema = DerivedItemSchema.transform((val) => {
   const result: z.infer<typeof DerivedItemSchema> = {
     ...val,
-    title: truncateTo(100)(val.title),
+    title: truncateTo(200)(val.title),
     summary: truncateTo(500)(val.summary),
   };
   if (val.steps) {
@@ -89,10 +89,10 @@ export type DerivedItem = z.infer<typeof DerivedItemSchema>;
  * Schema for VLM segment event
  */
 const VLMEventSchema = z.object({
-  /** Event title (≤100 chars) */
-  title: z.string(),
+  /** Event title (≤200 chars) */
+  title: z.string().max(200),
   /** Event summary (≤500 chars) */
-  summary: z.string(),
+  summary: z.string().max(500),
   /** Confidence score (0-10) */
   confidence: z.number(),
   /** Importance score (0-10) */
@@ -101,7 +101,7 @@ const VLMEventSchema = z.object({
 
 const VLMEventProcessedSchema = VLMEventSchema.transform((val) => ({
   ...val,
-  title: truncateTo(100)(val.title),
+  title: truncateTo(200)(val.title),
   summary: truncateTo(500)(val.summary),
   confidence: Math.max(0, Math.min(10, val.confidence)),
   importance: Math.max(0, Math.min(10, val.importance)),
@@ -372,6 +372,7 @@ export type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultProcessedSchem
 const ActivityEventCandidateSchema = z.object({
   title: z.string().max(100),
   kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding"]),
+  // LLM-provided minute offsets relative to the current windowStart (0..windowDurationMinutes)
   start_offset_min: z.number().min(0).max(20),
   end_offset_min: z.number().min(0).max(20),
   confidence: z.number().min(0).max(10),

@@ -38,7 +38,7 @@ import { CapturePreferencesService } from "../capture-preferences-service";
 import type { CapturePreferences } from "@shared/capture-source-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenshotProcessingModule } from "../screenshot-processing/screenshot-processing-module";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
+import { aiRuntimeService } from "../ai-runtime-service";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
@@ -79,7 +79,7 @@ class ScreenCaptureModule {
     this.scheduler.on("scheduler:state", this.onSchedulerStateChanged);
 
     // Register callbacks for circuit breaker to avoid circular dependency
-    aiFailureCircuitBreaker.registerCaptureControlCallbacks({
+    aiRuntimeService.registerCaptureControlCallbacks({
       stop: () => this.stop(),
       start: async () => {
         const prepared = await this.isCapturePrepared();
@@ -284,7 +284,7 @@ class ScreenCaptureModule {
     this.initializeProcessingPipeline();
 
     // Reset circuit breaker when starting capture
-    aiFailureCircuitBreaker.reset();
+    aiRuntimeService.resetBreaker();
 
     this.logger.info("Starting scheduler");
     this.scheduler.start();

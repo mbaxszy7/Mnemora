@@ -17,7 +17,7 @@ import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { contextGraphService, type CreateNodeInput } from "./context-graph-service";
 import { entityService } from "./entity-service";
-import { llmUsageService } from "../usage/llm-usage-service";
+import { llmUsageService } from "../llm-usage-service";
 import { promptTemplates } from "./prompt-templates";
 import {
   TextLLMExpandResultSchema,
@@ -40,11 +40,9 @@ import type {
   ContextKind,
   EvidencePack as EvidencePackType,
 } from "./types";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
-import { aiSemaphore } from "./ai-semaphore";
 import { aiConcurrencyConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
-import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { aiRuntimeService } from "../ai-runtime-service";
 
 const logger = getLogger("text-llm-processor");
 
@@ -159,7 +157,7 @@ export class TextLLMProcessor {
         );
 
         // Record failure for circuit breaker
-        aiFailureCircuitBreaker.recordFailure("text", error);
+        aiRuntimeService.recordFailure("text", error);
 
         pendingNodes = this.convertSegmentsToPendingNodes(vlmIndex, batch, evidencePacks);
       }
@@ -922,7 +920,7 @@ export class TextLLMProcessor {
     const modelName = aiService.getTextModelName();
 
     // Acquire global text semaphore
-    const release = await aiSemaphore.text.acquire();
+    const release = await aiRuntimeService.acquire("text");
 
     // Setup timeout with AbortController
     const controller = new AbortController();
@@ -967,7 +965,7 @@ export class TextLLMProcessor {
         responsePreview: JSON.stringify(result, null, 2),
       });
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       return result as TextLLMExpandResult;
     } catch (err) {
@@ -992,7 +990,7 @@ export class TextLLMProcessor {
         "Text LLM expansion generateObject call failed"
       );
 
-      aiConcurrencyTuner.recordFailure("text", err);
+      aiRuntimeService.recordFailure("text", err);
       throw err;
     } finally {
       clearTimeout(timeoutId);
@@ -1039,7 +1037,7 @@ export class TextLLMProcessor {
     const modelName = aiService.getTextModelName();
 
     // Acquire global text semaphore
-    const release = await aiSemaphore.text.acquire();
+    const release = await aiRuntimeService.acquire("text");
 
     // Setup timeout with AbortController
     const controller = new AbortController();
@@ -1092,7 +1090,7 @@ export class TextLLMProcessor {
         responsePreview: JSON.stringify(result, null, 2),
       });
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       return result as TextLLMMergeResult;
     } catch (err) {
@@ -1118,7 +1116,7 @@ export class TextLLMProcessor {
         "Text LLM merge generateObject call failed"
       );
 
-      aiConcurrencyTuner.recordFailure("text", err);
+      aiRuntimeService.recordFailure("text", err);
       throw err;
     } finally {
       clearTimeout(timeoutId);

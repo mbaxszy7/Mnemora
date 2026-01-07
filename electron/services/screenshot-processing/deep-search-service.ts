@@ -10,7 +10,7 @@ import { generateObject } from "ai";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { llmUsageService } from "../usage/llm-usage-service";
+import { llmUsageService } from "../llm-usage-service";
 import { promptTemplates } from "./prompt-templates";
 import {
   SearchQueryPlanSchema,
@@ -26,10 +26,9 @@ import type {
   ScreenshotEvidence,
   ContextKind,
 } from "./types";
-import { aiSemaphore } from "./ai-semaphore";
 import { aiConcurrencyConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
-import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { aiRuntimeService } from "../ai-runtime-service";
 
 const logger = getLogger("deep-search-service");
 
@@ -121,7 +120,7 @@ export class DeepSearchService {
     const startTime = Date.now();
 
     // Acquire global text semaphore
-    const release = await aiSemaphore.text.acquire();
+    const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
@@ -203,7 +202,7 @@ export class DeepSearchService {
         responsePreview: JSON.stringify(parsed, null, 2),
       });
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       logger.debug({ durationMs, confidence: parsed.confidence }, "Query understanding completed");
 
@@ -211,7 +210,7 @@ export class DeepSearchService {
     } catch (error) {
       const durationMs = Date.now() - startTime;
 
-      aiConcurrencyTuner.recordFailure("text", error);
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
       // Record failed usage
       try {
@@ -279,7 +278,7 @@ export class DeepSearchService {
     const startTime = Date.now();
 
     // Acquire global text semaphore
-    const release = await aiSemaphore.text.acquire();
+    const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
@@ -351,7 +350,7 @@ export class DeepSearchService {
         responsePreview: JSON.stringify(parsed, null, 2),
       });
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       if (!parsed) {
         logger.warn("Answer synthesis: null result from generateObject");
@@ -364,7 +363,7 @@ export class DeepSearchService {
     } catch (error) {
       const durationMs = Date.now() - startTime;
 
-      aiConcurrencyTuner.recordFailure("text", error);
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
       // Record failed usage
       try {

@@ -31,7 +31,7 @@ import type {
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
-import { llmUsageService } from "../usage/llm-usage-service";
+import { llmUsageService } from "../llm-usage-service";
 import { generateObject } from "ai";
 import {
   ActivityWindowSummaryLLMSchema,
@@ -41,16 +41,14 @@ import {
 } from "./schemas";
 
 import { activitySummaryConfig, retryConfig, aiConcurrencyConfig } from "./config";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
-import { aiSemaphore } from "./ai-semaphore";
 import { promptTemplates } from "./prompt-templates";
-import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { aiRuntimeService } from "../ai-runtime-service";
 import { mainI18n } from "../i18n-service";
 
 const logger = getLogger("activity-monitor-service");
 
-// 20 minutes threshold for long events
-const LONG_EVENT_THRESHOLD_MS = 20 * 60 * 1000;
+// 25 minutes threshold for long events
+const LONG_EVENT_THRESHOLD_MS = 25 * 60 * 1000;
 
 const EVENT_DETAILS_EVIDENCE_MAX_NODES = 50;
 const EVENT_DETAILS_EVIDENCE_MAX_CHARS = 24000;
@@ -429,7 +427,14 @@ class ActivityMonitorService {
         })
         .from(contextNodes)
         .leftJoin(contextScreenshotLinks, eq(contextNodes.id, contextScreenshotLinks.nodeId))
-        .leftJoin(screenshots, eq(contextScreenshotLinks.screenshotId, screenshots.id))
+        .leftJoin(
+          screenshots,
+          and(
+            eq(contextScreenshotLinks.screenshotId, screenshots.id),
+            gte(screenshots.ts, windowStart),
+            lte(screenshots.ts, windowEnd)
+          )
+        )
         .where(
           and(
             gte(contextNodes.eventTime, windowStart),
@@ -567,11 +572,17 @@ class ActivityMonitorService {
           entry = { node: row.node, apps: new Set<string>(), screenshotIds: new Set<number>() };
           nodeMap.set(row.node.id, entry);
         }
-        if (row.screenshot?.appHint) {
-          entry.apps.add(row.screenshot.appHint);
-        }
-        if (row.screenshot?.id) {
-          entry.screenshotIds.add(row.screenshot.id);
+
+        // BUG FIX: Only associate screenshots that actually belong to this window's timeframe.
+        // This prevents screenshots taken while reviewing the summary (later) from being
+        // pulled back into the summary statistics and evidence collection.
+        if (row.screenshot && row.screenshot.ts <= windowEnd && row.screenshot.ts >= windowStart) {
+          if (row.screenshot.appHint) {
+            entry.apps.add(row.screenshot.appHint);
+          }
+          if (row.screenshot.id) {
+            entry.screenshotIds.add(row.screenshot.id);
+          }
         }
       }
 
@@ -660,34 +671,32 @@ class ActivityMonitorService {
       );
 
       // Use semaphore for concurrency control and AbortController for timeout
-      const releaseText = await aiSemaphore.text.acquire();
+      const releaseText = await aiRuntimeService.acquire("text");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
-        try {
-          llmResult = await generateObject({
-            model: aiService.getTextClient(),
-            system: promptTemplates.getActivitySummarySystemPrompt(),
-            schema: ActivityWindowSummaryLLMSchema,
-            prompt: promptTemplates.getActivitySummaryUserPrompt({
-              userPromptJson: userPrompt,
-              windowStart,
-              windowEnd,
-            }),
-            abortSignal: controller.signal,
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
+        llmResult = await generateObject({
+          model: aiService.getTextClient(),
+          system: promptTemplates.getActivitySummarySystemPrompt(),
+          schema: ActivityWindowSummaryLLMSchema,
+          prompt: promptTemplates.getActivitySummaryUserPrompt({
+            userPromptJson: userPrompt,
+            windowStart,
+            windowEnd,
+          }),
+          abortSignal: controller.signal,
+        });
       } finally {
+        clearTimeout(timeoutId);
         releaseText();
       }
 
       const { object: rawData, usage } = llmResult;
       const data = ActivityWindowSummaryLLMProcessedSchema.parse(rawData);
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       // Log usage
       llmUsageService.logEvent({
@@ -823,9 +832,7 @@ class ActivityMonitorService {
       });
 
       // Record failure for circuit breaker
-      aiFailureCircuitBreaker.recordFailure("text", error);
-
-      aiConcurrencyTuner.recordFailure("text", error);
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
       await db
         .update(activitySummaries)
@@ -971,28 +978,26 @@ class ActivityMonitorService {
 
       // Use semaphore for concurrency control and AbortController for timeout
       const aiStart = Date.now();
-      const releaseText = await aiSemaphore.text.acquire();
+      const releaseText = await aiRuntimeService.acquire("text");
       const semaphoreWaitDuration = Date.now() - aiStart;
       logger.debug({ eventId, waitMs: semaphoreWaitDuration }, "Event details semaphore acquired");
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
-        try {
-          llmResult = await generateObject({
-            model: aiService.getTextClient(),
-            system: promptTemplates.getEventDetailsSystemPrompt(),
-            schema: ActivityEventDetailsLLMSchema,
-            prompt: promptTemplates.getEventDetailsUserPrompt({
-              userPromptJson: userPrompt,
-            }),
-            abortSignal: controller.signal,
-          });
-        } finally {
-          clearTimeout(timeoutId);
-        }
+        llmResult = await generateObject({
+          model: aiService.getTextClient(),
+          system: promptTemplates.getEventDetailsSystemPrompt(),
+          schema: ActivityEventDetailsLLMSchema,
+          prompt: promptTemplates.getEventDetailsUserPrompt({
+            userPromptJson: userPrompt,
+          }),
+          abortSignal: controller.signal,
+        });
       } finally {
+        clearTimeout(timeoutId);
         releaseText();
       }
 
@@ -1002,7 +1007,7 @@ class ActivityMonitorService {
       const { object: rawData, usage } = llmResult;
       const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
 
-      aiConcurrencyTuner.recordSuccess("text");
+      aiRuntimeService.recordSuccess("text");
 
       // Log usage
       llmUsageService.logEvent({
@@ -1056,9 +1061,7 @@ class ActivityMonitorService {
       });
 
       // Record failure for circuit breaker
-      aiFailureCircuitBreaker.recordFailure("text", error);
-
-      aiConcurrencyTuner.recordFailure("text", error);
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
       await db
         .update(activityEvents)

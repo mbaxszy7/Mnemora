@@ -97,17 +97,11 @@ export const phashConfig: PHashConfig = {
  * overwhelming the provider with too many concurrent requests.
  */
 interface AIConcurrencyConfig {
-  /** Maximum concurrent VLM API calls (default: 2) */
   vlmGlobalConcurrency: number;
-  /** Maximum concurrent Text LLM API calls (default: 3) */
   textGlobalConcurrency: number;
-  /** Maximum concurrent Embedding API calls (default: 5) */
   embeddingGlobalConcurrency: number;
-  /** VLM request timeout in milliseconds (default: 120000 = 2min) */
   vlmTimeoutMs: number;
-  /** Text LLM request timeout in milliseconds (default: 120000 = 2min) */
   textTimeoutMs: number;
-  /** Embedding request timeout in milliseconds (default: 30000 = 30s) */
   embeddingTimeoutMs: number;
 
   adaptiveEnabled: boolean;

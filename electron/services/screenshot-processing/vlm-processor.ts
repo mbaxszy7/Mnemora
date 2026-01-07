@@ -30,11 +30,9 @@ import {
   type VLMScreenshotMeta,
 } from "./schemas";
 import type { Shard, HistoryPack, Batch, ScreenshotWithData } from "./types";
-import { llmUsageService } from "../usage/llm-usage-service";
-import { aiSemaphore } from "./ai-semaphore";
-import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
+import { llmUsageService } from "../llm-usage-service";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiRuntimeService } from "../ai-runtime-service";
 
 const logger = getLogger("vlm-processor");
 
@@ -167,7 +165,7 @@ class VLMProcessor {
     );
 
     // Acquire global VLM semaphore
-    const release = await aiSemaphore.vlm.acquire();
+    const release = await aiRuntimeService.acquire("vlm");
 
     const runAttempt = async (degraded: boolean) => {
       const attemptStart = Date.now();
@@ -275,7 +273,7 @@ class VLMProcessor {
   }): VLMIndexResult {
     const { shard, result, timings, usage, processStartTime, aiService } = args;
 
-    aiConcurrencyTuner.recordSuccess("vlm");
+    aiRuntimeService.recordSuccess("vlm");
 
     logger.debug(
       {
@@ -337,7 +335,7 @@ class VLMProcessor {
     const { shard, timings, processStartTime, aiService, error } = args;
     const totalMs = Date.now() - processStartTime;
 
-    aiConcurrencyTuner.recordFailure("vlm", error);
+    aiRuntimeService.recordFailure("vlm", error);
 
     // Log failure usage (unknown tokens)
     llmUsageService.logEvent({
@@ -389,7 +387,7 @@ class VLMProcessor {
     }
 
     // Record failure for circuit breaker
-    aiFailureCircuitBreaker.recordFailure("vlm", error);
+    // (Included in aiRuntimeService.recordFailure)
   }
 
   /**
@@ -665,7 +663,7 @@ ${historyPack.recentEntities.length > 0 ? historyPack.recentEntities.join(", ") 
     let nextIndex = 0;
 
     // Use global VLM concurrency limit from AI Semaphore config
-    const workerCount = Math.max(1, Math.min(aiSemaphore.getLimit("vlm"), shards.length));
+    const workerCount = Math.max(1, Math.min(aiRuntimeService.getLimit("vlm"), shards.length));
     const workers = Array.from({ length: workerCount }, async () => {
       while (true) {
         const current = nextIndex;

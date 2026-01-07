@@ -4,7 +4,7 @@ import { getDb } from "../../database";
 import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
 import { contextGraphService } from "./context-graph-service";
 import { textLLMProcessor } from "./text-llm-processor";
-import { retryConfig } from "./config";
+import { reconcileConfig, retryConfig } from "./config";
 import type { ContextNodeRecord } from "../../database/schema";
 
 // Mock dependencies
@@ -171,7 +171,9 @@ describe("ReconcileLoop", () => {
 
       await (reconcileLoop as unknown as { run: () => Promise<void> }).run();
 
-      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === 2 * 60 * 1000)).toBe(true);
+      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === reconcileConfig.scanIntervalMs)).toBe(
+        true
+      );
 
       setTimeoutSpy.mockRestore();
     });

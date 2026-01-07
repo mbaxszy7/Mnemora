@@ -9,7 +9,7 @@ import { LLMConfig, LLMConfigCheckResult, LLMValidationResult } from "@shared/ll
 import { IPCHandlerRegistry } from "./handler-registry";
 import { LLMConfigService } from "../services/llm-config-service";
 import { getLogger } from "../services/logger";
-import { aiFailureCircuitBreaker } from "../services/ai-failure-circuit-breaker";
+import { aiRuntimeService } from "../services/ai-runtime-service";
 
 const logger = getLogger("llm-config-handlers");
 
@@ -44,7 +44,7 @@ export function registerLLMConfigHandlers(): void {
     async (_event: Electron.IpcMainInvokeEvent, config: LLMConfig): Promise<void> => {
       logger.debug({ mode: config.mode }, "Handling LLM_CONFIG_SAVE");
       await configService.saveConfiguration(config);
-      await aiFailureCircuitBreaker.handleConfigSaved(config);
+      await aiRuntimeService.handleConfigSaved(config);
       return void 0;
     }
   );

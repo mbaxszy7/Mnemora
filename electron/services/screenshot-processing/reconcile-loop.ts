@@ -4,7 +4,7 @@ import { batches, contextNodes, screenshots, vectorDocuments } from "../../datab
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
-import { aiSemaphore } from "./ai-semaphore";
+import { aiRuntimeService } from "../ai-runtime-service";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
 import { vectorDocumentService } from "./vector-document-service";
@@ -72,17 +72,17 @@ export class ReconcileLoop {
   private getBatchWorkerLimit(): number {
     // Batch processing ultimately consumes VLM permits. Keep a small pool so we don't
     // spawn too many batch-level orchestrations that will just contend on the same semaphore.
-    const vlmLimit = aiSemaphore.getLimit("vlm");
+    const vlmLimit = aiRuntimeService.getLimit("vlm");
     return this.clampInt(Math.ceil(vlmLimit / 2), 1, 4);
   }
 
   private getMergeWorkerLimit(): number {
-    const textLimit = aiSemaphore.getLimit("text");
+    const textLimit = aiRuntimeService.getLimit("text");
     return this.clampInt(textLimit, 1, 10);
   }
 
   private getEmbeddingWorkerLimit(): number {
-    const embeddingLimit = aiSemaphore.getLimit("embedding");
+    const embeddingLimit = aiRuntimeService.getLimit("embedding");
     return this.clampInt(embeddingLimit, 1, 10);
   }
 

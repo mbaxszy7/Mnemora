@@ -1,12 +1,10 @@
 import { embed } from "ai";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
-import { llmUsageService } from "../usage/llm-usage-service";
-import { aiFailureCircuitBreaker } from "../ai-failure-circuit-breaker";
-import { aiSemaphore } from "./ai-semaphore";
+import { llmUsageService } from "../llm-usage-service";
 import { aiConcurrencyConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
-import { aiConcurrencyTuner } from "./ai-concurrency-tuner";
+import { aiRuntimeService } from "../ai-runtime-service";
 
 const logger = getLogger("embedding-service");
 
@@ -20,7 +18,7 @@ export class EmbeddingService {
     const modelName = AISDKService.getInstance().getEmbeddingModelName();
 
     // Acquire global embedding semaphore
-    const release = await aiSemaphore.embedding.acquire();
+    const release = await aiRuntimeService.acquire("embedding");
 
     // Setup timeout with AbortController (combine with external signal if provided)
     const controller = new AbortController();
@@ -64,7 +62,7 @@ export class EmbeddingService {
         responsePreview: `Embedding generated: ${result.embedding.length} dimensions`,
       });
 
-      aiConcurrencyTuner.recordSuccess("embedding");
+      aiRuntimeService.recordSuccess("embedding");
 
       return new Float32Array(result.embedding);
     } catch (error) {
@@ -87,10 +85,7 @@ export class EmbeddingService {
         errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
 
-      // Record failure for circuit breaker
-      aiFailureCircuitBreaker.recordFailure("embedding", error);
-
-      aiConcurrencyTuner.recordFailure("embedding", error);
+      aiRuntimeService.recordFailure("embedding", error);
 
       throw error;
     } finally {

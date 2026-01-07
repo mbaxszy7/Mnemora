@@ -1,5 +1,5 @@
 import { IPC_CHANNELS, type UsageTimeRangePayload } from "../../shared/ipc-types";
-import { llmUsageService } from "../services/usage/llm-usage-service";
+import { llmUsageService } from "../services/llm-usage-service";
 import { getLogger } from "../services/logger";
 import { IPCHandlerRegistry } from "./handler-registry";
 

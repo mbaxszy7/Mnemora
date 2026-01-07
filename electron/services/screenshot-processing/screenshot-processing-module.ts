@@ -5,8 +5,6 @@ import type {
   SchedulerEventPayload,
 } from "../screen-capture/types";
 
-import "./ai-concurrency-tuner";
-
 import type { CapturePreferencesService } from "../capture-preferences-service";
 import { getLogger } from "../logger";
 import { and, eq, isNotNull, lte } from "drizzle-orm";

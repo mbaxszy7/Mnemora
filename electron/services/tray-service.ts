@@ -3,7 +3,7 @@ import path from "node:path";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
 import { APP_ROOT, RENDERER_DIST, VITE_DEV_SERVER_URL } from "../env";
-import { llmUsageService } from "./usage/llm-usage-service";
+import { llmUsageService } from "./llm-usage-service";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenCaptureModule } from "./screen-capture/screen-capture-module";
 

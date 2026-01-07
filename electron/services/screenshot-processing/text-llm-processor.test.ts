@@ -52,8 +52,8 @@ vi.mock("ai", () => ({
   generateObject: vi.fn(),
 }));
 
-vi.mock("../ai-failure-circuit-breaker", () => ({
-  aiFailureCircuitBreaker: {
+vi.mock("../ai-runtime-service", () => ({
+  aiRuntimeService: {
     recordFailure: vi.fn(),
     isTripped: vi.fn(() => false),
   },

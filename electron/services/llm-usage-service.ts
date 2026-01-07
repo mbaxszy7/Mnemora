@@ -1,9 +1,9 @@
 import crypto from "node:crypto";
 import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
-import { getDb } from "../../database";
-import { llmUsageEvents, type NewLLMUsageEventRecord } from "../../database/schema";
-import { getLogger } from "../logger";
-import { llmConfigService } from "../llm-config-service";
+import { getDb } from "../database";
+import { llmUsageEvents, type NewLLMUsageEventRecord } from "../database/schema";
+import { getLogger } from "./logger";
+import { llmConfigService } from "./llm-config-service";
 import type { LLMConfig } from "@shared/llm-config-types";
 
 const logger = getLogger("llm-usage-service");

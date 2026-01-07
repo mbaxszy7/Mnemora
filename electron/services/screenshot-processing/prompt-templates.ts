@@ -1,5 +1,6 @@
 import { mainI18n } from "../i18n-service";
 import type { HistoryPack } from "./types";
+import type { VLMScreenshotMeta } from "./schemas";
 
 export interface GlobalSummary {
   resultTimeSpan: [number, number];
@@ -9,7 +10,7 @@ export interface GlobalSummary {
 }
 
 export interface VLMUserPromptArgs {
-  screenshotMeta: { length: number }[];
+  screenshotMeta: VLMScreenshotMeta[];
   historyPack: HistoryPack;
   localTime: string;
   timeZone: string;

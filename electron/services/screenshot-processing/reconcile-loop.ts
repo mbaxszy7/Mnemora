@@ -36,9 +36,24 @@ function getCanonicalAppCandidates(): string[] {
 }
 
 /**
- * ReconcileLoop orchestrates background tasks like node merging and embedding generation.
- * It ensures the system eventually reaches a consistent state by retrying failed operations
- * and recovering from crashes using SQLite status fields.
+ * `ReconcileLoop` 是截图处理管线的后台“对账/修复”调度器。
+ *
+ * 核心目标：
+ * - 把数据库里标记为 `pending` / `failed` 的工作推进到最终一致（`succeeded` 或 `failed_permanent`）。
+ * - 通过 `status/attempts/nextRunAt/updatedAt` 等字段实现“可恢复的任务队列”：
+ *   - **认领**：用 `UPDATE ... WHERE status IN (...)` 原子方式把任务置为 `running`。
+ *   - **重试/退避**：失败后写入 `nextRunAt`，并按指数退避 + 随机抖动再次调度。
+ *   - **崩溃恢复**：若 `running` 持续超过阈值，则回滚为 `pending` 重新跑。
+ *
+ * 本文件管理的任务类型（同一轮 `run()` 内按类型并发推进）：
+ * - **batches**：批量运行 VLM（视觉模型）+ 落库截图证据；随后触发后续节点/向量文档的同步。
+ * - **context_nodes.merge**：同线程/同 kind 的节点合并（文本语言模型）。
+ * - **vector_documents.embedding**：为节点生成向量表示（embedding）并落库。
+ * - **vector_documents.index**：把向量表示（embedding）写入本地向量索引（HNSW），并请求刷新/落盘。
+ *
+ * 调度方式：
+ * - `wake()`：外部触发“立刻跑一轮”，内部用“去抖”避免重复排队。
+ * - `schedule()`：空闲时按 `computeNextRunAt()`（或固定间隔）设置 `setTimeout`。
  */
 export class ReconcileLoop {
   private timer: NodeJS.Timeout | null = null;
@@ -47,6 +62,12 @@ export class ReconcileLoop {
   private wakeScheduled = false;
   private wakeRequested = false;
 
+  // `timer`：下一轮调度的 `setTimeout` 句柄
+  // `isRunning`：循环是否已 `start()` 且未 `stop()`
+  // `isProcessing`：当前是否正在执行一轮 `run()`（用于防止重入）
+  // `wakeScheduled`：是否已经排队了一个 `setImmediate(() => run())`
+  // `wakeRequested`：当 `isProcessing=true` 时收到 `wake()`，置为 true；本轮结束后立刻再跑一轮
+
   private clampInt(value: number, min: number, max: number): number {
     const v = Math.floor(value);
     if (!Number.isFinite(v)) return min;
@@ -54,9 +75,13 @@ export class ReconcileLoop {
   }
 
   /**
-   * Internal scan limit for DB queries.
-   * Derived from current concurrency so we fetch enough work to keep workers busy,
-   * but never fetch unbounded rows.
+   * 每轮扫描数据库时的“拉取上限”。
+   *
+   * 设计目的：
+   * - 拉得太少会导致并发执行单元空转、需要频繁重复扫描。
+   * - 拉得太多会导致一次扫描读出大量无用行、加剧锁竞争。
+   *
+   * 这里用当前各类并发执行单元的并发上限推导一个合理的扫描上限，并再做范围限制。
    */
   private getScanLimit(): number {
     const batchWorkers = this.getBatchWorkerLimit();
@@ -64,14 +89,14 @@ export class ReconcileLoop {
     const embeddingWorkers = this.getEmbeddingWorkerLimit();
     const indexWorkers = this.getIndexWorkerLimit();
 
-    // Fetch a few multiples of worker count to reduce re-scans while tasks are claimed.
+    // 取并发执行单元数的若干倍：在任务被“认领走”的期间减少重复扫描。
     const derived = (batchWorkers + mergeWorkers + embeddingWorkers + indexWorkers) * 4;
     return this.clampInt(derived, 20, 200);
   }
 
   private getBatchWorkerLimit(): number {
-    // Batch processing ultimately consumes VLM permits. Keep a small pool so we don't
-    // spawn too many batch-level orchestrations that will just contend on the same semaphore.
+    // 批处理任务的核心瓶颈是 VLM 的并发许可。
+    // 这里故意把批处理任务的并发执行单元控制得更小，避免创建过多“调度任务”却都卡在同一个 VLM 信号量上。
     const vlmLimit = aiRuntimeService.getLimit("vlm");
     return this.clampInt(Math.ceil(vlmLimit / 2), 1, 4);
   }
@@ -87,12 +112,16 @@ export class ReconcileLoop {
   }
 
   private getIndexWorkerLimit(): number {
-    // Indexing is local CPU/IO bound; cap to a reasonable upper limit.
+    // 向量索引写入/更新主要受本地 CPU/IO 影响；这里给一个固定上限即可。
     return 10;
   }
 
   /**
-   * Start the reconcile loop
+   * 启动调度循环。
+   *
+   * 启动后不会“常驻忙等”，而是：
+   * - 先 `wake()` 立即跑一轮；
+   * - 每轮结束后根据 `computeNextRunAt()` 计算下一次 `setTimeout`。
    */
   start(): void {
     if (!reconcileConfig.enabled) {
@@ -357,7 +386,9 @@ export class ReconcileLoop {
   }
 
   /**
-   * Stop the reconcile loop
+   * 停止调度循环。
+   *
+   * 注意：如果此前已经排队了 `setImmediate(run)`，`run()` 开头会再次检查 `isRunning` 并直接退出。
    */
   stop(): void {
     this.isRunning = false;
@@ -368,21 +399,26 @@ export class ReconcileLoop {
   }
 
   /**
-   * Wake the reconcile loop to trigger an immediate run.
-   * Uses debouncing to avoid queuing many setImmediate calls.
+   * 请求“立刻跑一轮”。
+   *
+   * 这里使用“去抖”：
+   * - 同一时刻只允许排队一个 `setImmediate(run)`（由 `wakeScheduled` 控制）。
+   * - 如果当前正在 `run()` 中（`isProcessing=true`），则只设置 `wakeRequested=true`，
+   *   等本轮 `finally` 里再次 `wake()`。
    */
   wake(): void {
     if (!this.isRunning) return;
 
     this.clearTimer();
 
-    // If we're already processing, just remember to run again after this cycle.
+    // 如果正在执行一轮 run()，则记一个“需要再跑一轮”的标记，避免重入。
     if (this.isProcessing) {
       this.wakeRequested = true;
       return;
     }
 
-    if (this.wakeScheduled) return; // Already scheduled, skip
+    // 已经排队了一个 setImmediate，则不重复排队。
+    if (this.wakeScheduled) return;
     this.wakeScheduled = true;
     setImmediate(() => {
       void this.run();
@@ -390,10 +426,18 @@ export class ReconcileLoop {
   }
 
   /**
-   * Main execution cycle
+   * 主执行周期（一次“调度轮次”）。
+   *
+   * 一轮的结构固定为：
+   * 1) `recoverStaleStates()`：把长时间 `running` 的任务回滚到 `pending`，保证可恢复。
+   * 2) `scanPendingRecords()`：扫描可执行的 pending/failed 任务（考虑 `nextRunAt`）。
+   * 3) 并发推进：
+   *    - 批处理任务（VLM）与其他任务（合并/向量生成/索引）并行执行，避免互相阻塞。
+   * 4) `enqueueOrphanScreenshots()`：把“遗漏入批”的截图补入批处理，保证最终不掉队。
+   * 5) 结束时决定下一次调度：若 `wakeRequested=true` 则立刻再跑，否则按 `computeNextRunAt()` 休眠。
    */
   private async run(): Promise<void> {
-    // Check if loop was stopped (e.g., after stop() but before queued setImmediate runs)
+    // 防止 stop() 后仍有排队的 setImmediate 进来。
     if (!this.isRunning) {
       this.wakeScheduled = false;
       this.wakeRequested = false;
@@ -401,27 +445,29 @@ export class ReconcileLoop {
     }
     if (this.isProcessing) return;
     this.isProcessing = true;
-    this.wakeScheduled = false; // Clear wake flag at start of run
+    // 本轮开始时清掉 wakeScheduled 标记：表示“已排队的立即执行请求”已被本轮消费。
+    this.wakeScheduled = false;
 
     try {
-      // 1. Recover stale 'running' states
+      // 1) 崩溃/卡死恢复：把长时间处于 `running` 的任务回滚成 `pending`
       await this.recoverStaleStates();
 
       const records = await this.scanPendingRecords();
 
-      // Separate batch records from other records
+      // 批处理（VLM）与其他任务分开：VLM 可能慢，不能让向量生成/索引等被“饿死”。
       const batchRecords = records.filter((r) => r.table === "batches");
       const otherRecords = records.filter((r) => r.table !== "batches");
 
-      // Process batches AND other records in parallel
-      // This ensures embedding/indexing tasks are not blocked by slow VLM processing
+      // 两条流水线并行：
+      // - batchPromise：批处理（含 VLM + 落库）
+      // - otherPromise：节点合并/向量生成/索引 等不依赖 VLM 并发许可的任务
       const batchPromise =
         batchRecords.length > 0 ? this.processBatchesConcurrently(batchRecords) : Promise.resolve();
 
-      // Process other records in parallel (each type can run concurrently)
+      // otherRecords 内部按类型（合并 / 向量生成 / 索引）继续并行。
       const otherPromise = this.processOtherRecordsConcurrently(otherRecords);
 
-      // Wait for both to complete
+      // 等两条流水线都结束，再做补扫。
       await Promise.all([batchPromise, otherPromise]);
 
       await this.enqueueOrphanScreenshots();
@@ -465,8 +511,12 @@ export class ReconcileLoop {
   }
 
   /**
-   * Process batch records concurrently with limited concurrency
-   * Uses Promise.allSettled to ensure one failure doesn't block others
+   * 并发处理批处理任务（有并发上限）。
+   *
+   * 设计点：
+   * - 并发上限来自 `getBatchWorkerLimit()`（与 VLM 并发许可相关）。
+   * - 使用 `Promise.allSettled()`：单个批处理失败不会阻塞同一轮里其他批处理的推进。
+   * - 外层按“分块”分批执行：避免一次性把所有批处理都扔进 promise 池造成瞬时峰值。
    */
   private async processBatchesConcurrently(records: PendingRecord[]): Promise<void> {
     const concurrency = this.getBatchWorkerLimit();
@@ -476,7 +526,7 @@ export class ReconcileLoop {
       "Starting concurrent batch processing"
     );
 
-    // Process in chunks of 'concurrency' size
+    // 按并发上限分块处理：每个 `chunk` 内并行，`chunk` 与 `chunk` 之间串行。
     for (let i = 0; i < records.length; i += concurrency) {
       const chunk = records.slice(i, i + concurrency);
       const chunkIndex = Math.floor(i / concurrency) + 1;
@@ -488,7 +538,7 @@ export class ReconcileLoop {
         chunk.map((record) => this.processBatchRecord(record))
       );
 
-      // Log results
+      // 汇总本分块的执行结果（不影响后续分块）。
       const succeeded = results.filter((r) => r.status === "fulfilled").length;
       const failed = results.filter((r) => r.status === "rejected").length;
 
@@ -499,13 +549,15 @@ export class ReconcileLoop {
   }
 
   /**
-   * Process non-batch records concurrently by type
-   * Groups records by table/subtask and processes each group in parallel
+   * 并发处理非批处理类任务。
+   *
+   * 做法：先按任务类型分组，再让每个组以自己的并发上限独立推进。
+   * 这样可以避免某一类任务“挤占”另一类任务的执行机会。
    */
   private async processOtherRecordsConcurrently(records: PendingRecord[]): Promise<void> {
     if (records.length === 0) return;
 
-    // Group records by type for parallel processing
+    // 按任务类型分组。
     const mergeRecords = records.filter((r) => r.table === "context_nodes");
     const embeddingRecords = records.filter(
       (r) => r.table === "vector_documents" && r.subtask === "embedding"
@@ -522,7 +574,7 @@ export class ReconcileLoop {
       "Processing other records concurrently"
     );
 
-    // Process all types in parallel
+    // 三类任务并行推进；内部各自有并发控制。
     await Promise.allSettled([
       this.processRecordsWithConcurrency(mergeRecords, this.getMergeWorkerLimit(), "merge"),
       this.processRecordsWithConcurrency(
@@ -535,7 +587,11 @@ export class ReconcileLoop {
   }
 
   /**
-   * Process a group of records sequentially
+   * 以“固定并发执行单元数 + 共享游标”的方式推进同一组任务。
+   *
+   * 这里不是严格意义的队列：
+   * - 每个并发执行单元从 `records[nextIndex]` 取一个任务执行；
+   * - 单个任务真正的互斥/去重依赖数据库的“认领”（UPDATE ... WHERE status...）。
    */
   private async processRecordsWithConcurrency(
     records: PendingRecord[],
@@ -569,7 +625,10 @@ export class ReconcileLoop {
   }
 
   /**
-   * Resets records stuck in 'running' state for too long back to 'pending'
+   * 崩溃/卡死恢复：
+   * 把超过 `staleRunningThresholdMs` 的 `running` 任务回滚到 `pending`，并清理 nextRunAt。
+   *
+   * 原因：进程崩溃或异常退出时，数据库里可能残留 `running`；不回滚就会导致任务永久卡住。
    */
   private async recoverStaleStates(): Promise<void> {
     const db = getDb();
@@ -603,7 +662,7 @@ export class ReconcileLoop {
       logger.info({ count: staleBatches.changes }, "Recovered stale states in batches");
     }
 
-    // Recover context_nodes mergeStatus
+    // 恢复 context_nodes.mergeStatus
     const staleNodes = db
       .update(contextNodes)
       .set({
@@ -619,7 +678,7 @@ export class ReconcileLoop {
       logger.info({ count: staleNodes.changes }, "Recovered stale merge states in context_nodes");
     }
 
-    // Recover context_nodes embeddingStatus
+    // 恢复 context_nodes.embeddingStatus
     const staleEmbeddingNodes = db
       .update(contextNodes)
       .set({
@@ -638,7 +697,7 @@ export class ReconcileLoop {
       );
     }
 
-    // Recover vector_documents
+    // 恢复 vector_documents 的 embedding/index 子任务
     const now = Date.now();
 
     const staleVectorEmbeddings = db
@@ -682,9 +741,8 @@ export class ReconcileLoop {
     const now = Date.now();
     const limit = this.getScanLimit();
 
-    // Note: We no longer scan screenshots directly.
-    // All screenshots are processed through batches.
-    // This avoids race conditions between screenshot-level and batch-level VLM processing.
+    // 说明：这里不再直接扫描 screenshots。
+    // 所有截图都应该经由 batches 进入 VLM 流水线，避免“截图级 VLM”与“批级 VLM”之间的竞态。
 
     const batchRows = db
       .select({
@@ -722,7 +780,7 @@ export class ReconcileLoop {
       .limit(limit)
       .all();
 
-    // Note: We separated embedding/index scanning below, so removed the generic embeddingRows query block.
+    // vector_documents 的 `embedding`/`index` 是两个独立子任务，因此分别扫描并在 PendingRecord 上标注子任务字段（`subtask`）。
 
     const batchesPending: PendingRecord[] = batchRows.map((r) => ({
       id: r.id,
@@ -742,8 +800,7 @@ export class ReconcileLoop {
 
     const embeddingsPending: PendingRecord[] = [];
 
-    // 1. Subtask: Embedding
-    // embeddingStatus in ('pending','failed')
+    // 子任务 1：向量生成（embeddingStatus in 'pending' | 'failed'）
     const embeddingTasks = db
       .select({
         id: vectorDocuments.id,
@@ -779,8 +836,7 @@ export class ReconcileLoop {
       });
     }
 
-    // 2. Subtask: Indexing
-    // indexStatus in ('pending','failed') AND embeddingStatus='succeeded'
+    // 子任务 2：向量索引（indexStatus in 'pending' | 'failed' 且 embeddingStatus='succeeded'）
     const indexTasks = db
       .select({
         id: vectorDocuments.id,
@@ -791,7 +847,8 @@ export class ReconcileLoop {
       .from(vectorDocuments)
       .where(
         and(
-          eq(vectorDocuments.embeddingStatus, "succeeded"), // prerequisite
+          // 前置条件：必须先完成 embedding 才允许进入 indexing。
+          eq(vectorDocuments.embeddingStatus, "succeeded"),
           or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
           or(isNull(vectorDocuments.indexNextRunAt), lte(vectorDocuments.indexNextRunAt, now)),
           lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
@@ -826,7 +883,7 @@ export class ReconcileLoop {
         if (record.subtask === "index") {
           await this.processVectorDocumentIndexRecord(record);
         } else {
-          // Default to embedding if undefined or explicitly "embedding"
+          // 未指定子任务字段（`subtask`）时默认当作 `embedding`。
           await this.processVectorDocumentEmbeddingRecord(record);
         }
         return;
@@ -858,7 +915,7 @@ export class ReconcileLoop {
       screenshotIds = [];
     }
 
-    // Timing metrics
+    // 仅用于日志的耗时统计（不参与调度决策）。
     let vlmMs = 0;
     let textLlmMs = 0;
 
@@ -888,7 +945,7 @@ export class ReconcileLoop {
         .run();
 
       if (claim.changes === 0) {
-        // Another worker claimed this batch
+        // claim 失败：说明被别的并发执行单元先认领了（并发竞争下的正常情况）。
         return;
       }
 
@@ -955,14 +1012,14 @@ export class ReconcileLoop {
 
       const shards: Shard[] = batchBuilder.splitIntoShards(batch);
 
-      // VLM processing with timing
+      // VLM 阶段：视觉模型对批次/分片做结构化理解。
       const vlmStartTime = Date.now();
       const index = await runVlmOnBatch(batch, shards);
       vlmMs = Date.now() - vlmStartTime;
 
       logger.debug({ batchId: batchRecord.batchId, vlmMs }, "VLM processing completed");
 
-      // Text LLM expansion with timing
+      // 文本阶段：把 VLM 结果扩展成节点/证据等，并做必要的落库。
       const textLlmStartTime = Date.now();
       await this.persistVlmEvidenceAndFinalize(index, batch);
       textLlmMs = Date.now() - textLlmStartTime;
@@ -1050,6 +1107,7 @@ export class ReconcileLoop {
       }
     }
 
+    // VLM 证据的短期保留时间：用于下游流程读取（例如 UI 展示/调试）。
     const retentionTtlMs = 1 * 60 * 60 * 1000;
     const retentionExpiresAt = Date.now() + retentionTtlMs;
     const updatedAt = Date.now();
@@ -1085,6 +1143,7 @@ export class ReconcileLoop {
       };
 
       if (existingAppHint == null) {
+        // 仅在用户侧没有显式 appHint 时，才根据 VLM 的 app_guess 做一次“保守填充”。
         const guess = shot?.app_guess;
         const confidence = typeof guess?.confidence === "number" ? guess.confidence : null;
         const rawName = typeof guess?.name === "string" ? guess.name.trim() : "";
@@ -1118,8 +1177,7 @@ export class ReconcileLoop {
     try {
       const expandResult = await expandVLMIndexToNodes(index, batch);
 
-      // Milestone 1 integration: Sync vector documents for new nodes
-      // We do this inside the batch flow so it's consistent.
+      // 将本次批处理解析出的新节点同步到 vector_documents（后续会由 embedding/index 子任务推进）。
       if (expandResult.success && expandResult.nodeIds.length > 0) {
         let upsertCount = 0;
         for (const nodeIdStr of expandResult.nodeIds) {
@@ -1198,11 +1256,11 @@ export class ReconcileLoop {
 
     if (!doc) return;
 
-    // Check if we already succeeded (race condition or redundant queue)
+    // 已经成功则直接返回：可能是并发竞态或重复入队导致的。
     if (doc.embeddingStatus === "succeeded") return;
 
     try {
-      // 1. Mark running
+      // 1) 认领：置为 `running`
       const claim = db
         .update(vectorDocuments)
         .set({ embeddingStatus: "running", updatedAt: Date.now() })
@@ -1221,18 +1279,17 @@ export class ReconcileLoop {
         return;
       }
 
-      // 2. Get text content
+      // 2) 构造要生成向量的文本（当前约定 refId 指向 contextNodes）
       if (!doc.refId) {
         throw new Error("Vector document missing refId");
       }
 
-      // We assume refId points to contextNodes based on our current usage
       const text = await vectorDocumentService.buildTextForNode(doc.refId);
 
-      // 3. Generate embedding
+      // 3) 调用向量模型（embedding）
       const vector = await embeddingService.embed(text);
 
-      // 4. Save embedding blob
+      // 4) 落库：Float32Array 向量 -> Buffer（二进制 BLOB）
       const buffer = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
 
       db.update(vectorDocuments)
@@ -1242,7 +1299,7 @@ export class ReconcileLoop {
           embeddingNextRunAt: null,
           errorMessage: null,
           errorCode: null,
-          // Trigger indexing next
+          // 向量生成成功后，触发 `index` 子任务进入 pending。
           indexStatus: "pending",
           indexAttempts: 0,
           indexNextRunAt: null,
@@ -1277,14 +1334,14 @@ export class ReconcileLoop {
 
     if (!doc) return;
 
-    // Must have embedding succeeded first
+    // 前置条件：embedding 必须先成功。
     if (doc.embeddingStatus !== "succeeded" || !doc.embedding) {
-      // Should not happen if scan logic is correct, but safety check
+      // 理论上 scanPendingRecords 已保证该条件，这里是兜底。
       return;
     }
 
     try {
-      // 1. Mark running
+      // 1) 认领：置为 `running`
       const claim = db
         .update(vectorDocuments)
         .set({ indexStatus: "running", updatedAt: Date.now() })
@@ -1303,16 +1360,15 @@ export class ReconcileLoop {
         return;
       }
 
-      // 2. Convert BLOB -> Float32Array
+      // 2) 二进制 BLOB -> Float32Array 向量
       const buffer = doc.embedding as Buffer;
       const vector = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
 
-      // 3. Upsert into HNSW index
-      // Use vector_documents.id as numerical ID for HNSW
+      // 3) 写入/更新到本地 HNSW 索引（以 vector_documents.id 作为数值 ID）
       await vectorIndexService.upsert(doc.id, vector);
       vectorIndexService.requestFlush();
 
-      // 4. Mark succeeded
+      // 4) 标记成功
       db.update(vectorDocuments)
         .set({
           indexStatus: "succeeded",
@@ -1344,10 +1400,23 @@ export class ReconcileLoop {
   }
 
   /**
-   * Logic for merging a single node into the graph
+   * 合并单个节点到上下文图谱。
+   *
+   * 调度语义：本函数由 `processContextNodeMergeRecord()` 触发，且在进入前已经 claim 了 mergeStatus。
+   *
+   * 合并策略（当前实现）：
+   * - 仅在同 `threadId` + 同 `kind` 下尝试寻找 merge 目标。
+   * - 目标选择为：同线程同 kind 且 `mergeStatus='succeeded'` 的最新节点。
+   * - 如果没有 threadId 或找不到目标，则把自身视为“无需合并”，直接标记 succeeded。
+   *
+   * 合并副作用：
+   * - 更新目标节点内容（title/summary/keywords/entities/...）。
+   * - 把来源节点关联的截图 link 到目标节点。
+   * - 标记来源节点 mergeStatus='succeeded'（表示已被吸收）。
+   * - 触发向量文档同步与（可选）实体提及同步。
    */
   private async handleSingleMerge(nodeRecord: ContextNodeRecord): Promise<void> {
-    // 1. Convert DB record to ExpandedContextNode
+    // 1) DB 记录 -> ExpandedContextNode（用于 LLM merge 输入）
     const node: ExpandedContextNode = {
       id: nodeRecord.id,
       kind: nodeRecord.kind,
@@ -1359,15 +1428,15 @@ export class ReconcileLoop {
       importance: nodeRecord.importance,
       confidence: nodeRecord.confidence,
       eventTime: nodeRecord.eventTime ?? undefined,
-      screenshotIds: [], // Will be filled below
+      // screenshotIds 会在下面从图谱关系中补齐。
+      screenshotIds: [],
       mergedFromIds: nodeRecord.mergedFromIds ? JSON.parse(nodeRecord.mergedFromIds) : [],
     };
 
-    // 2. Fetch screenshot links
+    // 2) 读取该节点关联的截图（用于后续合并后重新关联）
     node.screenshotIds = contextGraphService.getLinkedScreenshots(nodeRecord.id.toString());
 
-    // If the node has no threadId, we can't safely find a merge target.
-    // Treat it as self-contained and mark merge as succeeded.
+    // 没有 threadId 则无法在同一线程内找 merge 目标；视为自洽节点，直接成功。
     if (!node.threadId) {
       await contextGraphService.updateNode(nodeRecord.id.toString(), {
         mergeStatus: "succeeded",
@@ -1375,7 +1444,7 @@ export class ReconcileLoop {
       return;
     }
 
-    // 3. Find potential merge target (heuristic: same thread, same kind, latest succeeded node)
+    // 3) 找 merge 目标：同 threadId + 同 kind + 已 succeeded 的最新节点
     const targetRecord = getDb()
       .select()
       .from(contextNodes)
@@ -1392,14 +1461,14 @@ export class ReconcileLoop {
       .get() as ContextNodeRecord | undefined;
 
     if (!targetRecord) {
-      // No target found, just mark as succeeded (self-contained node)
+      // 没有可合并的目标：视为自洽节点，直接成功。
       await contextGraphService.updateNode(nodeRecord.id.toString(), {
         mergeStatus: "succeeded",
       });
       return;
     }
 
-    // 4. Perform merge
+    // 4) 执行 LLM 合并
     const target: ExpandedContextNode = {
       id: targetRecord.id,
       kind: targetRecord.kind,
@@ -1417,11 +1486,7 @@ export class ReconcileLoop {
 
     const mergeResult = await textLLMProcessor.executeMerge(node, target);
 
-    // 5. Update target node and mark current node as succeeded (or similar mechanism)
-    // In our design, we update the target node with merged content and mark the new node as succeeded
-    // AND we should track mergedFromIds to maintain the lineage.
-
-    // We update targetNode with mergeResult.mergedNode
+    // 5) 落库：更新目标节点内容，并维护 mergedFromIds 以保留“被合并来源”谱系。
     await contextGraphService.updateNode(targetRecord.id.toString(), {
       title: mergeResult.mergedNode.title,
       summary: mergeResult.mergedNode.summary,
@@ -1432,7 +1497,7 @@ export class ReconcileLoop {
       mergedFromIds: mergeResult.mergedFromIds,
     });
 
-    // Milestone 4 integration: Sync entity mentions for the updated target node (only if it's an event)
+    // 若目标节点是 event，则额外同步实体提及（失败不阻塞合并）。
     if (targetRecord.kind === "event") {
       try {
         await entityService.syncEventEntityMentions(
@@ -1448,17 +1513,17 @@ export class ReconcileLoop {
       }
     }
 
-    // Link new node's screenshots to target node
+    // 把来源节点的截图全部关联到目标节点。
     for (const screenshotId of node.screenshotIds) {
       await contextGraphService.linkScreenshot(targetRecord.id.toString(), screenshotId.toString());
     }
 
-    // Finally mark the current node as succeeded (it has been merged into target)
+    // 标记来源节点合并成功（表示已经被吸收进 target）。
     await contextGraphService.updateNode(nodeRecord.id.toString(), {
       mergeStatus: "succeeded",
     });
 
-    // Milestone 1 integration: Sync vector document for the updated target node
+    // 目标节点内容发生变化后，同步其向量文档（失败不阻塞合并）。
     try {
       await vectorDocumentService.upsertForContextNode(targetRecord.id);
     } catch (err) {
@@ -1472,7 +1537,11 @@ export class ReconcileLoop {
   }
 
   /**
-   * Calculates next run time with exponential backoff and jitter
+   * 计算下一次重试时间：指数退避 + 随机抖动。
+   *
+   * - `attempts` 从 1 开始。
+   * - `backoffScheduleMs` 为离散表；超过长度则使用最后一个值。
+   * - 随机抖动用于打散同一时刻大量任务同时重试造成的尖峰。
    */
   private calculateNextRun(attempts: number): number {
     const { backoffScheduleMs, jitterMs } = retryConfig;

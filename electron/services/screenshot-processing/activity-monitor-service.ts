@@ -418,35 +418,30 @@ class ActivityMonitorService {
         .where(and(gte(screenshots.ts, windowStart), lt(screenshots.ts, windowEnd)))
         .all().length;
 
-      // 1. Fetch context nodes with their linked screenshots in this window
-      // We use a left join to context_screenshot_links and screenshots to get app hints
+      // 1. Fetch screenshots in this window first, then join back to context nodes.
+      // This is more robust under node merge: merged nodes may accumulate screenshot links
+      // across windows, but we only count/attribute evidence that is backed by screenshots
+      // whose timestamps fall inside this window.
       const rows = await db
         .select({
-          node: contextNodes,
           screenshot: screenshots,
+          node: contextNodes,
         })
-        .from(contextNodes)
-        .leftJoin(contextScreenshotLinks, eq(contextNodes.id, contextScreenshotLinks.nodeId))
+        .from(screenshots)
+        .leftJoin(contextScreenshotLinks, eq(screenshots.id, contextScreenshotLinks.screenshotId))
         .leftJoin(
-          screenshots,
+          contextNodes,
           and(
-            eq(contextScreenshotLinks.screenshotId, screenshots.id),
-            gte(screenshots.ts, windowStart),
-            lte(screenshots.ts, windowEnd)
-          )
-        )
-        .where(
-          and(
-            gte(contextNodes.eventTime, windowStart),
-            lt(contextNodes.eventTime, windowEnd),
+            eq(contextScreenshotLinks.nodeId, contextNodes.id),
             ne(contextNodes.kind, "entity_profile")
           )
         )
-        .orderBy(contextNodes.eventTime);
+        .where(and(gte(screenshots.ts, windowStart), lt(screenshots.ts, windowEnd)))
+        .orderBy(screenshots.ts);
 
       const nodeIdsSet = new Set<number>();
       for (const row of rows) {
-        nodeIdsSet.add(row.node.id);
+        if (row.node) nodeIdsSet.add(row.node.id);
       }
       const nodeCount = nodeIdsSet.size;
 
@@ -564,41 +559,59 @@ class ActivityMonitorService {
       // Group nodes and count unique screenshots
       const nodeMap = new Map<
         number,
-        { node: ContextNodeRecord; apps: Set<string>; screenshotIds: Set<number> }
+        {
+          node: ContextNodeRecord;
+          apps: Set<string>;
+          screenshotIds: Set<number>;
+          minScreenshotTs: number;
+          maxScreenshotTs: number;
+        }
       >();
       for (const row of rows) {
-        let entry = nodeMap.get(row.node.id);
+        if (!row.node) continue;
+        const nodeId = row.node.id;
+        let entry = nodeMap.get(nodeId);
         if (!entry) {
-          entry = { node: row.node, apps: new Set<string>(), screenshotIds: new Set<number>() };
-          nodeMap.set(row.node.id, entry);
+          entry = {
+            node: row.node,
+            apps: new Set<string>(),
+            screenshotIds: new Set<number>(),
+            minScreenshotTs: row.screenshot.ts,
+            maxScreenshotTs: row.screenshot.ts,
+          };
+          nodeMap.set(nodeId, entry);
         }
 
-        // BUG FIX: Only associate screenshots that actually belong to this window's timeframe.
-        // This prevents screenshots taken while reviewing the summary (later) from being
-        // pulled back into the summary statistics and evidence collection.
-        if (row.screenshot && row.screenshot.ts <= windowEnd && row.screenshot.ts >= windowStart) {
+        // Only associate evidence that belongs to this window's timeframe.
+        // Even after node merges, screenshot links can span multiple windows; this check
+        // ensures our evidence and stats stay strictly within [windowStart, windowEnd).
+        if (row.screenshot.ts < windowEnd && row.screenshot.ts >= windowStart) {
+          entry.minScreenshotTs = Math.min(entry.minScreenshotTs, row.screenshot.ts);
+          entry.maxScreenshotTs = Math.max(entry.maxScreenshotTs, row.screenshot.ts);
           if (row.screenshot.appHint) {
             entry.apps.add(row.screenshot.appHint);
           }
-          if (row.screenshot.id) {
-            entry.screenshotIds.add(row.screenshot.id);
-          }
+          entry.screenshotIds.add(row.screenshot.id);
         }
       }
 
-      const nodes = Array.from(nodeMap.values());
+      const nodes = Array.from(nodeMap.values()).sort(
+        (a, b) => a.minScreenshotTs - b.minScreenshotTs
+      );
 
       // 2. Aggregate stats for the prompt
       const appCounts: Record<string, number> = {};
       const entityCounts: Record<string, number> = {};
       const threadIds = new Set<string>();
 
-      let totalScreenshotCount = 0;
+      const screenshotIdsSet = new Set<number>();
       for (const { node, apps, screenshotIds } of nodes) {
         for (const app of apps) {
           appCounts[app] = (appCounts[app] || 0) + 1;
         }
-        totalScreenshotCount += screenshotIds.size;
+        for (const sid of screenshotIds) {
+          screenshotIdsSet.add(sid);
+        }
         if (node.threadId) threadIds.add(node.threadId);
         const entities = parseJsonSafe<Array<{ name?: unknown }>>(node.entities, []);
         for (const e of entities) {
@@ -607,6 +620,8 @@ class ActivityMonitorService {
           entityCounts[name] = (entityCounts[name] || 0) + 1;
         }
       }
+
+      const totalScreenshotCount = screenshotIdsSet.size;
 
       const topApps = Object.entries(appCounts)
         .sort((a, b) => b[1] - a[1])
@@ -620,13 +635,23 @@ class ActivityMonitorService {
 
       // 3. Prepare nodes data for LLM
       const nodesData = nodes.map(
-        ({ node, apps }: { node: ContextNodeRecord; apps: Set<string> }) => ({
+        ({
+          node,
+          apps,
+          minScreenshotTs,
+          maxScreenshotTs,
+        }: {
+          node: ContextNodeRecord;
+          apps: Set<string>;
+          minScreenshotTs: number;
+          maxScreenshotTs: number;
+        }) => ({
           id: node.id,
           kind: node.kind,
           title: node.title,
           summary: node.summary,
           apps: Array.from(apps),
-          time: node.eventTime ? new Date(node.eventTime).toLocaleTimeString() : "unknown",
+          time: new Date(Math.floor((minScreenshotTs + maxScreenshotTs) / 2)).toLocaleTimeString(),
         })
       );
 

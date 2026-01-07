@@ -442,7 +442,7 @@ export class ActivityTimelineScheduler {
       // 允许在 VLM 有“足够进展”时就 seed window。
       // 这样 timeline 上能尽早出现该 window，并在 summary 生成逻辑里显示为 "Processing"，
       // 而不是因为等待“100% VLM 完成”导致 window 长时间不出现（或卡住）。
-      const minCompletionRatio = 0.3;
+      const minCompletionRatio = 0.7;
       const completionRatio =
         totalScreenshotCount > 0 ? completedVlmCount / totalScreenshotCount : 0;
       if (completionRatio < minCompletionRatio) {

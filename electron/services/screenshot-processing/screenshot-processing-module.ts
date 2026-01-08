@@ -18,6 +18,7 @@ import type { BatchReadyEvent } from "./source-buffer-registry";
 import { batchBuilder } from "./batch-builder";
 import { reconcileLoop } from "./reconcile-loop";
 import { activityTimelineScheduler } from "./activity-timeline-scheduler";
+import { vectorDocumentScheduler } from "./vector-document-scheduler";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 
 export interface ScreenCaptureEventSource {
@@ -171,6 +172,8 @@ export class ScreenshotProcessingModule {
 
     reconcileLoop.start();
     activityTimelineScheduler.start();
+    // 启动 vector 调度器：负责推进 vector_documents 的 embedding/index（与 reconcileLoop 解耦）。
+    vectorDocumentScheduler.start();
 
     this.initialized = true;
   }
@@ -190,6 +193,8 @@ export class ScreenshotProcessingModule {
 
     reconcileLoop.stop();
     activityTimelineScheduler.stop();
+    // 停止 vector 调度器：停止后台 scan/claim/retry 循环。
+    vectorDocumentScheduler.stop();
 
     this.screenCapture = null;
     this.initialized = false;

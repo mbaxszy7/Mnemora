@@ -265,6 +265,129 @@
 
 ---
 
+## X Milestone 2B — 重构：VectorDocuments 独立调度（Embedding + Index 从 ReconcileLoop 剥离）（必须）
+
+### 目的
+
+将 `vector_documents` 的两套子任务状态机：
+
+- `embeddingStatus/embeddingAttempts/embeddingNextRunAt`
+- `indexStatus/indexAttempts/indexNextRunAt`
+
+从 `ReconcileLoop` 中拆出来，交给一个独立的 `VectorDocumentScheduler` 管理（类似 `ActivityTimelineScheduler`）。
+
+预期收益：
+
+- 避免向量任务（可能大量堆积）影响 VLM/merge 的调度轮次与单轮时长。
+- 更可控的 nextRun 计算与最小间隔（避免 tight loop）。
+- 提供“快速唤醒”机制：当 `vector_documents` 更新为 pending 时无需等待固定 scan interval。
+
+### 需要新增的类/模块
+
+#### 1) `VectorDocumentScheduler`
+
+- **新增文件**：`electron/services/screenshot-processing/vector-document-scheduler.ts`
+- **职责**：
+  - 独立扫描并推进 `vector_documents.embedding` 与 `vector_documents.index` 两个子任务
+  - stale recovery（running 超时回滚到 pending）
+  - 动态 nextRun 调度（基于 `embeddingNextRunAt/indexNextRunAt`）
+  - 支持快速唤醒（wake）
+
+- **实现要求（对齐现有 ReconcileLoop 的 aiRuntimeService 用法）**：
+  - 并发上限需要参考 `aiRuntimeService.getLimit(...)`
+    - embedding 并发：`aiRuntimeService.getLimit('embedding')`（并做 clamp，例如 1..10）
+    - index 并发：可固定上限（例如 10），或后续也可挂到 `aiRuntimeService`（非必须）
+  - embedding 的真实 API 并发控制仍由 `EmbeddingService.embed()` 内部的 `aiRuntimeService.acquire('embedding')` 兜底
+    - scheduler 的并发上限属于“外层并发池”，用于降低 DB/日志/任务风暴
+
+- **建议 public 方法**：
+  - `start(): void`
+  - `stop(): void`
+  - `wake(reason?: string): void`（快速唤醒）
+
+- **核心调度结构（建议与 ActivityTimelineScheduler 类似）**：
+  - `scheduleSoon()`：启动后 1s 跑首轮
+  - `computeEarliestNextRun()`：取 embedding/index 两类 pending/failed 的最小 nextRunAt
+  - `scheduleNext()`：把 delay clamp 到 `[minDelayMs, defaultIntervalMs]`
+    - `minDelayMs` 建议 5~10s（避免 earliestNextRun<=now 导致 tight loop）
+    - `defaultIntervalMs` 可复用 `reconcileConfig.scanIntervalMs` 或单独加一个 `vectorDocSchedulerConfig.intervalMs`
+
+- **核心执行步骤（runCycle）**：
+  1. `recoverStaleStates()`
+     - `embeddingStatus='running' AND updatedAt < staleThreshold` → `pending + embeddingNextRunAt=null`
+     - `indexStatus='running' AND updatedAt < staleThreshold` → `pending + indexNextRunAt=null`
+  2. `processPendingEmbeddings()`
+     - 扫描条件与原 ReconcileLoop 保持一致：
+       - `embeddingStatus in ('pending','failed')`
+       - `(embeddingNextRunAt IS NULL OR <= now)`
+       - `embeddingAttempts < retryConfig.maxAttempts`
+     - 使用并发池（与 ReconcileLoop 的 `processRecordsWithConcurrency` 同思路）推进：
+       - 每条记录复用原 `processVectorDocumentEmbeddingRecord` 的状态机逻辑
+  3. `processPendingIndexes()`
+     - 扫描条件与原 ReconcileLoop 保持一致：
+       - `embeddingStatus='succeeded'`
+       - `indexStatus in ('pending','failed')`
+       - `(indexNextRunAt IS NULL OR <= now)`
+       - `indexAttempts < retryConfig.maxAttempts`
+     - 使用并发池推进：
+       - 每条记录复用原 `processVectorDocumentIndexRecord` 的状态机逻辑
+  4. `scheduleNext()`
+
+- **建议实现细节（避免 index 等待下一轮）**：
+  - embedding 成功会把 `indexStatus` 置为 `pending`。
+  - 为减少“embedding 成功后 index 还要等下一轮”的延迟：
+    - `runCycle()` 内先处理 embedding，再处理 index（同一轮就能吃到刚刚置为 pending 的 index）。
+
+#### 2) “快速唤醒”事件机制（避免循环依赖）
+
+- **新增文件（建议）**：`electron/services/screenshot-processing/vector-document-events.ts`
+- **内容**：导出一个 `EventEmitter`（或等价轻量实现），例如：
+  - 事件名：`vector-documents:dirty`
+  - payload：`{ reason: string; vectorDocumentId?: number; nodeId?: number }`
+
+- `VectorDocumentScheduler.start()`：订阅该事件，收到后调用 `wake()`
+- `VectorDocumentService.upsertForContextNode(...)`：当发生 insert/update（导致 status 变为 pending）后 emit
+
+> 说明：不要让 `VectorDocumentService` 直接 import `vectorDocumentScheduler`，否则容易造成模块循环依赖。
+
+### 需要改动的现有代码
+
+#### 1) 入口接入（启动/停止）
+
+- **改动文件**：`electron/services/screenshot-processing/screenshot-processing-module.ts`
+- `initialize()`：新增 `vectorDocumentScheduler.start()`
+- `dispose()`：新增 `vectorDocumentScheduler.stop()`
+
+#### 2) 从 ReconcileLoop 移除 vector_documents 相关调度
+
+- **改动文件**：`electron/services/screenshot-processing/reconcile-loop.ts`
+- **改动点**：
+  - `getScanLimit()`：去掉 embedding/index worker 的贡献（只按 batch + merge 推导）
+  - `computeNextRunAt()`：删除对 `vector_documents.embeddingNextRunAt/indexNextRunAt` 的 consider
+  - `recoverStaleStates()`：删除对 `vector_documents` embedding/index 的 stale recovery（交给新 scheduler）
+  - `scanPendingRecords()`：删除 `vector_documents` 的 embedding/index 扫描与拼接
+  - `processOtherRecordsConcurrently()`：只保留 `context_nodes.merge` 分组
+  - `processRecord()`：删除或保留 `vector_documents` case（建议删除，避免误调用）
+
+#### 3) 触发快速唤醒
+
+- **改动文件**：`electron/services/screenshot-processing/vector-document-service.ts`
+- 在以下场景 emit `vector-documents:dirty`：
+  - insert 新的 vector document
+  - update 且 `textHash` 变化（状态被 reset 为 pending）
+- payload 至少包含 `reason`（例如：`'upsert_for_context_node'`）
+
+### 验收标准
+
+- `ReconcileLoop` 不再扫描/执行 `vector_documents`，其 `nextRunAt` 计算不再受 embedding/index 影响。
+- `VectorDocumentScheduler` 能在后台独立推进：
+  - embedding pending/failed → running → succeeded/failed_permanent
+  - index pending/failed → running → succeeded/failed_permanent
+- `VectorDocumentService.upsertForContextNode()` 后，`VectorDocumentScheduler` 能被快速唤醒并尽快开始处理。
+- 无 tight loop：即使 due task 很多，也至少等待 `minDelayMs` 再进入下一轮。
+
+---
+
 ## X Milestone 3 — IPC：Search / Traverse / Evidence 接入主功能（必须）
 
 ### 目的

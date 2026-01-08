@@ -1,6 +1,6 @@
 import { eq, and, or, lt, isNull, lte, desc, ne, inArray, asc, isNotNull } from "drizzle-orm";
 import { getDb } from "../../database";
-import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
+import { batches, contextNodes, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
@@ -12,8 +12,6 @@ import { entityService } from "./entity-service";
 import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
 
 import { runVlmOnBatch } from "./vlm-processor";
-import { embeddingService } from "./embedding-service";
-import { vectorIndexService } from "./vector-index-service";
 
 import type { VLMIndexResult } from "./schemas";
 import type {
@@ -78,19 +76,14 @@ export class ReconcileLoop {
    * 每轮扫描数据库时的“拉取上限”。
    *
    * 设计目的：
-   * - 拉得太少会导致并发执行单元空转、需要频繁重复扫描。
    * - 拉得太多会导致一次扫描读出大量无用行、加剧锁竞争。
-   *
-   * 这里用当前各类并发执行单元的并发上限推导一个合理的扫描上限，并再做范围限制。
    */
   private getScanLimit(): number {
     const batchWorkers = this.getBatchWorkerLimit();
     const mergeWorkers = this.getMergeWorkerLimit();
-    const embeddingWorkers = this.getEmbeddingWorkerLimit();
-    const indexWorkers = this.getIndexWorkerLimit();
 
     // 取并发执行单元数的若干倍：在任务被“认领走”的期间减少重复扫描。
-    const derived = (batchWorkers + mergeWorkers + embeddingWorkers + indexWorkers) * 4;
+    const derived = (batchWorkers + mergeWorkers) * 4;
     return this.clampInt(derived, 20, 200);
   }
 
@@ -104,16 +97,6 @@ export class ReconcileLoop {
   private getMergeWorkerLimit(): number {
     const textLimit = aiRuntimeService.getLimit("text");
     return this.clampInt(textLimit, 1, 10);
-  }
-
-  private getEmbeddingWorkerLimit(): number {
-    const embeddingLimit = aiRuntimeService.getLimit("embedding");
-    return this.clampInt(embeddingLimit, 1, 10);
-  }
-
-  private getIndexWorkerLimit(): number {
-    // 向量索引写入/更新主要受本地 CPU/IO 影响；这里给一个固定上限即可。
-    return 10;
   }
 
   /**
@@ -197,43 +180,6 @@ export class ReconcileLoop {
     if (merge) {
       consider(merge.nextRunAt ?? now);
     }
-
-    const embedding = db
-      .select({ nextRunAt: vectorDocuments.embeddingNextRunAt })
-      .from(vectorDocuments)
-      .where(
-        and(
-          or(
-            eq(vectorDocuments.embeddingStatus, "pending"),
-            eq(vectorDocuments.embeddingStatus, "failed")
-          ),
-          lt(vectorDocuments.embeddingAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .orderBy(asc(vectorDocuments.embeddingNextRunAt))
-      .limit(1)
-      .get();
-    if (embedding) {
-      consider(embedding.nextRunAt ?? now);
-    }
-
-    const index = db
-      .select({ nextRunAt: vectorDocuments.indexNextRunAt })
-      .from(vectorDocuments)
-      .where(
-        and(
-          eq(vectorDocuments.embeddingStatus, "succeeded"),
-          or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
-          lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .orderBy(asc(vectorDocuments.indexNextRunAt))
-      .limit(1)
-      .get();
-    if (index) {
-      consider(index.nextRunAt ?? now);
-    }
-
     const orphan = db
       .select({ createdAt: screenshots.createdAt })
       .from(screenshots)
@@ -557,32 +503,9 @@ export class ReconcileLoop {
   private async processOtherRecordsConcurrently(records: PendingRecord[]): Promise<void> {
     if (records.length === 0) return;
 
-    // 按任务类型分组。
-    const mergeRecords = records.filter((r) => r.table === "context_nodes");
-    const embeddingRecords = records.filter(
-      (r) => r.table === "vector_documents" && r.subtask === "embedding"
-    );
-    const indexRecords = records.filter(
-      (r) => r.table === "vector_documents" && r.subtask === "index"
-    );
-    logger.debug(
-      {
-        mergeCount: mergeRecords.length,
-        embeddingCount: embeddingRecords.length,
-        indexCount: indexRecords.length,
-      },
-      "Processing other records concurrently"
-    );
-
-    // 三类任务并行推进；内部各自有并发控制。
+    // 两类任务并行推进；内部各自有并发控制。
     await Promise.allSettled([
-      this.processRecordsWithConcurrency(mergeRecords, this.getMergeWorkerLimit(), "merge"),
-      this.processRecordsWithConcurrency(
-        embeddingRecords,
-        this.getEmbeddingWorkerLimit(),
-        "embedding"
-      ),
-      this.processRecordsWithConcurrency(indexRecords, this.getIndexWorkerLimit(), "index"),
+      this.processRecordsWithConcurrency(records, this.getMergeWorkerLimit(), "merge"),
     ]);
   }
 
@@ -677,63 +600,6 @@ export class ReconcileLoop {
     if (staleNodes.changes > 0) {
       logger.info({ count: staleNodes.changes }, "Recovered stale merge states in context_nodes");
     }
-
-    // 恢复 context_nodes.embeddingStatus
-    const staleEmbeddingNodes = db
-      .update(contextNodes)
-      .set({
-        embeddingStatus: "pending",
-        updatedAt: Date.now(),
-      })
-      .where(
-        and(eq(contextNodes.embeddingStatus, "running"), lt(contextNodes.updatedAt, staleThreshold))
-      )
-      .run();
-
-    if (staleEmbeddingNodes.changes > 0) {
-      logger.info(
-        { count: staleEmbeddingNodes.changes },
-        "Recovered stale embedding states in context_nodes"
-      );
-    }
-
-    // 恢复 vector_documents 的 embedding/index 子任务
-    const now = Date.now();
-
-    const staleVectorEmbeddings = db
-      .update(vectorDocuments)
-      .set({
-        embeddingStatus: "pending",
-        embeddingNextRunAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(vectorDocuments.embeddingStatus, "running"),
-          lt(vectorDocuments.updatedAt, staleThreshold)
-        )
-      )
-      .run();
-
-    const staleVectorIndexes = db
-      .update(vectorDocuments)
-      .set({
-        indexStatus: "pending",
-        indexNextRunAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(vectorDocuments.indexStatus, "running"),
-          lt(vectorDocuments.updatedAt, staleThreshold)
-        )
-      )
-      .run();
-
-    const staleDocCount = staleVectorEmbeddings.changes + staleVectorIndexes.changes;
-    if (staleDocCount > 0) {
-      logger.info({ count: staleDocCount }, "Recovered stale states in vector_documents");
-    }
   }
 
   private async scanPendingRecords(): Promise<PendingRecord[]> {
@@ -780,8 +646,6 @@ export class ReconcileLoop {
       .limit(limit)
       .all();
 
-    // vector_documents 的 `embedding`/`index` 是两个独立子任务，因此分别扫描并在 PendingRecord 上标注子任务字段（`subtask`）。
-
     const batchesPending: PendingRecord[] = batchRows.map((r) => ({
       id: r.id,
       table: "batches",
@@ -798,77 +662,7 @@ export class ReconcileLoop {
       nextRunAt: r.nextRunAt ?? undefined,
     }));
 
-    const embeddingsPending: PendingRecord[] = [];
-
-    // 子任务 1：向量生成（embeddingStatus in 'pending' | 'failed'）
-    const embeddingTasks = db
-      .select({
-        id: vectorDocuments.id,
-        embeddingStatus: vectorDocuments.embeddingStatus,
-        embeddingAttempts: vectorDocuments.embeddingAttempts,
-        embeddingNextRunAt: vectorDocuments.embeddingNextRunAt,
-      })
-      .from(vectorDocuments)
-      .where(
-        and(
-          or(
-            eq(vectorDocuments.embeddingStatus, "pending"),
-            eq(vectorDocuments.embeddingStatus, "failed")
-          ),
-          or(
-            isNull(vectorDocuments.embeddingNextRunAt),
-            lte(vectorDocuments.embeddingNextRunAt, now)
-          ),
-          lt(vectorDocuments.embeddingAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .limit(limit)
-      .all();
-
-    for (const r of embeddingTasks) {
-      embeddingsPending.push({
-        id: r.id,
-        table: "vector_documents",
-        status: r.embeddingStatus as "pending" | "failed",
-        attempts: r.embeddingAttempts,
-        nextRunAt: r.embeddingNextRunAt ?? undefined,
-        subtask: "embedding",
-      });
-    }
-
-    // 子任务 2：向量索引（indexStatus in 'pending' | 'failed' 且 embeddingStatus='succeeded'）
-    const indexTasks = db
-      .select({
-        id: vectorDocuments.id,
-        indexStatus: vectorDocuments.indexStatus,
-        indexAttempts: vectorDocuments.indexAttempts,
-        indexNextRunAt: vectorDocuments.indexNextRunAt,
-      })
-      .from(vectorDocuments)
-      .where(
-        and(
-          // 前置条件：必须先完成 embedding 才允许进入 indexing。
-          eq(vectorDocuments.embeddingStatus, "succeeded"),
-          or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
-          or(isNull(vectorDocuments.indexNextRunAt), lte(vectorDocuments.indexNextRunAt, now)),
-          lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
-        )
-      )
-      .limit(limit)
-      .all();
-
-    for (const r of indexTasks) {
-      embeddingsPending.push({
-        id: r.id,
-        table: "vector_documents",
-        status: r.indexStatus as "pending" | "failed",
-        attempts: r.indexAttempts,
-        nextRunAt: r.indexNextRunAt ?? undefined,
-        subtask: "index",
-      });
-    }
-
-    return [...batchesPending, ...mergesPending, ...embeddingsPending];
+    return [...batchesPending, ...mergesPending];
   }
 
   private async processRecord(record: PendingRecord): Promise<void> {
@@ -878,14 +672,6 @@ export class ReconcileLoop {
         return;
       case "context_nodes":
         await this.processContextNodeMergeRecord(record);
-        return;
-      case "vector_documents":
-        if (record.subtask === "index") {
-          await this.processVectorDocumentIndexRecord(record);
-        } else {
-          // 未指定子任务字段（`subtask`）时默认当作 `embedding`。
-          await this.processVectorDocumentEmbeddingRecord(record);
-        }
         return;
     }
   }
@@ -1177,7 +963,9 @@ export class ReconcileLoop {
     try {
       const expandResult = await expandVLMIndexToNodes(index, batch);
 
-      // 将本次批处理解析出的新节点同步到 vector_documents（后续会由 embedding/index 子任务推进）。
+      // vector 入队点（新节点）：
+      // - 这里只负责把节点内容同步/写入到 vector_documents，并把 embedding/index 两段状态机置为 pending。
+      // - embedding/index 的实际推进由 VectorDocumentScheduler 在后台异步完成（scan/claim/retry）。
       if (expandResult.success && expandResult.nodeIds.length > 0) {
         let upsertCount = 0;
         for (const nodeIdStr of expandResult.nodeIds) {
@@ -1246,155 +1034,6 @@ export class ReconcileLoop {
           updatedAt: Date.now(),
         })
         .where(eq(contextNodes.id, node.id))
-        .run();
-    }
-  }
-
-  private async processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void> {
-    const db = getDb();
-    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
-
-    if (!doc) return;
-
-    // 已经成功则直接返回：可能是并发竞态或重复入队导致的。
-    if (doc.embeddingStatus === "succeeded") return;
-
-    try {
-      // 1) 认领：置为 `running`
-      const claim = db
-        .update(vectorDocuments)
-        .set({ embeddingStatus: "running", updatedAt: Date.now() })
-        .where(
-          and(
-            eq(vectorDocuments.id, doc.id),
-            or(
-              eq(vectorDocuments.embeddingStatus, "pending"),
-              eq(vectorDocuments.embeddingStatus, "failed")
-            )
-          )
-        )
-        .run();
-
-      if (claim.changes === 0) {
-        return;
-      }
-
-      // 2) 构造要生成向量的文本（当前约定 refId 指向 contextNodes）
-      if (!doc.refId) {
-        throw new Error("Vector document missing refId");
-      }
-
-      const text = await vectorDocumentService.buildTextForNode(doc.refId);
-
-      // 3) 调用向量模型（embedding）
-      const vector = await embeddingService.embed(text);
-
-      // 4) 落库：Float32Array 向量 -> Buffer（二进制 BLOB）
-      const buffer = Buffer.from(vector.buffer, vector.byteOffset, vector.byteLength);
-
-      db.update(vectorDocuments)
-        .set({
-          embedding: buffer,
-          embeddingStatus: "succeeded",
-          embeddingNextRunAt: null,
-          errorMessage: null,
-          errorCode: null,
-          // 向量生成成功后，触发 `index` 子任务进入 pending。
-          indexStatus: "pending",
-          indexAttempts: 0,
-          indexNextRunAt: null,
-          updatedAt: Date.now(),
-        })
-        .where(eq(vectorDocuments.id, doc.id))
-        .run();
-
-      logger.debug({ docId: doc.id }, "Generated embedding for vector document");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const attempts = doc.embeddingAttempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
-      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
-
-      db.update(vectorDocuments)
-        .set({
-          embeddingStatus: isPermanent ? "failed_permanent" : "failed",
-          embeddingAttempts: attempts,
-          embeddingNextRunAt: nextRun,
-          errorMessage: message,
-          updatedAt: Date.now(),
-        })
-        .where(eq(vectorDocuments.id, doc.id))
-        .run();
-    }
-  }
-
-  private async processVectorDocumentIndexRecord(record: PendingRecord): Promise<void> {
-    const db = getDb();
-    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
-
-    if (!doc) return;
-
-    // 前置条件：embedding 必须先成功。
-    if (doc.embeddingStatus !== "succeeded" || !doc.embedding) {
-      // 理论上 scanPendingRecords 已保证该条件，这里是兜底。
-      return;
-    }
-
-    try {
-      // 1) 认领：置为 `running`
-      const claim = db
-        .update(vectorDocuments)
-        .set({ indexStatus: "running", updatedAt: Date.now() })
-        .where(
-          and(
-            eq(vectorDocuments.id, doc.id),
-            or(
-              eq(vectorDocuments.indexStatus, "pending"),
-              eq(vectorDocuments.indexStatus, "failed")
-            )
-          )
-        )
-        .run();
-
-      if (claim.changes === 0) {
-        return;
-      }
-
-      // 2) 二进制 BLOB -> Float32Array 向量
-      const buffer = doc.embedding as Buffer;
-      const vector = new Float32Array(buffer.buffer, buffer.byteOffset, buffer.byteLength / 4);
-
-      // 3) 写入/更新到本地 HNSW 索引（以 vector_documents.id 作为数值 ID）
-      await vectorIndexService.upsert(doc.id, vector);
-      vectorIndexService.requestFlush();
-
-      // 4) 标记成功
-      db.update(vectorDocuments)
-        .set({
-          indexStatus: "succeeded",
-          indexNextRunAt: null,
-          errorMessage: null,
-          updatedAt: Date.now(),
-        })
-        .where(eq(vectorDocuments.id, doc.id))
-        .run();
-
-      logger.debug({ docId: doc.id }, "Indexed vector document");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const attempts = doc.indexAttempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
-      const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
-
-      db.update(vectorDocuments)
-        .set({
-          indexStatus: isPermanent ? "failed_permanent" : "failed",
-          indexAttempts: attempts,
-          indexNextRunAt: nextRun,
-          errorMessage: message,
-          updatedAt: Date.now(),
-        })
-        .where(eq(vectorDocuments.id, doc.id))
         .run();
     }
   }
@@ -1523,7 +1162,10 @@ export class ReconcileLoop {
       mergeStatus: "succeeded",
     });
 
-    // 目标节点内容发生变化后，同步其向量文档（失败不阻塞合并）。
+    // vector 入队点（merge 后目标节点变化）：
+    // - merge 改写了目标节点内容，必须重新生成其 vector 表达。
+    // - 这里仍然只做 upsert + 置 pending；后台 VectorDocumentScheduler 会负责重算 embedding 并更新本地 HNSW 索引。
+    // - 失败不阻塞合并（vector 属于可恢复的派生数据）。
     try {
       await vectorDocumentService.upsertForContextNode(targetRecord.id);
     } catch (err) {

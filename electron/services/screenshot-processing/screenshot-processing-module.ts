@@ -1,36 +1,22 @@
-import type {
-  CaptureCompleteEvent,
-  SchedulerEvent,
-  SchedulerEventHandler,
-  SchedulerEventPayload,
-} from "../screen-capture/types";
+import type { CaptureCompleteEvent } from "../screen-capture/types";
 
 import { getLogger } from "../logger";
 import { and, eq, isNotNull, lte } from "drizzle-orm";
 
 import { getDb } from "../../database";
 import { screenshots } from "../../database/schema";
-import type { SourceKey } from "./types";
-import { sourceBufferRegistry, sourceBufferRegistryEmitter } from "./source-buffer-registry";
+import type { AcceptedScreenshot, SourceKey } from "./types";
+import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { ScreenshotInput } from "./source-buffer-registry";
-import type { BatchReadyEvent } from "./source-buffer-registry";
+import type { BatchPersistedEvent, BatchReadyEvent } from "./events";
+import { screenshotProcessingEventBus } from "./event-bus";
 import { batchBuilder } from "./batch-builder";
-import { reconcileLoop } from "./reconcile-loop";
+import { screenshotPipelineScheduler } from "./screenshot-pipeline-scheduler";
 import { activityTimelineScheduler } from "./activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 import { ScreenCaptureModuleType } from "../screen-capture";
-
-export interface ScreenCaptureEventSource {
-  on<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void;
-  off<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void;
-}
+import { aiRuntimeService } from "../ai-runtime-service";
 
 export class ScreenshotProcessingModule {
   private readonly logger = getLogger("screenshot-processing-module");
@@ -39,7 +25,57 @@ export class ScreenshotProcessingModule {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private cleanupInProgress = false;
 
-  private screenCapture: ScreenCaptureEventSource | null = null;
+  private screenCapture: ScreenCaptureModuleType | null = null;
+
+  initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
+    if (this.initialized) {
+      this.dispose();
+    }
+    this.screenCapture = options.screenCapture;
+    aiRuntimeService.registerCaptureControlCallbacks({
+      stop: () => this.screenCapture!.stop(),
+      start: () => this.screenCapture!.tryInitialize(),
+      getState: () => this.screenCapture!.getState(),
+    });
+    sourceBufferRegistry.initialize(
+      this.screenCapture.getPreferencesService(),
+      this.onPersistAcceptedScreenshot
+    );
+
+    this.screenCapture.on("preferences:changed", this.onPreferencesChanged);
+    this.screenCapture.on("capture:complete", this.onCaptureComplete);
+    screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
+    screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
+
+    screenshotPipelineScheduler.start();
+    activityTimelineScheduler.start();
+    vectorDocumentScheduler.start();
+
+    this.startCleanupLoop();
+    this.initialized = true;
+  }
+
+  dispose(): void {
+    if (!this.initialized) {
+      return;
+    }
+
+    this.screenCapture?.off("preferences:changed", this.onPreferencesChanged);
+    this.screenCapture?.off("capture:complete", this.onCaptureComplete);
+    screenshotProcessingEventBus.off("batch:ready", this.onBatchReady);
+    screenshotProcessingEventBus.off("batch:persisted", this.onBatchPersisted);
+
+    this.stopCleanupLoop();
+
+    sourceBufferRegistry.dispose();
+
+    screenshotPipelineScheduler.stop();
+    activityTimelineScheduler.stop();
+    vectorDocumentScheduler.stop();
+
+    this.screenCapture = null;
+    this.initialized = false;
+  }
 
   private readonly onPreferencesChanged = async () => {
     try {
@@ -50,6 +86,44 @@ export class ScreenshotProcessingModule {
         "Failed to refresh source buffer registry on preferences change"
       );
     }
+  };
+
+  private readonly onPersistAcceptedScreenshot = async (
+    accepted: Omit<AcceptedScreenshot, "id">
+  ) => {
+    const db = getDb();
+    const now = Date.now();
+    const inserted = db
+      .insert(screenshots)
+      .values({
+        sourceKey: accepted.sourceKey,
+        ts: accepted.ts,
+        filePath: accepted.filePath,
+        storageState: "ephemeral",
+        retentionExpiresAt: null,
+        phash: accepted.phash,
+        width: accepted.meta.width ?? null,
+        height: accepted.meta.height ?? null,
+        bytes: accepted.meta.bytes ?? null,
+        mime: accepted.meta.mime ?? null,
+        appHint: accepted.meta.appHint ?? null,
+        windowTitle: accepted.meta.windowTitle ?? null,
+        ocrText: null,
+        uiTextSnippets: null,
+        detectedEntities: null,
+        vlmIndexFragment: null,
+        vlmStatus: "pending",
+        vlmAttempts: 0,
+        vlmNextRunAt: null,
+        vlmErrorCode: null,
+        vlmErrorMessage: null,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning({ id: screenshots.id })
+      .get();
+
+    return inserted.id;
   };
 
   private readonly onCaptureComplete = async (event: CaptureCompleteEvent) => {
@@ -77,41 +151,6 @@ export class ScreenshotProcessingModule {
               windowTitle: result.source.windowTitle,
             },
           },
-          persistAcceptedScreenshot: async (accepted) => {
-            const db = getDb();
-            const now = Date.now();
-            const inserted = db
-              .insert(screenshots)
-              .values({
-                sourceKey: accepted.sourceKey,
-                ts: accepted.ts,
-                filePath: accepted.filePath,
-                storageState: "ephemeral",
-                retentionExpiresAt: null,
-                phash: accepted.phash,
-                width: accepted.meta.width ?? null,
-                height: accepted.meta.height ?? null,
-                bytes: accepted.meta.bytes ?? null,
-                mime: accepted.meta.mime ?? null,
-                appHint: accepted.meta.appHint ?? null,
-                windowTitle: accepted.meta.windowTitle ?? null,
-                ocrText: null,
-                uiTextSnippets: null,
-                detectedEntities: null,
-                vlmIndexFragment: null,
-                vlmStatus: "pending",
-                vlmAttempts: 0,
-                vlmNextRunAt: null,
-                vlmErrorCode: null,
-                vlmErrorMessage: null,
-                createdAt: now,
-                updatedAt: now,
-              })
-              .returning({ id: screenshots.id })
-              .get();
-
-            return inserted.id;
-          },
         };
 
         const addResult = await sourceBufferRegistry.add(input);
@@ -133,11 +172,7 @@ export class ScreenshotProcessingModule {
       for (const [sourceKey, screenshots] of entries) {
         try {
           const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, screenshots);
-          this.logger.info(
-            { batchId: batch.batchId, sourceKey },
-            "Batch persisted, waking reconcile loop"
-          );
-          reconcileLoop.wake();
+          this.logger.info({ batchId: batch.batchId, sourceKey }, "Batch persisted");
         } catch (error) {
           this.logger.error(
             { sourceKey, error },
@@ -151,51 +186,20 @@ export class ScreenshotProcessingModule {
     }
   };
 
-  initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
-    if (this.initialized) {
-      this.dispose();
+  private readonly onBatchPersisted = (event: BatchPersistedEvent) => {
+    try {
+      this.logger.info(
+        { batchId: event.batchId, batchDbId: event.batchDbId, sourceKey: event.sourceKey },
+        "Waking screenshot pipeline scheduler"
+      );
+      screenshotPipelineScheduler.wake();
+    } catch (error) {
+      this.logger.error(
+        { error },
+        "Failed to wake screenshot pipeline scheduler on batch:persisted"
+      );
     }
-
-    this.screenCapture = options.screenCapture;
-
-    sourceBufferRegistry.initialize(options.preferencesService);
-
-    this.screenCapture.on("preferences:changed", this.onPreferencesChanged);
-    this.screenCapture.on("capture:complete", this.onCaptureComplete);
-
-    sourceBufferRegistryEmitter.on("batch:ready", this.onBatchReady);
-
-    this.startCleanupLoop();
-
-    reconcileLoop.start();
-    activityTimelineScheduler.start();
-    // 启动 vector 调度器：负责推进 vector_documents 的 embedding/index（与 reconcileLoop 解耦）。
-    vectorDocumentScheduler.start();
-
-    this.initialized = true;
-  }
-
-  dispose(): void {
-    if (!this.initialized) {
-      return;
-    }
-
-    this.screenCapture?.off("preferences:changed", this.onPreferencesChanged);
-    this.screenCapture?.off<CaptureCompleteEvent>("capture:complete", this.onCaptureComplete);
-    sourceBufferRegistryEmitter.off("batch:ready", this.onBatchReady);
-
-    this.stopCleanupLoop();
-
-    sourceBufferRegistry.dispose();
-
-    reconcileLoop.stop();
-    activityTimelineScheduler.stop();
-    // 停止 vector 调度器：停止后台 scan/claim/retry 循环。
-    vectorDocumentScheduler.stop();
-
-    this.screenCapture = null;
-    this.initialized = false;
-  }
+  };
 
   private startCleanupLoop(): void {
     if (this.cleanupInterval) {

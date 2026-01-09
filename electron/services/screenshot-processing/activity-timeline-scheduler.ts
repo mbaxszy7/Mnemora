@@ -2,7 +2,7 @@
  * Activity Timeline Scheduler
  *
  * Independent scheduler for generating 20-minute activity summaries.
- * Runs on its own timer, separate from ReconcileLoop.
+ * Runs on its own timer, separate from ScreenshotPipelineScheduler.
  *
  * Responsibilities:
  * - Seed pending windows every 20 minutes
@@ -22,7 +22,7 @@ import { BaseScheduler } from "./base-scheduler";
 const logger = getLogger("activity-timeline-scheduler");
 
 /**
- * ActivityTimelineScheduler runs independently of ReconcileLoop.
+ * ActivityTimelineScheduler runs independently of ScreenshotPipelineScheduler.
  * It manages the lifecycle of activity summary and event details generation.
  */
 export class ActivityTimelineScheduler extends BaseScheduler {

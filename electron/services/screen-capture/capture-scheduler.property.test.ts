@@ -5,7 +5,7 @@ import type {
   CaptureErrorEvent,
   CaptureStartEvent,
   CaptureCompleteEvent,
-  SchedulerStateEvent,
+  CaptureSchedulerStateEvent,
   CaptureResult,
 } from "./types";
 import { vi } from "vitest";
@@ -369,7 +369,7 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
       );
     });
 
-    it("emits scheduler:state event with correct state transitions", async () => {
+    it("emits capture-scheduler:state event with correct state transitions", async () => {
       await fc.assert(
         fc.asyncProperty(fc.constantFrom("start", "pause", "resume", "stop"), async (operation) => {
           const stateEvents: Array<{
@@ -383,7 +383,7 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             dummyCaptureTask
           );
 
-          scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+          scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
             stateEvents.push({
               type: event.type,
               previousState: event.previousState,
@@ -412,7 +412,7 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
           // Verify all state events have correct structure
           return stateEvents.every(
             (event) =>
-              event.type === "scheduler:state" &&
+              event.type === "capture-scheduler:state" &&
               ["idle", "running", "paused", "stopped"].includes(event.previousState) &&
               ["idle", "running", "paused", "stopped"].includes(event.currentState)
           );

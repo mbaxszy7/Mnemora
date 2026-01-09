@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { getDb } from "../../database";
 import { vectorDocuments, contextNodes } from "../../database/schema";
 import { getLogger } from "../logger";
+import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("vector-document-service");
 
@@ -21,41 +22,6 @@ const logger = getLogger("vector-document-service");
  * - `embeddingNextRunAt/indexNextRunAt`：下一次允许重试的时间戳（ms），为 null 表示“尽快执行”。
  * - `failed_permanent`：达到最大重试次数后的终态，不再被调度器扫描。
  */
-
-export interface VectorDocumentDirtyEvent {
-  reason: string;
-  vectorDocumentId?: number;
-  nodeId?: number;
-}
-
-type VectorDocumentsDirtyListener = (event: VectorDocumentDirtyEvent) => void;
-
-const vectorDocumentsDirtyListeners = new Set<VectorDocumentsDirtyListener>();
-
-/**
- * 订阅 vector_documents “变脏”事件。
- *
- * 目前的主要消费者是 VectorDocumentScheduler：
- * - upsert 把状态置为 pending 后，会通过该回调触发 scheduler.wake()。
- * - 即使 wake 丢失，scheduler 自己也会周期性 scan，因此这是“加速”而不是“唯一驱动”。
- */
-export function onVectorDocumentsDirty(listener: VectorDocumentsDirtyListener): () => void {
-  vectorDocumentsDirtyListeners.add(listener);
-  return () => {
-    vectorDocumentsDirtyListeners.delete(listener);
-  };
-}
-
-function emitVectorDocumentsDirty(event: VectorDocumentDirtyEvent): void {
-  for (const listener of vectorDocumentsDirtyListeners) {
-    try {
-      listener(event);
-    } catch (err) {
-      logger.warn({ error: String(err) }, "Vector documents dirty listener failed");
-    }
-  }
-}
-
 export class VectorDocumentService {
   /**
    * 为指定的 context node upsert 对应的 `vector_documents` 记录。
@@ -67,12 +33,13 @@ export class VectorDocumentService {
    * 入队语义（内容变化时）：
    * - 置 `embeddingStatus = pending`，并清空/重置 `embeddingAttempts/embeddingNextRunAt/embedding`。
    * - 同时置 `indexStatus = pending`，并清空/重置 `indexAttempts/indexNextRunAt`。
-   * - 触发 dirty 回调，让调度器尽快扫描并推进。
+   * - 触发 `vector-documents:dirty` 事件，让调度器尽快扫描并推进。
    */
   async upsertForContextNode(
     nodeId: number
   ): Promise<{ vectorDocumentId: number; vectorId: string }> {
     const db = getDb();
+    const now = Date.now();
     const node = db.select().from(contextNodes).where(eq(contextNodes.id, nodeId)).get();
 
     if (!node) {
@@ -118,22 +85,26 @@ export class VectorDocumentService {
           indexNextRunAt: null,
           errorMessage: null,
           errorCode: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
         .where(eq(vectorDocuments.id, existing.id))
-        .returning()
+        .returning({ id: vectorDocuments.id })
         .get();
 
       if (!updated) {
         throw new Error(`Failed to update vector document for ${vectorId}`);
       }
 
-      logger.info({ vectorId, docId: updated.id }, "Updated vector document (content changed)");
-      emitVectorDocumentsDirty({
+      logger.info({ nodeId, vectorDocumentId: updated.id }, "Updated vector document");
+
+      screenshotProcessingEventBus.emit("vector-documents:dirty", {
+        type: "vector-documents:dirty",
+        timestamp: now,
         reason: "upsert_for_context_node",
         vectorDocumentId: updated.id,
         nodeId,
       });
+
       return { vectorDocumentId: updated.id, vectorId };
     } else {
       // 新建：初始即为 pending，由调度器推进 embedding/index。
@@ -144,25 +115,36 @@ export class VectorDocumentService {
           docType: "context_node",
           refId: nodeId,
           textHash,
+          embedding: null,
           metaPayload,
           embeddingStatus: "pending",
+          embeddingAttempts: 0,
+          embeddingNextRunAt: null,
           indexStatus: "pending",
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
+          indexAttempts: 0,
+          indexNextRunAt: null,
+          errorMessage: null,
+          errorCode: null,
+          createdAt: now,
+          updatedAt: now,
         })
-        .returning()
+        .returning({ id: vectorDocuments.id })
         .get();
 
       if (!inserted) {
         throw new Error(`Failed to create vector document for ${vectorId}`);
       }
 
-      logger.info({ vectorId, docId: inserted.id }, "Created new vector document");
-      emitVectorDocumentsDirty({
+      logger.info({ nodeId, vectorDocumentId: inserted.id }, "Created vector document");
+
+      screenshotProcessingEventBus.emit("vector-documents:dirty", {
+        type: "vector-documents:dirty",
+        timestamp: now,
         reason: "upsert_for_context_node",
         vectorDocumentId: inserted.id,
         nodeId,
       });
+
       return { vectorDocumentId: inserted.id, vectorId };
     }
   }

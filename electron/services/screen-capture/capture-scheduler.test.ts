@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { ScreenCaptureScheduler, calculateNextDelay } from "./capture-scheduler";
-import type { SchedulerStateEvent, CaptureStartEvent } from "./types";
+import type { CaptureSchedulerStateEvent, CaptureStartEvent } from "./types";
 
 describe("ScreenCaptureScheduler Unit Tests", () => {
   beforeEach(() => {
@@ -34,9 +34,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("transitions from idle to running on start()", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -52,11 +52,11 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("transitions from running to paused on pause()", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
       scheduler.start();
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -75,8 +75,8 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
       scheduler.start();
       scheduler.pause();
 
-      const stateEvents: SchedulerStateEvent[] = [];
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -94,8 +94,8 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
       const scheduler = new ScreenCaptureScheduler();
       scheduler.start();
 
-      const stateEvents: SchedulerStateEvent[] = [];
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -109,9 +109,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("completes full state cycle: idle -> running -> paused -> running -> stopped", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -230,9 +230,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
   describe("Edge Cases", () => {
     it("ignores start() when already running", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -247,12 +247,12 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("ignores stop() when already stopped", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
       scheduler.start();
       scheduler.stop();
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -263,9 +263,9 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("ignores pause() when not running", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -279,11 +279,11 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
 
     it("ignores resume() when not paused", () => {
       const scheduler = new ScreenCaptureScheduler();
-      const stateEvents: SchedulerStateEvent[] = [];
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
 
       scheduler.start();
 
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 
@@ -302,8 +302,8 @@ describe("ScreenCaptureScheduler Unit Tests", () => {
       scheduler.stop();
       expect(scheduler.getState().status).toBe("stopped");
 
-      const stateEvents: SchedulerStateEvent[] = [];
-      scheduler.on<SchedulerStateEvent>("scheduler:state", (event) => {
+      const stateEvents: CaptureSchedulerStateEvent[] = [];
+      scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
         stateEvents.push(event);
       });
 

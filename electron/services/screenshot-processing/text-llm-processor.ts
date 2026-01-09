@@ -1130,15 +1130,3 @@ export class TextLLMProcessor {
 // ============================================================================
 
 export const textLLMProcessor = new TextLLMProcessor();
-
-/**
- * Process a batch through Text LLM expansion
- *
- * Convenience function that wraps TextLLMProcessor.expandToNodes
- */
-export async function expandVLMIndexToNodes(
-  vlmIndex: VLMIndexResult,
-  batch: Batch
-): Promise<ExpandResult> {
-  return textLLMProcessor.expandToNodes(vlmIndex, batch);
-}

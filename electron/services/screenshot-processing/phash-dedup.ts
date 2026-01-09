@@ -12,7 +12,6 @@
  */
 
 import sharp from "sharp";
-import { phashConfig } from "./config";
 
 // ============================================================================
 // DCT Implementation
@@ -141,6 +140,7 @@ export function hammingDistance(hash1: string, hash2: string): number {
   return count;
 }
 
+const SimilarityThreshold = 8;
 /**
  * Check if a screenshot is a duplicate compared to the last accepted hash.
  *
@@ -151,7 +151,7 @@ export function hammingDistance(hash1: string, hash2: string): number {
 export function isDuplicateByLast(
   phash: string,
   lastPHash: string | null | undefined,
-  threshold: number = phashConfig.similarityThreshold
+  threshold: number = SimilarityThreshold
 ): boolean {
   if (!lastPHash) {
     return false;

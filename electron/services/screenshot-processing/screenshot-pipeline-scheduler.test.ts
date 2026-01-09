@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { reconcileLoop } from "./reconcile-loop";
+import { screenshotPipelineScheduler } from "./screenshot-pipeline-scheduler";
+import { screenshotProcessingEventBus } from "./event-bus";
 import { getDb } from "../../database";
 import { batches, contextNodes, screenshots } from "../../database/schema";
 import { contextGraphService } from "./context-graph-service";
@@ -35,7 +36,7 @@ vi.mock("../logger", () => ({
   }),
 }));
 
-describe("ReconcileLoop", () => {
+describe("ScreenshotPipelineScheduler", () => {
   const createMockDb = () => ({
     update: vi.fn().mockReturnThis(),
     set: vi.fn().mockReturnThis(),
@@ -56,12 +57,96 @@ describe("ReconcileLoop", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    screenshotProcessingEventBus.removeAllListeners();
     mockDb = createMockDb();
     vi.mocked(getDb).mockReturnValue(mockDb as unknown as ReturnType<typeof getDb>);
   });
 
   afterEach(() => {
-    reconcileLoop.stop();
+    screenshotPipelineScheduler.stop();
+    screenshotProcessingEventBus.removeAllListeners();
+  });
+
+  describe("events", () => {
+    it("should emit pipeline batch started/finished when batch processing fails", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(1000);
+
+      const started = vi.fn();
+      const finished = vi.fn();
+      screenshotProcessingEventBus.on("pipeline:batch:started", started);
+      screenshotProcessingEventBus.on("pipeline:batch:finished", finished);
+
+      const batchRecord = {
+        id: 99,
+        batchId: "batch_test",
+        sourceKey: "screen:1",
+        screenshotIds: JSON.stringify([1]),
+        historyPack: null,
+        idempotencyKey: "idem",
+        status: "pending",
+        attempts: 0,
+        tsStart: 0,
+        tsEnd: 0,
+      };
+
+      // select(batchRecord)
+      mockDb.get.mockReturnValueOnce(batchRecord);
+
+      // claim succeeds
+      mockDb.run.mockReturnValue({ changes: 1 });
+
+      const missingFileShot = {
+        id: 1,
+        ts: 1,
+        phash: "p",
+        filePath: null,
+        appHint: null,
+        windowTitle: null,
+        width: null,
+        height: null,
+        bytes: null,
+        mime: null,
+        vlmAttempts: 0,
+      };
+
+      // 1) shotRows for main try path (missing filePath triggers failure)
+      // 2) shotRows for catch path updating screenshot statuses
+      mockDb.all.mockReturnValueOnce([missingFileShot]).mockReturnValueOnce([missingFileShot]);
+
+      await (
+        screenshotPipelineScheduler as unknown as {
+          processBatchRecord: (record: { id: number; table: "batches" }) => Promise<void>;
+        }
+      ).processBatchRecord({ id: 99, table: "batches" });
+
+      expect(started).toHaveBeenCalledTimes(1);
+      expect(started).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "pipeline:batch:started",
+          batchDbId: 99,
+          batchId: "batch_test",
+          sourceKey: "screen:1",
+          attempts: 1,
+          screenshotCount: 1,
+        })
+      );
+
+      expect(finished).toHaveBeenCalledTimes(1);
+      expect(finished).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "pipeline:batch:finished",
+          batchDbId: 99,
+          batchId: "batch_test",
+          sourceKey: "screen:1",
+          status: "failed",
+          attempts: 1,
+          errorMessage: expect.stringContaining("Missing filePath"),
+        })
+      );
+
+      vi.useRealTimers();
+    });
   });
 
   describe("recoverStaleStates", () => {
@@ -71,7 +156,7 @@ describe("ReconcileLoop", () => {
       mockDb.run.mockReturnValueOnce({ changes: 2 }); // contextNodes merge
 
       await (
-        reconcileLoop as unknown as { recoverStaleStates: () => Promise<void> }
+        screenshotPipelineScheduler as unknown as { recoverStaleStates: () => Promise<void> }
       ).recoverStaleStates();
 
       expect(mockDb.update).toHaveBeenCalledWith(screenshots);
@@ -86,61 +171,81 @@ describe("ReconcileLoop", () => {
   describe("wake", () => {
     it("should trigger run when loop is running", () => {
       // Simulate loop is running
-      (reconcileLoop as unknown as { isRunning: boolean }).isRunning = true;
+      (screenshotPipelineScheduler as unknown as { isRunning: boolean }).isRunning = true;
 
-      const setImmediateSpy = vi.spyOn(global, "setImmediate");
+      vi.useFakeTimers();
+      vi.setSystemTime(1000);
 
-      reconcileLoop.wake();
+      const setTimeoutSpy = vi.spyOn(global, "setTimeout");
 
-      expect(setImmediateSpy).toHaveBeenCalled();
+      screenshotPipelineScheduler.wake();
+
+      expect(setTimeoutSpy).toHaveBeenCalled();
+      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === 0)).toBe(true);
 
       // Cleanup
-      (reconcileLoop as unknown as { isRunning: boolean }).isRunning = false;
-      setImmediateSpy.mockRestore();
+      (screenshotPipelineScheduler as unknown as { isRunning: boolean }).isRunning = false;
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
     });
 
     it("should be no-op when loop is not running", () => {
       // Ensure loop is not running
-      (reconcileLoop as unknown as { isRunning: boolean }).isRunning = false;
+      (screenshotPipelineScheduler as unknown as { isRunning: boolean }).isRunning = false;
 
-      const setImmediateSpy = vi.spyOn(global, "setImmediate");
+      vi.useFakeTimers();
+      const setTimeoutSpy = vi.spyOn(global, "setTimeout");
 
-      reconcileLoop.wake();
+      screenshotPipelineScheduler.wake();
 
-      expect(setImmediateSpy).not.toHaveBeenCalled();
+      expect(setTimeoutSpy).not.toHaveBeenCalled();
 
-      setImmediateSpy.mockRestore();
+      setTimeoutSpy.mockRestore();
+      vi.useRealTimers();
     });
   });
 
-  describe("computeNextRunAt", () => {
+  describe("computeEarliestNextRun", () => {
     it("should return now when there is immediate batch work", () => {
       const now = 100_000;
+
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
 
       mockDb.get.mockReturnValueOnce({ nextRunAt: null });
 
       const nextRunAt = (
-        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
-      ).computeNextRunAt(now);
+        screenshotPipelineScheduler as unknown as { computeEarliestNextRun: () => number | null }
+      ).computeEarliestNextRun();
 
       expect(nextRunAt).toBe(now);
+
+      vi.useRealTimers();
     });
 
     it("should return earliest nextRunAt across tasks", () => {
       const now = 100_000;
 
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
+
       mockDb.get.mockReturnValueOnce({ nextRunAt: 200_000 });
       mockDb.get.mockReturnValueOnce({ nextRunAt: 150_000 });
 
       const nextRunAt = (
-        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
-      ).computeNextRunAt(now);
+        screenshotPipelineScheduler as unknown as { computeEarliestNextRun: () => number | null }
+      ).computeEarliestNextRun();
 
       expect(nextRunAt).toBe(150_000);
+
+      vi.useRealTimers();
     });
 
     it("should consider orphan screenshot eligibility time", () => {
       const now = 100_000;
+
+      vi.useFakeTimers();
+      vi.setSystemTime(now);
 
       // Now queries: batches, context_nodes mergeStatus, orphan screenshots
       mockDb.get
@@ -149,26 +254,34 @@ describe("ReconcileLoop", () => {
         .mockReturnValueOnce({ createdAt: 30_000 }); // orphan screenshot
 
       const nextRunAt = (
-        reconcileLoop as unknown as { computeNextRunAt: (now: number) => number | null }
-      ).computeNextRunAt(now);
+        screenshotPipelineScheduler as unknown as { computeEarliestNextRun: () => number | null }
+      ).computeEarliestNextRun();
 
       expect(nextRunAt).toBe(105_000);
+
+      vi.useRealTimers();
     });
   });
 
   describe("run scheduling", () => {
     it("should schedule idle scan when no work is found", async () => {
-      (reconcileLoop as unknown as { isRunning: boolean }).isRunning = true;
+      (screenshotPipelineScheduler as unknown as { isRunning: boolean }).isRunning = true;
+
+      vi.useFakeTimers();
 
       const setTimeoutSpy = vi.spyOn(global, "setTimeout");
 
-      await (reconcileLoop as unknown as { run: () => Promise<void> }).run();
+      await (
+        screenshotPipelineScheduler as unknown as { runCycle: () => Promise<void> }
+      ).runCycle();
 
       expect(
         setTimeoutSpy.mock.calls.some((c) => c[1] === processingConfig.scheduler.scanIntervalMs)
       ).toBe(true);
 
       setTimeoutSpy.mockRestore();
+
+      vi.useRealTimers();
     });
   });
 
@@ -184,7 +297,7 @@ describe("ReconcileLoop", () => {
         .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]); // context_nodes
 
       const records = await (
-        reconcileLoop as unknown as { scanPendingRecords: () => Promise<unknown[]> }
+        screenshotPipelineScheduler as unknown as { scanPendingRecords: () => Promise<unknown[]> }
       ).scanPendingRecords();
 
       expect(records).toHaveLength(3);
@@ -218,13 +331,13 @@ describe("ReconcileLoop", () => {
       mockDb.run.mockReturnValueOnce({ changes: 1 });
 
       // Mock handleSingleMerge to avoid deep logic in this test
-      const loop = reconcileLoop as unknown as {
+      const loop = screenshotPipelineScheduler as unknown as {
         handleSingleMerge: (node: ContextNodeRecord) => Promise<void>;
       };
       const handleSingleMergeSpy = vi.spyOn(loop, "handleSingleMerge").mockResolvedValue(undefined);
 
       await (
-        reconcileLoop as unknown as {
+        screenshotPipelineScheduler as unknown as {
           processContextNodeMergeRecord: (record: unknown) => Promise<void>;
         }
       ).processContextNodeMergeRecord({
@@ -248,13 +361,13 @@ describe("ReconcileLoop", () => {
 
       mockDb.get.mockReturnValueOnce(mockNode);
       mockDb.run.mockReturnValueOnce({ changes: 1 }).mockReturnValueOnce({ changes: 1 });
-      const loop = reconcileLoop as unknown as {
+      const loop = screenshotPipelineScheduler as unknown as {
         handleSingleMerge: (node: ContextNodeRecord) => Promise<void>;
       };
       vi.spyOn(loop, "handleSingleMerge").mockRejectedValue(new Error("LLM Error"));
 
       await (
-        reconcileLoop as unknown as {
+        screenshotPipelineScheduler as unknown as {
           processContextNodeMergeRecord: (record: unknown) => Promise<void>;
         }
       ).processContextNodeMergeRecord({
@@ -288,7 +401,7 @@ describe("ReconcileLoop", () => {
       mockDb.get.mockReturnValue(null); // No target
 
       await (
-        reconcileLoop as unknown as {
+        screenshotPipelineScheduler as unknown as {
           handleSingleMerge: (node: ContextNodeRecord) => Promise<void>;
         }
       ).handleSingleMerge(mockNodeRecord as ContextNodeRecord);
@@ -340,7 +453,7 @@ describe("ReconcileLoop", () => {
       } as unknown as Awaited<ReturnType<typeof textLLMProcessor.executeMerge>>);
 
       await (
-        reconcileLoop as unknown as {
+        screenshotPipelineScheduler as unknown as {
           handleSingleMerge: (node: ContextNodeRecord) => Promise<void>;
         }
       ).handleSingleMerge(sourceRecord);

@@ -5,14 +5,14 @@
 import { EventEmitter } from "events";
 import type {
   SchedulerConfig,
-  SchedulerState,
+  CaptureSchedulerState,
   CaptureResult,
   SchedulerEvent,
   SchedulerEventHandler,
   CaptureStartEvent,
   CaptureCompleteEvent,
   CaptureErrorEvent,
-  SchedulerStateEvent,
+  CaptureSchedulerStateEvent,
   PreferencesChangedEvent,
   SchedulerEventPayload,
 } from "./types";
@@ -37,7 +37,7 @@ export interface IScreenCaptureScheduler {
   pause(): void;
   resume(): void;
   updateConfig(config: Partial<SchedulerConfig>): void;
-  getState(): SchedulerState;
+  getState(): CaptureSchedulerState;
   notifyPreferencesChanged(): void;
   on<T extends SchedulerEventPayload>(
     event: SchedulerEvent,
@@ -53,7 +53,7 @@ export type CaptureTask = () => Promise<CaptureResult[]>;
 
 export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   private config: SchedulerConfig;
-  private state: SchedulerState;
+  private state: CaptureSchedulerState;
   private emitter: EventEmitter;
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private captureTask!: CaptureTask;
@@ -156,7 +156,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     this.emitter.emit("preferences:changed", event);
   }
 
-  getState(): SchedulerState {
+  getState(): CaptureSchedulerState {
     return { ...this.state };
   }
 
@@ -304,15 +304,15 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
   }
 
   private emitStateChange(
-    previousState: SchedulerState["status"],
-    currentState: SchedulerState["status"]
+    previousState: CaptureSchedulerState["status"],
+    currentState: CaptureSchedulerState["status"]
   ): void {
-    const event: SchedulerStateEvent = {
-      type: "scheduler:state",
+    const event: CaptureSchedulerStateEvent = {
+      type: "capture-scheduler:state",
       timestamp: Date.now(),
       previousState,
       currentState,
     };
-    this.emitter.emit("scheduler:state", event);
+    this.emitter.emit("capture-scheduler:state", event);
   }
 }

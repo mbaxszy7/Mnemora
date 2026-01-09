@@ -19,7 +19,7 @@ export interface SchedulerConfig {
 /**
  * Current state of the scheduler
  */
-export interface SchedulerState {
+export interface CaptureSchedulerState {
   status: "idle" | "running" | "paused" | "stopped";
   lastCaptureTime: number | null;
   nextCaptureTime: number | null;
@@ -104,7 +104,7 @@ export type SchedulerEvent =
   | "capture:start"
   | "capture:complete"
   | "capture:error"
-  | "scheduler:state"
+  | "capture-scheduler:state"
   | "preferences:changed";
 
 /**
@@ -140,11 +140,11 @@ export interface CaptureErrorEvent {
 /**
  * Event emitted when the scheduler state changes
  */
-export interface SchedulerStateEvent {
-  type: "scheduler:state";
+export interface CaptureSchedulerStateEvent {
+  type: "capture-scheduler:state";
   timestamp: number;
-  previousState: SchedulerState["status"];
-  currentState: SchedulerState["status"];
+  previousState: CaptureSchedulerState["status"];
+  currentState: CaptureSchedulerState["status"];
 }
 
 /**
@@ -162,7 +162,7 @@ export type SchedulerEventPayload =
   | CaptureStartEvent
   | CaptureCompleteEvent
   | CaptureErrorEvent
-  | SchedulerStateEvent
+  | CaptureSchedulerStateEvent
   | PreferencesChangedEvent;
 
 /**

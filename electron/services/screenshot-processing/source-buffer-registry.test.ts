@@ -23,8 +23,9 @@ vi.mock("../logger", () => ({
 }));
 
 import { SourceBufferRegistry, type ScreenshotInput } from "./source-buffer-registry";
-import { batchConfig, sourceBufferConfig } from "./config";
-import type { SourceKey } from "./types";
+import { screenshotProcessingEventBus } from "./event-bus";
+import { processingConfig } from "./config";
+import type { AcceptedScreenshot, SourceKey } from "./types";
 import type { CapturePreferencesService } from "../capture-preferences-service";
 
 // ============================================================================
@@ -73,7 +74,6 @@ function createMockInput(
   ts?: number,
   phash?: string
 ): ScreenshotInput {
-  let nextDbId = id;
   return {
     sourceKey,
     imageBuffer: Buffer.from(`fake_image_${id}`),
@@ -91,10 +91,6 @@ function createMockInput(
         mime: "image/png",
       },
     },
-    persistAcceptedScreenshot: vi.fn(async () => {
-      nextDbId += 1;
-      return nextDbId;
-    }),
   };
 }
 
@@ -104,8 +100,11 @@ function createMockInput(
 
 describe("SourceBufferRegistry", () => {
   class TestSourceBufferRegistry extends SourceBufferRegistry {
-    init(preferencesService: CapturePreferencesService): void {
-      this.initialize(preferencesService);
+    init(
+      preferencesService: CapturePreferencesService,
+      onPersistAcceptedScreenshot: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>
+    ): void {
+      this.initialize(preferencesService, onPersistAcceptedScreenshot);
     }
 
     shutdown(): void {
@@ -118,34 +117,44 @@ describe("SourceBufferRegistry", () => {
   let mockPHashDedup: ReturnType<typeof createMockPHashDedup>;
 
   // Store original config values
-  const originalBatchSize = batchConfig.batchSize;
-  const originalBatchTimeoutMs = batchConfig.batchTimeoutMs;
-  const originalGracePeriodMs = sourceBufferConfig.gracePeriodMs;
-  const originalRefreshIntervalMs = sourceBufferConfig.refreshIntervalMs;
+  const originalBatchSize = processingConfig.batch.batchSize;
+  const originalBatchTimeoutMs = processingConfig.batch.batchTimeoutMs;
+  const originalGracePeriodMs = processingConfig.captureSource.gracePeriodMs;
+  const originalRefreshIntervalMs = processingConfig.captureSource.refreshIntervalMs;
 
   beforeEach(async () => {
     vi.useFakeTimers();
+    screenshotProcessingEventBus.removeAllListeners();
     // Override config for testing
-    (batchConfig as { batchSize: number }).batchSize = 10;
-    (batchConfig as { batchTimeoutMs: number }).batchTimeoutMs = 60000;
-    (sourceBufferConfig as { gracePeriodMs: number }).gracePeriodMs = 60000;
-    (sourceBufferConfig as { refreshIntervalMs: number }).refreshIntervalMs = 10000;
+    (processingConfig.batch as { batchSize: number }).batchSize = 10;
+    (processingConfig.batch as { batchTimeoutMs: number }).batchTimeoutMs = 60000;
+    (processingConfig.captureSource as { gracePeriodMs: number }).gracePeriodMs = 60000;
+    (processingConfig.captureSource as { refreshIntervalMs: number }).refreshIntervalMs = 10000;
 
     mockPHashDedup = createMockPHashDedup();
     mockPreferencesService = createMockPreferencesService(["1", "2"], ["app1"]);
     registry = new TestSourceBufferRegistry(mockPHashDedup.computeHash);
-    registry.init(mockPreferencesService);
+    let nextDbId = 0;
+    registry.init(
+      mockPreferencesService,
+      vi.fn(async () => {
+        nextDbId += 1;
+        return nextDbId;
+      })
+    );
     await registry.refresh();
   });
 
   afterEach(() => {
     registry.shutdown();
+    screenshotProcessingEventBus.removeAllListeners();
     vi.useRealTimers();
     // Restore original config
-    (batchConfig as { batchSize: number }).batchSize = originalBatchSize;
-    (batchConfig as { batchTimeoutMs: number }).batchTimeoutMs = originalBatchTimeoutMs;
-    (sourceBufferConfig as { gracePeriodMs: number }).gracePeriodMs = originalGracePeriodMs;
-    (sourceBufferConfig as { refreshIntervalMs: number }).refreshIntervalMs =
+    (processingConfig.batch as { batchSize: number }).batchSize = originalBatchSize;
+    (processingConfig.batch as { batchTimeoutMs: number }).batchTimeoutMs = originalBatchTimeoutMs;
+    (processingConfig.captureSource as { gracePeriodMs: number }).gracePeriodMs =
+      originalGracePeriodMs;
+    (processingConfig.captureSource as { refreshIntervalMs: number }).refreshIntervalMs =
       originalRefreshIntervalMs;
   });
 
@@ -168,6 +177,24 @@ describe("SourceBufferRegistry", () => {
       expect(result.reason).toBeUndefined();
     });
 
+    it("should emit screenshot-accept for accepted screenshot", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("screenshot-accept", handler);
+
+      const input = createMockInput(1, "screen:1");
+      const result = await registry.add(input);
+
+      expect(result.accepted).toBe(true);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: expect.any(Number),
+          sourceKey: "screen:1",
+          filePath: "/path/to/screenshot_1.png",
+        })
+      );
+    });
+
     it("should reject screenshot for inactive source", async () => {
       const input = createMockInput(1, "screen:999");
       const result = await registry.add(input);
@@ -177,6 +204,9 @@ describe("SourceBufferRegistry", () => {
     });
 
     it("should reject duplicate screenshot (same pHash)", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("screenshot-accept", handler);
+
       const same = generateTestPhash("same_hash");
       const input1 = createMockInput(1, "screen:1", Date.now(), same);
       const input2 = createMockInput(2, "screen:1", Date.now(), same);
@@ -186,6 +216,7 @@ describe("SourceBufferRegistry", () => {
 
       expect(result.accepted).toBe(false);
       expect(result.reason).toBe("duplicate");
+      expect(handler).toHaveBeenCalledTimes(1);
     });
 
     it("should accept screenshots with different pHash", async () => {
@@ -235,6 +266,9 @@ describe("SourceBufferRegistry", () => {
     it("should drain buffer when batchSize is reached", async () => {
       const sourceKey: SourceKey = "screen:1";
 
+      const batchHandler = vi.fn();
+      screenshotProcessingEventBus.on("batch:ready", batchHandler);
+
       // Add 9 screenshots - should not trigger drain
       for (let i = 0; i < 9; i++) {
         const result = await registry.add(
@@ -249,6 +283,20 @@ describe("SourceBufferRegistry", () => {
       await registry.add(createMockInput(9, sourceKey, Date.now(), generateTestPhash("b_9")));
 
       expect(registry.get(sourceKey)?.screenshots).toHaveLength(0);
+      expect(batchHandler).toHaveBeenCalledTimes(1);
+      expect(batchHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "batch:ready",
+          trigger: "add",
+          batches: expect.objectContaining({
+            [sourceKey]: expect.any(Array),
+          }),
+        })
+      );
+      const firstEvent = batchHandler.mock.calls[0]?.[0] as {
+        batches: Record<string, unknown[]>;
+      };
+      expect(firstEvent.batches[sourceKey]).toHaveLength(10);
     });
 
     it("should not drain buffer before timeout when count is below threshold", async () => {
@@ -270,6 +318,9 @@ describe("SourceBufferRegistry", () => {
     it("should drain buffer when timeout (60s) is reached", async () => {
       const sourceKey: SourceKey = "screen:1";
 
+      const batchHandler = vi.fn();
+      screenshotProcessingEventBus.on("batch:ready", batchHandler);
+
       vi.setSystemTime(new Date("2024-01-01T10:00:00Z"));
       await registry.add(createMockInput(1, sourceKey));
 
@@ -280,6 +331,13 @@ describe("SourceBufferRegistry", () => {
       await vi.runOnlyPendingTimersAsync();
 
       expect(registry.get(sourceKey)?.screenshots).toHaveLength(0);
+      expect(batchHandler).toHaveBeenCalledTimes(1);
+      expect(batchHandler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "batch:ready",
+          trigger: "timeout",
+        })
+      );
 
       await registry.add(
         createMockInput(2, sourceKey, Date.now(), generateTestPhash("timeout_after"))

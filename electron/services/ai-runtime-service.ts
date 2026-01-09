@@ -412,7 +412,7 @@ type CaptureStatus = { status: string };
  */
 type CaptureControlCallbacks = {
   stop: () => void;
-  start: () => Promise<void> | void;
+  start: () => Promise<boolean>;
   getState?: () => CaptureStatus | null | undefined;
 };
 

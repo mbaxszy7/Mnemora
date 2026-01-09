@@ -3,15 +3,17 @@ import { getDb } from "../../database";
 import { batches, contextNodes, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { batchConfig, evidenceConfig, processingConfig } from "./config";
+import { processingConfig } from "./config";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
 import { vectorDocumentService } from "./vector-document-service";
 import { entityService } from "./entity-service";
-import { expandVLMIndexToNodes, textLLMProcessor } from "./text-llm-processor";
+import { textLLMProcessor } from "./text-llm-processor";
+import { BaseScheduler } from "./base-scheduler";
+import { screenshotProcessingEventBus } from "./event-bus";
 
-import { runVlmOnBatch } from "./vlm-processor";
+import { vlmProcessor } from "./vlm-processor";
 
 import type { VLMIndexResult } from "./schemas";
 import type {
@@ -26,15 +28,16 @@ import type {
 } from "./types";
 import type { ContextNodeRecord } from "../../database/schema";
 
-const logger = getLogger("reconcile-loop");
-const IDLE_SCAN_INTERVAL_MS = processingConfig.scheduler.scanIntervalMs;
+const logger = getLogger("screenshot-pipeline-scheduler");
+
+const ORPHAN_ENQUEUE_GRACE_MS = 5000;
 
 function getCanonicalAppCandidates(): string[] {
   return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
 }
 
 /**
- * `ReconcileLoop` 是截图处理管线的后台“对账/修复”调度器。
+ * `ScreenshotPipelineScheduler` 是截图处理管线的后台调度器。
  *
  * 核心目标：
  * - 把数据库里标记为 `pending` / `failed` 的工作推进到最终一致（`succeeded` 或 `failed_permanent`）。
@@ -43,27 +46,18 @@ function getCanonicalAppCandidates(): string[] {
  *   - **重试/退避**：失败后写入 `nextRunAt`，并按指数退避 + 随机抖动再次调度。
  *   - **崩溃恢复**：若 `running` 持续超过阈值，则回滚为 `pending` 重新跑。
  *
- * 本文件管理的任务类型（同一轮 `run()` 内按类型并发推进）：
+ * 本文件管理的任务类型（同一轮 `runCycle()` 内按类型并发推进）：
  * - **batches**：批量运行 VLM（视觉模型）+ 落库截图证据；随后触发后续节点/向量文档的同步。
  * - **context_nodes.merge**：同线程/同 kind 的节点合并（文本语言模型）。
- * - **vector_documents.embedding**：为节点生成向量表示（embedding）并落库。
- * - **vector_documents.index**：把向量表示（embedding）写入本地向量索引（HNSW），并请求刷新/落盘。
  *
  * 调度方式：
- * - `wake()`：外部触发“立刻跑一轮”，内部用“去抖”避免重复排队。
- * - `schedule()`：空闲时按 `computeNextRunAt()`（或固定间隔）设置 `setTimeout`。
+ * - `wake()`：外部触发“尽快跑一轮”。
+ * - 空闲时：根据 `computeEarliestNextRun()` 动态 `setTimeout`（由 BaseScheduler 管理）。
  */
-export class ReconcileLoop {
-  private timer: NodeJS.Timeout | null = null;
-  private isRunning = false;
-  private isProcessing = false;
-  private wakeScheduled = false;
-  private wakeRequested = false;
-
-  // `timer`：下一轮调度的 `setTimeout` 句柄
-  // `isRunning`：循环是否已 `start()` 且未 `stop()`
-  // `isProcessing`：当前是否正在执行一轮 `run()`（用于防止重入）
-  // `wakeScheduled`：是否已经排队了一个 `setImmediate(() => run())`
+export class ScreenshotPipelineScheduler extends BaseScheduler {
+  // `timer`：下一轮调度的 `setTimeout` 句柄（由 BaseScheduler 管理）
+  // `isRunning`：循环是否已 `start()` 且未 `stop()`（由 BaseScheduler 持有，但语义一致）
+  // `isProcessing`：当前是否正在执行一轮 cycle（用于防止重入；由 BaseScheduler 持有，但语义一致）
   // `wakeRequested`：当 `isProcessing=true` 时收到 `wake()`，置为 true；本轮结束后立刻再跑一轮
 
   private clampInt(value: number, min: number, max: number): number {
@@ -74,9 +68,6 @@ export class ReconcileLoop {
 
   /**
    * 每轮扫描数据库时的“拉取上限”。
-   *
-   * 设计目的：
-   * - 拉得太多会导致一次扫描读出大量无用行、加剧锁竞争。
    */
   private getScanLimit(): number {
     const batchWorkers = this.getBatchWorkerLimit();
@@ -104,7 +95,7 @@ export class ReconcileLoop {
    *
    * 启动后不会“常驻忙等”，而是：
    * - 先 `wake()` 立即跑一轮；
-   * - 每轮结束后根据 `computeNextRunAt()` 计算下一次 `setTimeout`。
+   * - 每轮结束后根据 `computeEarliestNextRun()` 调度下一次 `setTimeout`。
    */
   start(): void {
     if (this.isRunning) return;
@@ -114,28 +105,25 @@ export class ReconcileLoop {
     this.wake();
   }
 
-  private clearTimer(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+  protected getSoonDelayMs(): number {
+    return 0;
   }
 
-  private schedule(delayMs: number): void {
-    if (!this.isRunning) {
-      return;
-    }
-
-    this.clearTimer();
-
-    const delay = Number.isFinite(delayMs) ? Math.max(0, delayMs) : IDLE_SCAN_INTERVAL_MS;
-    this.timer = setTimeout(() => {
-      void this.run();
-    }, delay);
+  protected getDefaultIntervalMs(): number {
+    return processingConfig.scheduler.scanIntervalMs;
   }
 
-  private computeNextRunAt(now: number): number | null {
+  protected getMinDelayMs(): number {
+    return 0;
+  }
+
+  protected onScheduledNext(delayMs: number, earliestNextRun: number | null): void {
+    logger.debug({ delayMs, earliestNextRun }, "Scheduled next reconcile cycle");
+  }
+
+  protected computeEarliestNextRun(): number | null {
     const db = getDb();
+    const now = Date.now();
     let next: number | null = null;
 
     const consider = (candidate: number | null | undefined): void => {
@@ -192,7 +180,7 @@ export class ReconcileLoop {
       .limit(1)
       .get();
     if (orphan) {
-      const minAgeMs = batchConfig.batchTimeoutMs + 5000;
+      const minAgeMs = processingConfig.batch.batchTimeoutMs + ORPHAN_ENQUEUE_GRACE_MS;
       const eligibleAt = orphan.createdAt + minAgeMs;
       consider(eligibleAt <= now ? now : eligibleAt);
     }
@@ -207,7 +195,7 @@ export class ReconcileLoop {
   private async enqueueOrphanScreenshots(): Promise<void> {
     const db = getDb();
     const now = Date.now();
-    const minAgeMs = batchConfig.batchTimeoutMs + 5000;
+    const minAgeMs = processingConfig.batch.batchTimeoutMs + ORPHAN_ENQUEUE_GRACE_MS;
     const cutoffCreatedAt = now - minAgeMs;
 
     const limit = this.getScanLimit();
@@ -288,8 +276,8 @@ export class ReconcileLoop {
 
     let createdBatches = 0;
     for (const [sourceKey, rows] of bySource) {
-      for (let i = 0; i < rows.length; i += batchConfig.batchSize) {
-        const chunk = rows.slice(i, i + batchConfig.batchSize);
+      for (let i = 0; i < rows.length; i += processingConfig.batch.batchSize) {
+        const chunk = rows.slice(i, i + processingConfig.batch.batchSize);
         const accepted: AcceptedScreenshot[] = chunk.map((s) => ({
           id: s.id,
           ts: s.ts,
@@ -330,11 +318,10 @@ export class ReconcileLoop {
   /**
    * 停止调度循环。
    *
-   * 注意：如果此前已经排队了 `setImmediate(run)`，`run()` 开头会再次检查 `isRunning` 并直接退出。
+   * 注意：stop 后 timer 会被清理；如果仍有已触发的回调进入 `runCycle()`，函数开头会检查 `isRunning` 并直接退出。
    */
   stop(): void {
     this.isRunning = false;
-    this.wakeScheduled = false;
     this.wakeRequested = false;
     this.clearTimer();
     logger.info("Reconcile loop stopped");
@@ -343,28 +330,21 @@ export class ReconcileLoop {
   /**
    * 请求“立刻跑一轮”。
    *
-   * 这里使用“去抖”：
-   * - 同一时刻只允许排队一个 `setImmediate(run)`（由 `wakeScheduled` 控制）。
-   * - 如果当前正在 `run()` 中（`isProcessing=true`），则只设置 `wakeRequested=true`，
-   *   等本轮 `finally` 里再次 `wake()`。
+   * 语义：
+   * - 如果当前正在执行一轮 cycle（`isProcessing=true`），则只设置 `wakeRequested=true`，
+   *   等本轮 `finally` 里立刻再跑一轮。
+   * - 否则触发一次“尽快执行”的调度（0ms setTimeout）。
    */
   wake(): void {
     if (!this.isRunning) return;
 
-    this.clearTimer();
-
-    // 如果正在执行一轮 run()，则记一个“需要再跑一轮”的标记，避免重入。
+    // 如果正在执行一轮 cycle，则记一个“需要再跑一轮”的标记，避免重入。
     if (this.isProcessing) {
       this.wakeRequested = true;
       return;
     }
 
-    // 已经排队了一个 setImmediate，则不重复排队。
-    if (this.wakeScheduled) return;
-    this.wakeScheduled = true;
-    setImmediate(() => {
-      void this.run();
-    });
+    this.scheduleSoon();
   }
 
   /**
@@ -376,19 +356,11 @@ export class ReconcileLoop {
    * 3) 并发推进：
    *    - 批处理任务（VLM）与其他任务（合并/向量生成/索引）并行执行，避免互相阻塞。
    * 4) `enqueueOrphanScreenshots()`：把“遗漏入批”的截图补入批处理，保证最终不掉队。
-   * 5) 结束时决定下一次调度：若 `wakeRequested=true` 则立刻再跑，否则按 `computeNextRunAt()` 休眠。
+   * 5) 结束时决定下一次调度：若 `wakeRequested=true` 则立刻再跑，否则按 `computeEarliestNextRun()` 休眠。
    */
-  private async run(): Promise<void> {
-    // 防止 stop() 后仍有排队的 setImmediate 进来。
-    if (!this.isRunning) {
-      this.wakeScheduled = false;
-      this.wakeRequested = false;
-      return;
-    }
-    if (this.isProcessing) return;
+  protected override async runCycle(): Promise<void> {
+    if (!this.isRunning || this.isProcessing) return;
     this.isProcessing = true;
-    // 本轮开始时清掉 wakeScheduled 标记：表示“已排队的立即执行请求”已被本轮消费。
-    this.wakeScheduled = false;
 
     try {
       // 1) 崩溃/卡死恢复：把长时间处于 `running` 的任务回滚成 `pending`
@@ -396,13 +368,13 @@ export class ReconcileLoop {
 
       const records = await this.scanPendingRecords();
 
-      // 批处理（VLM）与其他任务分开：VLM 可能慢，不能让向量生成/索引等被“饿死”。
+      // 批处理（VLM）与其他任务分开：VLM 可能慢，不能让 merge被“饿死”。
       const batchRecords = records.filter((r) => r.table === "batches");
       const otherRecords = records.filter((r) => r.table !== "batches");
 
       // 两条流水线并行：
       // - batchPromise：批处理（含 VLM + 落库）
-      // - otherPromise：节点合并/向量生成/索引 等不依赖 VLM 并发许可的任务
+      // - otherPromise：节点合并不依赖 VLM 并发许可的任务
       const batchPromise =
         batchRecords.length > 0 ? this.processBatchesConcurrently(batchRecords) : Promise.resolve();
 
@@ -422,31 +394,25 @@ export class ReconcileLoop {
       this.isProcessing = false;
 
       if (!this.isRunning) {
-        this.wakeScheduled = false;
         this.wakeRequested = false;
         this.clearTimer();
       } else if (this.wakeRequested) {
         this.wakeRequested = false;
-        this.wake();
+        this.scheduleSoon();
       } else {
-        const now = Date.now();
         try {
-          const nextRunAt = this.computeNextRunAt(now);
-          let delayMs = IDLE_SCAN_INTERVAL_MS;
-          if (nextRunAt != null) {
-            delayMs = Math.max(0, nextRunAt - now);
-            if (delayMs > IDLE_SCAN_INTERVAL_MS) {
-              delayMs = IDLE_SCAN_INTERVAL_MS;
-            }
-          }
-
-          this.schedule(delayMs);
+          this.scheduleNext();
         } catch (error) {
           logger.warn(
             { error: error instanceof Error ? error.message : String(error) },
             "Failed to compute next run time; falling back to idle schedule"
           );
-          this.schedule(IDLE_SCAN_INTERVAL_MS);
+          this.clearTimer();
+          if (this.isRunning) {
+            this.timer = setTimeout(() => {
+              void this.runCycle();
+            }, this.getDefaultIntervalMs());
+          }
         }
       }
     }
@@ -500,9 +466,7 @@ export class ReconcileLoop {
     if (records.length === 0) return;
 
     // 两类任务并行推进；内部各自有并发控制。
-    await Promise.allSettled([
-      this.processRecordsWithConcurrency(records, this.getMergeWorkerLimit(), "merge"),
-    ]);
+    await this.processRecordsWithConcurrency(records, this.getMergeWorkerLimit(), "merge");
   }
 
   /**
@@ -731,6 +695,16 @@ export class ReconcileLoop {
         return;
       }
 
+      screenshotProcessingEventBus.emit("pipeline:batch:started", {
+        type: "pipeline:batch:started",
+        timestamp: now,
+        batchDbId: batchRecord.id,
+        batchId: batchRecord.batchId,
+        sourceKey: batchRecord.sourceKey as SourceKey,
+        attempts: batchRecord.attempts + 1,
+        screenshotCount: screenshotIds.length,
+      });
+
       if (screenshotIds.length > 0) {
         db.update(screenshots)
           .set({ vlmStatus: "running", enqueuedBatchId: batchRecord.id, updatedAt: now })
@@ -796,12 +770,21 @@ export class ReconcileLoop {
 
       // VLM 阶段：视觉模型对批次/分片做结构化理解。
       const vlmStartTime = Date.now();
-      const index = await runVlmOnBatch(batch, shards);
+      const vlmResult = await vlmProcessor.processBatch(batch, shards);
+      if (!vlmResult.success || !vlmResult.mergedResult) {
+        const firstError = vlmResult.shardResults.find((r) => !r.success)?.error;
+        if (firstError) {
+          throw firstError;
+        }
+        throw new Error(vlmResult.error ?? "VLM batch processing failed");
+      }
+
+      const index: VLMIndexResult = vlmResult.mergedResult;
       vlmMs = Date.now() - vlmStartTime;
 
       logger.debug({ batchId: batchRecord.batchId, vlmMs }, "VLM processing completed");
 
-      // 文本阶段：把 VLM 结果扩展成节点/证据等，并做必要的落库。
+      // 文本阶段：把 VLM 结果做落库。
       const textLlmStartTime = Date.now();
       await this.persistVlmEvidenceAndFinalize(index, batch);
       textLlmMs = Date.now() - textLlmStartTime;
@@ -817,7 +800,7 @@ export class ReconcileLoop {
           nextRunAt: null,
           updatedAt: Date.now(),
         })
-        .where(eq(batches.id, batchRecord.id))
+        .where(and(eq(batches.id, batchRecord.id), eq(batches.status, "running")))
         .run();
 
       const totalMs = Date.now() - processStartTime;
@@ -825,6 +808,19 @@ export class ReconcileLoop {
         { batchId: batchRecord.batchId, totalMs, vlmMs, textLlmMs },
         "Batch processing completed successfully"
       );
+
+      screenshotProcessingEventBus.emit("pipeline:batch:finished", {
+        type: "pipeline:batch:finished",
+        timestamp: Date.now(),
+        batchDbId: batchRecord.id,
+        batchId: batchRecord.batchId,
+        sourceKey: batchRecord.sourceKey as SourceKey,
+        status: "succeeded",
+        attempts: batchRecord.attempts + 1,
+        totalMs,
+        vlmMs,
+        textLlmMs,
+      });
     } catch (error) {
       const totalMs = Date.now() - processStartTime;
       const message = error instanceof Error ? error.message : String(error);
@@ -845,7 +841,7 @@ export class ReconcileLoop {
           errorMessage: message,
           updatedAt,
         })
-        .where(eq(batches.id, batchRecord.id))
+        .where(and(eq(batches.id, batchRecord.id), eq(batches.status, "running")))
         .run();
 
       if (screenshotIds.length > 0) {
@@ -870,6 +866,20 @@ export class ReconcileLoop {
             .run();
         }
       }
+
+      screenshotProcessingEventBus.emit("pipeline:batch:finished", {
+        type: "pipeline:batch:finished",
+        timestamp: Date.now(),
+        batchDbId: batchRecord.id,
+        batchId: batchRecord.batchId,
+        sourceKey: batchRecord.sourceKey as SourceKey,
+        status: isPermanent ? "failed_permanent" : "failed",
+        attempts,
+        totalMs,
+        vlmMs,
+        textLlmMs,
+        errorMessage: message,
+      });
     }
   }
 
@@ -943,12 +953,15 @@ export class ReconcileLoop {
       }
 
       if (shot?.ocr_text != null) {
-        setValues.ocrText = String(shot.ocr_text).slice(0, evidenceConfig.maxOcrTextLength);
+        setValues.ocrText = String(shot.ocr_text).slice(
+          0,
+          processingConfig.vlm.evidenceConfig.maxOcrTextLength
+        );
       }
 
       if (shot?.ui_text_snippets != null) {
         const uiSnippets = (shot.ui_text_snippets as string[])
-          .slice(0, evidenceConfig.maxUiTextSnippets)
+          .slice(0, processingConfig.vlm.evidenceConfig.maxUiTextSnippets)
           .map((s) => String(s).slice(0, 200));
         setValues.uiTextSnippets = JSON.stringify(uiSnippets);
       }
@@ -957,7 +970,7 @@ export class ReconcileLoop {
     }
 
     try {
-      const expandResult = await expandVLMIndexToNodes(index, batch);
+      const expandResult = await textLLMProcessor.expandToNodes(index, batch);
 
       // vector 入队点（新节点）：
       // - 这里只负责把节点内容同步/写入到 vector_documents，并把 embedding/index 两段状态机置为 pending。
@@ -1029,7 +1042,7 @@ export class ReconcileLoop {
           mergeErrorMessage: error instanceof Error ? error.message : String(error),
           updatedAt: Date.now(),
         })
-        .where(eq(contextNodes.id, node.id))
+        .where(and(eq(contextNodes.id, node.id), eq(contextNodes.mergeStatus, "running")))
         .run();
     }
   }
@@ -1189,4 +1202,4 @@ export class ReconcileLoop {
   }
 }
 
-export const reconcileLoop = new ReconcileLoop();
+export const screenshotPipelineScheduler = new ScreenshotPipelineScheduler();

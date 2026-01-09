@@ -20,7 +20,7 @@ import { screenshots } from "../../database/schema";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { vlmConfig, processingConfig } from "./config";
+import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
 import {
   VLMIndexResultSchema,
@@ -85,11 +85,7 @@ interface BatchProcessResult {
  * VLMProcessor handles VLM-based screenshot analysis
  */
 class VLMProcessor {
-  private readonly maxSegmentsPerBatch: number;
-
-  constructor(options?: { maxSegmentsPerBatch?: number }) {
-    this.maxSegmentsPerBatch = options?.maxSegmentsPerBatch ?? vlmConfig.maxSegmentsPerBatch;
-  }
+  private readonly maxSegmentsPerBatch = processingConfig.vlm.maxSegmentsPerBatch;
 
   // ──────────────────────────────────────────────────────────────────────────
   // Public API
@@ -190,7 +186,7 @@ class VLMProcessor {
               },
             },
           },
-          maxOutputTokens: vlmConfig.maxTokens,
+          maxOutputTokens: processingConfig.vlm.maxTokens,
           abortSignal: controller.signal,
         });
 
@@ -501,7 +497,7 @@ class VLMProcessor {
         entitySet.add(entity);
       }
     }
-    const mergedEntities = Array.from(entitySet).slice(0, vlmConfig.maxEntitiesPerBatch);
+    const mergedEntities = Array.from(entitySet).slice(0, processingConfig.vlm.maxEntitiesPerBatch);
 
     // Merge screenshots (dedupe by screenshot_id, keep first occurrence)
     const mergedScreenshotsMap = new Map<number, VLMIndexResult["screenshots"][number]>();
@@ -830,29 +826,8 @@ export class VLMParseError extends Error {
 // Singleton Export
 // ============================================================================
 
-const vlmProcessor = new VLMProcessor();
+export const vlmProcessor = new VLMProcessor();
 
 export const __test__ = {
-  createProcessor: (options?: { concurrency?: number; maxSegmentsPerBatch?: number }) =>
-    new VLMProcessor(options),
+  createProcessor: () => new VLMProcessor(),
 };
-
-export async function runVlmOnBatch(
-  batch: Batch,
-  shards: Shard[],
-  options?: { concurrency?: number; maxSegmentsPerBatch?: number }
-): Promise<VLMIndexResult> {
-  const processor = options ? new VLMProcessor(options) : vlmProcessor;
-  const result = await processor.processBatch(batch, shards);
-
-  if (result.success && result.mergedResult) {
-    return result.mergedResult;
-  }
-
-  const firstError = result.shardResults.find((r) => !r.success)?.error;
-  if (firstError) {
-    throw firstError;
-  }
-
-  throw new Error(result.error ?? "VLM batch processing failed");
-}

@@ -10,19 +10,17 @@
  *
  */
 
-import { EventEmitter } from "events";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { screen } from "electron";
 
 import type { CapturePreferencesService } from "../capture-preferences-service";
 import { AutoRefreshCache } from "../screen-capture/auto-refresh-cache";
-import { batchConfig, sourceBufferConfig } from "./config";
+import { processingConfig } from "./config";
 import { computeHash, isDuplicateByLast } from "./phash-dedup";
 import type { AcceptedScreenshot, SourceKey } from "./types";
 import { isValidSourceKey } from "./types";
 import { getLogger } from "../logger";
+import type { BatchReadyEvent } from "./events";
+import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("source-buffer-registry");
 
@@ -64,19 +62,7 @@ export interface ScreenshotInput {
   phash?: string;
   /** Screenshot data to store */
   screenshot: Omit<AcceptedScreenshot, "id" | "phash"> & { id?: number; phash?: string };
-  persistAcceptedScreenshot?: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>;
 }
-
-export type SourceBufferRegistryEvent = "batch:ready";
-
-export interface BatchReadyEvent {
-  type: "batch:ready";
-  timestamp: number;
-  trigger: "add" | "timeout";
-  batches: Record<SourceKey, AcceptedScreenshot[]>;
-}
-
-export const sourceBufferRegistryEmitter = new EventEmitter();
 
 // ============================================================================
 // SourceBufferRegistry Class
@@ -101,6 +87,9 @@ export class SourceBufferRegistry {
   private generationCounter = 0;
   private disposed = false;
   private processingBatches = false;
+  private persistAcceptedScreenshot:
+    | ((screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>)
+    | null = null;
 
   // Services
   private capturePreferencesService: CapturePreferencesService | null = null;
@@ -108,10 +97,10 @@ export class SourceBufferRegistry {
   private batchTriggerCache: AutoRefreshCache<void> | null = null;
 
   // Config
-  private readonly batchSize = batchConfig.batchSize;
-  private readonly batchTimeoutMs = batchConfig.batchTimeoutMs;
-  private readonly gracePeriodMs = sourceBufferConfig.gracePeriodMs;
-  private readonly refreshIntervalMs = sourceBufferConfig.refreshIntervalMs;
+  private readonly batchSize = processingConfig.batch.batchSize;
+  private readonly batchTimeoutMs = processingConfig.batch.batchTimeoutMs;
+  private readonly gracePeriodMs = processingConfig.captureSource.gracePeriodMs;
+  private readonly refreshIntervalMs = processingConfig.captureSource.refreshIntervalMs;
   private readonly computeHashFn: (imageBuffer: Buffer) => Promise<string>;
 
   constructor(computeHashFn: (imageBuffer: Buffer) => Promise<string> = computeHash) {
@@ -126,8 +115,12 @@ export class SourceBufferRegistry {
    * Initialize the registry with CapturePreferencesService
    * Starts automatic periodic refresh
    */
-  initialize(preferencesService: CapturePreferencesService): void {
+  initialize(
+    preferencesService: CapturePreferencesService,
+    onPersistAcceptedScreenshot: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>
+  ): void {
     this.capturePreferencesService = preferencesService;
+    this.persistAcceptedScreenshot = onPersistAcceptedScreenshot;
 
     // Ensure idempotent initialization (e.g., dev hot reload)
     this.refreshCache?.dispose();
@@ -208,7 +201,7 @@ export class SourceBufferRegistry {
     const now = Date.now();
 
     let id = screenshot.id;
-    if (input.persistAcceptedScreenshot) {
+    if (this.persistAcceptedScreenshot) {
       const payload: Omit<AcceptedScreenshot, "id"> = {
         ts: screenshot.ts,
         sourceKey: screenshot.sourceKey,
@@ -217,7 +210,7 @@ export class SourceBufferRegistry {
         phash,
       };
 
-      id = await input.persistAcceptedScreenshot(payload);
+      id = await this.persistAcceptedScreenshot(payload);
     }
     if (typeof id !== "number") {
       throw new Error("Accepted screenshot is missing database id");
@@ -231,6 +224,8 @@ export class SourceBufferRegistry {
 
     buffer.screenshots.push(acceptedScreenshot);
     buffer.lastSeenAt = now;
+
+    screenshotProcessingEventBus.emit("screenshot-accept", acceptedScreenshot);
 
     if (buffer.batchStartTs === null) {
       buffer.batchStartTs = now;
@@ -467,22 +462,6 @@ export class SourceBufferRegistry {
           { sourceKey, count: screenshots.length, trigger },
           "Batch ready from source buffer"
         );
-        // TODO: hand off `screenshots` to BatchBuilder/VLM pipeline via ScreenshotProcessingModule
-        // Temporary debug: copy accepted screenshots to ~/.mnemora/screenshots
-        if (process.env.MNEMORA_DEBUG_SCREENSHOT_COPY === "1") {
-          try {
-            const outDir = path.join(os.homedir(), ".mnemora", "screenshots");
-            fs.mkdirSync(outDir, { recursive: true });
-            for (const screenshot of screenshots) {
-              if (!screenshot.filePath) continue;
-              const fileName = `${screenshot.ts}-${sourceKey}.png`;
-              const destPath = path.join(outDir, fileName);
-              fs.copyFileSync(screenshot.filePath, destPath);
-            }
-          } catch (error) {
-            logger.warn({ error }, "Failed to write debug screenshots to disk");
-          }
-        }
       }
 
       const batchKeys = Object.keys(batches);
@@ -494,7 +473,7 @@ export class SourceBufferRegistry {
           batches,
         };
 
-        sourceBufferRegistryEmitter.emit("batch:ready", event);
+        screenshotProcessingEventBus.emit("batch:ready", event);
       }
     } finally {
       this.processingBatches = false;

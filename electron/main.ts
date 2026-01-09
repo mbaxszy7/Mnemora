@@ -269,8 +269,6 @@ class AppLifecycleController {
     this.initPowerMonitor();
     // 6. Initialize monitoring server (dev only)
     await this.initMonitoringServer();
-    // Initialize processing pipeline after DB is ready (but do not start capture)
-    screenCaptureModule.initializeProcessingPipeline();
   }
 
   private dispose(): void {

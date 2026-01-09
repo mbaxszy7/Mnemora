@@ -22,7 +22,8 @@ import {
   type NewBatchRecord,
 } from "../../database/schema";
 import { getLogger } from "../logger";
-import { vlmConfig, historyPackConfig } from "./config";
+import { screenshotProcessingEventBus } from "./event-bus";
+import { processingConfig } from "./config";
 import type {
   AcceptedScreenshot,
   Batch,
@@ -44,27 +45,11 @@ const logger = getLogger("batch-builder");
  * BatchBuilder creates and manages batches for VLM processing
  */
 export class BatchBuilder {
-  private readonly shardSize: number;
-  private readonly recentThreadsLimit: number;
-  private readonly recentEntitiesLimit: number;
-  private readonly openSegmentWindowMs: number;
-  private readonly summaryCharLimit: number;
-
-  constructor(options?: {
-    shardSize?: number;
-    recentThreadsLimit?: number;
-    recentEntitiesLimit?: number;
-    openSegmentWindowMs?: number;
-    summaryCharLimit?: number;
-  }) {
-    this.shardSize = options?.shardSize ?? vlmConfig.vlmShardSize;
-    this.recentThreadsLimit = options?.recentThreadsLimit ?? historyPackConfig.recentThreadsLimit;
-    this.recentEntitiesLimit =
-      options?.recentEntitiesLimit ?? historyPackConfig.recentEntitiesLimit;
-    this.openSegmentWindowMs =
-      options?.openSegmentWindowMs ?? historyPackConfig.openSegmentWindowMs;
-    this.summaryCharLimit = options?.summaryCharLimit ?? historyPackConfig.summaryCharLimit;
-  }
+  private readonly shardSize = processingConfig.vlm.vlmShardSize;
+  private readonly recentThreadsLimit = processingConfig.batch.HistoryPack.recentThreadsLimit;
+  private readonly recentEntitiesLimit = processingConfig.batch.HistoryPack.recentEntitiesLimit;
+  private readonly openSegmentWindowMs = processingConfig.batch.HistoryPack.openSegmentWindowMs;
+  private readonly summaryCharLimit = processingConfig.batch.HistoryPack.summaryCharLimit;
 
   // ──────────────────────────────────────────────────────────────────────────
   // Public API
@@ -302,6 +287,15 @@ export class BatchBuilder {
       },
       "Persisted batch to database"
     );
+
+    screenshotProcessingEventBus.emit("batch:persisted", {
+      type: "batch:persisted",
+      timestamp: now,
+      batchDbId: dbId,
+      batchId: batch.batchId,
+      sourceKey: batch.sourceKey,
+      screenshotIds,
+    });
 
     return dbId;
   }

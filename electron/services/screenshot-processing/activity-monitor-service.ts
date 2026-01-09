@@ -2,7 +2,7 @@
  * Activity Monitor Service
  *
  * Provides timeline queries, window summaries, and event details for Activity Monitor.
- * Note: This is a data access layer - LLM generation is handled by ReconcileLoop.
+ * Note: This is a data access layer - LLM generation is handled by ScreenshotPipelineScheduler.
  */
 
 import { eq, and, or, gte, lte, ne, inArray, lt, gt, desc } from "drizzle-orm";
@@ -44,6 +44,7 @@ import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { mainI18n } from "../i18n-service";
+import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("activity-monitor-service");
 
@@ -72,6 +73,12 @@ function emitActivityTimelineChanged(fromTs: number, toTs: number): void {
       fromTs: range.fromTs,
       toTs: range.toTs,
     };
+
+    screenshotProcessingEventBus.emit("activity-timeline:changed", {
+      type: "activity-timeline:changed",
+      timestamp: Date.now(),
+      payload,
+    });
 
     try {
       for (const win of BrowserWindow.getAllWindows()) {

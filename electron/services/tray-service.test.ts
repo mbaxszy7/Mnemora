@@ -188,7 +188,10 @@ describe("TrayService", () => {
 
       service.init();
 
-      expect(mockCaptureModule.on).toHaveBeenCalledWith("scheduler:state", expect.any(Function));
+      expect(mockCaptureModule.on).toHaveBeenCalledWith(
+        "capture-scheduler:state",
+        expect.any(Function)
+      );
     });
 
     it("should not reinitialize if already initialized", () => {
@@ -219,7 +222,10 @@ describe("TrayService", () => {
       service.init();
       service.dispose();
 
-      expect(mockCaptureModule.off).toHaveBeenCalledWith("scheduler:state", expect.any(Function));
+      expect(mockCaptureModule.off).toHaveBeenCalledWith(
+        "capture-scheduler:state",
+        expect.any(Function)
+      );
     });
 
     it("should remove all tray listeners", () => {
@@ -322,7 +328,7 @@ describe("TrayService", () => {
 
       // Get the registered handler
       const schedulerHandler = mockCaptureModule.on.mock.calls.find(
-        (call) => call[0] === "scheduler:state"
+        (call) => call[0] === "capture-scheduler:state"
       )?.[1];
 
       expect(schedulerHandler).toBeDefined();

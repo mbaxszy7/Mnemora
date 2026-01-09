@@ -9,17 +9,21 @@
 export * from "./types";
 
 // Export configuration
-export {
-  batchConfig,
-  vlmConfig,
-  phashConfig,
-  historyPackConfig,
-  evidenceConfig,
-  processingConfig,
-} from "./config";
+export { processingConfig } from "./config";
 
 // Export pHash deduplication
 export { computeHash, hammingDistance, isDuplicateByLast } from "./phash-dedup";
+
+export type {
+  ActivityTimelineChangedEvent,
+  BatchPersistedEvent,
+  BatchReadyEvent,
+  PipelineBatchFinishedEvent,
+  PipelineBatchStartedEvent,
+  VectorDocumentsDirtyEvent,
+  VectorDocumentTaskFinishedEvent,
+} from "./events";
+export { screenshotProcessingEventBus } from "./event-bus";
 
 // Export source buffer registry (unified class for source management and buffering)
 export {
@@ -29,32 +33,30 @@ export {
   type ScreenshotInput,
 } from "./source-buffer-registry";
 
-// Export source buffer config
-export { sourceBufferConfig } from "./config";
-
 // Export batch builder
 export { BatchBuilder, batchBuilder } from "./batch-builder";
 
 // Export VLM processor
-export { runVlmOnBatch, VLMParseError } from "./vlm-processor";
+export { vlmProcessor, VLMParseError } from "./vlm-processor";
 
 // Export Text LLM processor
 export {
   TextLLMProcessor,
   textLLMProcessor,
-  expandVLMIndexToNodes,
   type ExpandResult,
   type MergeResult,
 } from "./text-llm-processor";
 
-// Export reconcile loop
-export { ReconcileLoop, reconcileLoop } from "./reconcile-loop";
+// Export screenshot pipeline scheduler
+export {
+  ScreenshotPipelineScheduler,
+  screenshotPipelineScheduler,
+} from "./screenshot-pipeline-scheduler";
 
 // Export screenshot processing module (orchestration facade)
 export {
   ScreenshotProcessingModule,
   screenshotProcessingModule,
-  type ScreenCaptureEventSource,
 } from "./screenshot-processing-module";
 
 // Export context graph service (public API only)

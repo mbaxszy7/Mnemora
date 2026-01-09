@@ -225,10 +225,10 @@ export class TrayService {
   };
 
   private subscribeScheduler(): void {
-    screenCaptureModule.on("scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureModule.on("capture-scheduler:state", this.handleSchedulerEventBound);
   }
 
   private unsubscribeScheduler(): void {
-    screenCaptureModule.off("scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureModule.off("capture-scheduler:state", this.handleSchedulerEventBound);
   }
 }

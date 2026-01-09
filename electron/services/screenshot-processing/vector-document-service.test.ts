@@ -3,6 +3,7 @@ import { getDb, type DrizzleDB } from "../../database";
 import { vectorDocumentService } from "./vector-document-service";
 import { VectorDocumentScheduler } from "./vector-document-scheduler";
 import { vectorDocuments } from "../../database/schema";
+import { screenshotProcessingEventBus } from "./event-bus";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
 import crypto from "node:crypto";
@@ -37,6 +38,7 @@ describe("VectorDocumentService", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    screenshotProcessingEventBus.removeAllListeners();
     mockDb.select.mockReset();
     mockDb.insert.mockReset();
     mockDb.update.mockReset();
@@ -76,6 +78,9 @@ describe("VectorDocumentService", () => {
 
   describe("upsertForContextNode", () => {
     it("should create new vector document if not exists", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-documents:dirty", handler);
+
       // 1. Initial node check
       mockDb.select.mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
@@ -126,9 +131,22 @@ describe("VectorDocumentService", () => {
       expect(result.vectorDocumentId).toBe(101);
       expect(result.vectorId).toBe("node:1");
       expect(mockDb.insert).toHaveBeenCalled();
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "vector-documents:dirty",
+          reason: "upsert_for_context_node",
+          vectorDocumentId: 101,
+          nodeId: 1,
+        })
+      );
     });
 
     it("should not update if hash matches (idempotency)", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-documents:dirty", handler);
+
       const text = `Title: Test Event\nKind: event\nSummary: This is a test summary\nKeywords: key1, key2\nEntities: Entity1`;
       const hash = crypto.createHash("sha256").update(text).digest("hex");
 
@@ -172,9 +190,13 @@ describe("VectorDocumentService", () => {
 
       expect(result.vectorDocumentId).toBe(101);
       expect(mockDb.update).not.toHaveBeenCalled();
+      expect(handler).not.toHaveBeenCalled();
     });
 
     it("should update if hash differs", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-documents:dirty", handler);
+
       // 1. Initial node check
       mockDb.select.mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
@@ -225,6 +247,15 @@ describe("VectorDocumentService", () => {
       await vectorDocumentService.upsertForContextNode(1);
 
       expect(mockDb.update).toHaveBeenCalled();
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "vector-documents:dirty",
+          reason: "upsert_for_context_node",
+          vectorDocumentId: 101,
+          nodeId: 1,
+        })
+      );
     });
 
     it("should allow identical text across different nodes (no unique text hash)", async () => {
@@ -318,6 +349,8 @@ describe("VectorDocumentScheduler - Vector Documents", () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
 
+    screenshotProcessingEventBus.removeAllListeners();
+
     mockDb = {
       select: vi.fn().mockReturnThis(),
       from: vi.fn().mockReturnThis(),
@@ -344,6 +377,9 @@ describe("VectorDocumentScheduler - Vector Documents", () => {
 
   describe("processVectorDocumentEmbeddingRecord", () => {
     it("should process pending embedding record successfully", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-document:task:finished", handler);
+
       const mockRecord = {
         id: 1,
         table: "vector_documents" as const,
@@ -387,10 +423,23 @@ describe("VectorDocumentScheduler - Vector Documents", () => {
         })
       );
 
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "vector-document:task:finished",
+          subtask: "embedding",
+          docId: 1,
+          status: "succeeded",
+        })
+      );
+
       buildTextSpy.mockRestore();
     });
 
     it("should handle embedding failure", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-document:task:finished", handler);
+
       const mockRecord = {
         id: 1,
         table: "vector_documents" as const,
@@ -424,12 +473,26 @@ describe("VectorDocumentScheduler - Vector Documents", () => {
         })
       );
 
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "vector-document:task:finished",
+          subtask: "embedding",
+          docId: 1,
+          status: "failed",
+          errorMessage: "API Error",
+        })
+      );
+
       buildTextSpy.mockRestore();
     });
   });
 
   describe("processVectorDocumentIndexRecord", () => {
     it("should process pending index record successfully", async () => {
+      const handler = vi.fn();
+      screenshotProcessingEventBus.on("vector-document:task:finished", handler);
+
       const mockRecord = {
         id: 1,
         table: "vector_documents" as const,
@@ -462,6 +525,16 @@ describe("VectorDocumentScheduler - Vector Documents", () => {
       expect(mockDb.set).toHaveBeenLastCalledWith(
         expect.objectContaining({
           indexStatus: "succeeded",
+        })
+      );
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: "vector-document:task:finished",
+          subtask: "index",
+          docId: 1,
+          status: "succeeded",
         })
       );
     });

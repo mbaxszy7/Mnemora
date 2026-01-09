@@ -6,11 +6,17 @@
  * - Property tests for time order preservation and HistoryPack consistency
  */
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import fc from "fast-check";
 
 import { BatchBuilder } from "./batch-builder";
-import type { AcceptedScreenshot, SourceKey, HistoryPack } from "./types";
+import type { AcceptedScreenshot, Batch, SourceKey, HistoryPack } from "./types";
+import { screenshotProcessingEventBus } from "./event-bus";
+import { getDb } from "../../database";
+
+vi.mock("../../database", () => ({
+  getDb: vi.fn(),
+}));
 
 // ============================================================================
 // Test Helpers
@@ -62,7 +68,65 @@ describe("BatchBuilder", () => {
   let builder: BatchBuilder;
 
   beforeEach(() => {
+    screenshotProcessingEventBus.removeAllListeners();
     builder = new BatchBuilder();
+  });
+
+  it("should emit batch:persisted after persisting batch", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+
+    const handler = vi.fn();
+    screenshotProcessingEventBus.on("batch:persisted", handler);
+
+    const mockTx = {
+      insert: vi.fn().mockReturnThis(),
+      values: vi.fn().mockReturnThis(),
+      returning: vi.fn().mockReturnThis(),
+      get: vi.fn().mockReturnValue({ id: 10 }),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      all: vi.fn().mockReturnValue([]),
+      update: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+      run: vi.fn().mockReturnValue({ changes: 1 }),
+    };
+
+    const mockDb = {
+      transaction: (fn: (tx: typeof mockTx) => number) => fn(mockTx),
+    };
+
+    vi.mocked(getDb).mockReturnValue(mockDb as unknown as ReturnType<typeof getDb>);
+
+    const sourceKey: SourceKey = "screen:1";
+    const screenshots: AcceptedScreenshot[] = [
+      { id: 1, ts: 1000, sourceKey, phash: "a", filePath: "/1.png", meta: {} },
+    ];
+    const batch = builder.createBatch(sourceKey, screenshots);
+    const historyPack: HistoryPack = {
+      recentThreads: [],
+      openSegments: [],
+      recentEntities: [],
+    };
+
+    const dbId = await (
+      builder as unknown as { persistBatch: (b: Batch, h: HistoryPack) => Promise<number> }
+    ).persistBatch(batch, historyPack);
+
+    expect(dbId).toBe(10);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "batch:persisted",
+        batchDbId: 10,
+        batchId: batch.batchId,
+        sourceKey,
+        screenshotIds: [1],
+      })
+    );
+
+    vi.useRealTimers();
   });
 
   describe("createBatch", () => {

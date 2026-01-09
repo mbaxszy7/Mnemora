@@ -4,15 +4,13 @@ import { vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
 import { processingConfig } from "./config";
 import { aiRuntimeService } from "../ai-runtime-service";
-import {
-  onVectorDocumentsDirty,
-  vectorDocumentService,
-  type VectorDocumentDirtyEvent,
-} from "./vector-document-service";
+import { vectorDocumentService } from "./vector-document-service";
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
 import type { PendingRecord } from "./types";
 import { BaseScheduler } from "./base-scheduler";
+import type { VectorDocumentsDirtyEvent } from "./events";
+import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("vector-document-scheduler");
 
@@ -20,7 +18,7 @@ const logger = getLogger("vector-document-scheduler");
  * VectorDocumentScheduler：`vector_documents` 的后台调度器。
  *
  * 背景：项目里 vector 的目的是做“语义检索”。数据链路是：
- * - ReconcileLoop 产出/更新 context node（VLM 扩写新节点、merge 改写目标节点）
+ * - ScreenshotPipelineScheduler 产出/更新 context node（VLM 扩写新节点、merge 改写目标节点）
  * - VectorDocumentService.upsertForContextNode() 负责把变更写入 `vector_documents`，并把任务状态置为 pending（入队）
  * - 本调度器扫描 pending/failed 的记录，推进两段子任务：embedding 与 index
  * - VectorIndexService 负责维护本地 HNSW 索引（hnswlib）并落盘
@@ -58,7 +56,7 @@ export class VectorDocumentScheduler extends BaseScheduler {
     this.isRunning = true;
     logger.info("Vector document scheduler started");
 
-    this.offDirtyListener = onVectorDocumentsDirty(this.onDirty);
+    this.offDirtyListener = screenshotProcessingEventBus.on("vector-documents:dirty", this.onDirty);
     this.scheduleSoon();
   }
 
@@ -72,7 +70,7 @@ export class VectorDocumentScheduler extends BaseScheduler {
     logger.info("Vector document scheduler stopped");
   }
 
-  private onDirty(event: VectorDocumentDirtyEvent): void {
+  private onDirty(event: VectorDocumentsDirtyEvent): void {
     this.wake(event.reason);
   }
 
@@ -398,6 +396,15 @@ export class VectorDocumentScheduler extends BaseScheduler {
         .run();
 
       logger.debug({ docId: doc.id }, "Generated embedding for vector document");
+
+      screenshotProcessingEventBus.emit("vector-document:task:finished", {
+        type: "vector-document:task:finished",
+        timestamp: Date.now(),
+        subtask: "embedding",
+        docId: doc.id,
+        status: "succeeded",
+        attempts: doc.embeddingAttempts,
+      });
     } catch (error) {
       const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
       if (!doc) return;
@@ -416,6 +423,16 @@ export class VectorDocumentScheduler extends BaseScheduler {
         })
         .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.embeddingStatus, "running")))
         .run();
+
+      screenshotProcessingEventBus.emit("vector-document:task:finished", {
+        type: "vector-document:task:finished",
+        timestamp: Date.now(),
+        subtask: "embedding",
+        docId: doc.id,
+        status: isPermanent ? "failed_permanent" : "failed",
+        attempts,
+        errorMessage: message,
+      });
     }
   }
 
@@ -461,6 +478,15 @@ export class VectorDocumentScheduler extends BaseScheduler {
         .run();
 
       logger.debug({ docId: doc.id }, "Indexed vector document");
+
+      screenshotProcessingEventBus.emit("vector-document:task:finished", {
+        type: "vector-document:task:finished",
+        timestamp: Date.now(),
+        subtask: "index",
+        docId: doc.id,
+        status: "succeeded",
+        attempts: doc.indexAttempts,
+      });
     } catch (error) {
       const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
       if (!doc) return;
@@ -479,6 +505,16 @@ export class VectorDocumentScheduler extends BaseScheduler {
         })
         .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.indexStatus, "running")))
         .run();
+
+      screenshotProcessingEventBus.emit("vector-document:task:finished", {
+        type: "vector-document:task:finished",
+        timestamp: Date.now(),
+        subtask: "index",
+        docId: doc.id,
+        status: isPermanent ? "failed_permanent" : "failed",
+        attempts,
+        errorMessage: message,
+      });
     }
   }
 

@@ -5,7 +5,6 @@ import type {
   SchedulerEventPayload,
 } from "../screen-capture/types";
 
-import type { CapturePreferencesService } from "../capture-preferences-service";
 import { getLogger } from "../logger";
 import { and, eq, isNotNull, lte } from "drizzle-orm";
 
@@ -20,6 +19,7 @@ import { reconcileLoop } from "./reconcile-loop";
 import { activityTimelineScheduler } from "./activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
+import { ScreenCaptureModuleType } from "../screen-capture";
 
 export interface ScreenCaptureEventSource {
   on<T extends SchedulerEventPayload>(
@@ -151,10 +151,7 @@ export class ScreenshotProcessingModule {
     }
   };
 
-  initialize(options: {
-    screenCapture: ScreenCaptureEventSource;
-    preferencesService: CapturePreferencesService;
-  }): void {
+  initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
     if (this.initialized) {
       this.dispose();
     }
@@ -164,7 +161,7 @@ export class ScreenshotProcessingModule {
     sourceBufferRegistry.initialize(options.preferencesService);
 
     this.screenCapture.on("preferences:changed", this.onPreferencesChanged);
-    this.screenCapture.on<CaptureCompleteEvent>("capture:complete", this.onCaptureComplete);
+    this.screenCapture.on("capture:complete", this.onCaptureComplete);
 
     sourceBufferRegistryEmitter.on("batch:ready", this.onBatchReady);
 

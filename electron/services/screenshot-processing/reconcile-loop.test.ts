@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { reconcileLoop } from "./reconcile-loop";
 import { getDb } from "../../database";
-import { batches, contextNodes, screenshots, vectorDocuments } from "../../database/schema";
+import { batches, contextNodes, screenshots } from "../../database/schema";
 import { contextGraphService } from "./context-graph-service";
 import { textLLMProcessor } from "./text-llm-processor";
-import { reconcileConfig, retryConfig } from "./config";
+import { processingConfig } from "./config";
 import type { ContextNodeRecord } from "../../database/schema";
 
 // Mock dependencies
@@ -69,9 +69,6 @@ describe("ReconcileLoop", () => {
       mockDb.run.mockReturnValueOnce({ changes: 1 }); // screenshots
       mockDb.run.mockReturnValueOnce({ changes: 1 }); // batches
       mockDb.run.mockReturnValueOnce({ changes: 2 }); // contextNodes merge
-      mockDb.run.mockReturnValueOnce({ changes: 1 }); // contextNodes embedding
-      mockDb.run.mockReturnValueOnce({ changes: 2 }); // vectorDocuments embedding
-      mockDb.run.mockReturnValueOnce({ changes: 1 }); // vectorDocuments index
 
       await (
         reconcileLoop as unknown as { recoverStaleStates: () => Promise<void> }
@@ -80,10 +77,9 @@ describe("ReconcileLoop", () => {
       expect(mockDb.update).toHaveBeenCalledWith(screenshots);
       expect(mockDb.update).toHaveBeenCalledWith(batches);
       expect(mockDb.update).toHaveBeenCalledWith(contextNodes);
-      expect(mockDb.update).toHaveBeenCalledWith(vectorDocuments);
       expect(mockDb.set).toHaveBeenCalledWith(expect.objectContaining({ mergeStatus: "pending" }));
 
-      expect(mockDb.run).toHaveBeenCalledTimes(6);
+      expect(mockDb.run).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -146,13 +142,10 @@ describe("ReconcileLoop", () => {
     it("should consider orphan screenshot eligibility time", () => {
       const now = 100_000;
 
-      // Only 5 queries now (batches, context_nodes mergeStatus, vectorDocs embedding, vectorDocs index, orphan screenshots)
-      // Activity summaries and events are handled by ActivityTimelineScheduler
+      // Now queries: batches, context_nodes mergeStatus, orphan screenshots
       mockDb.get
         .mockReturnValueOnce(null) // batches
         .mockReturnValueOnce(null) // context_nodes mergeStatus
-        .mockReturnValueOnce(null) // vectorDocuments embedding
-        .mockReturnValueOnce(null) // vectorDocuments index
         .mockReturnValueOnce({ createdAt: 30_000 }); // orphan screenshot
 
       const nextRunAt = (
@@ -171,37 +164,30 @@ describe("ReconcileLoop", () => {
 
       await (reconcileLoop as unknown as { run: () => Promise<void> }).run();
 
-      expect(setTimeoutSpy.mock.calls.some((c) => c[1] === reconcileConfig.scanIntervalMs)).toBe(
-        true
-      );
+      expect(
+        setTimeoutSpy.mock.calls.some((c) => c[1] === processingConfig.scheduler.scanIntervalMs)
+      ).toBe(true);
 
       setTimeoutSpy.mockRestore();
     });
   });
 
   describe("scanPendingRecords", () => {
-    it("should scan batches, context_nodes, vector_documents (not screenshots)", async () => {
+    it("should scan batches, context_nodes (not screenshots or vector_documents)", async () => {
       // Note: Screenshots are no longer scanned - all screenshots are processed through batches
-      // Mock returns: batches, context_nodes, vector_documents (3 queries, not 4)
+      // vectorDocuments are no longer scanned - now handled separately
       mockDb.all
         .mockReturnValueOnce([
           { id: 11, status: "pending", attempts: 0, nextRunAt: null },
           { id: 12, status: "failed", attempts: 1, nextRunAt: null },
         ]) // batches
-        .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]) // context_nodes
-        .mockReturnValueOnce([
-          {
-            id: 31,
-            embeddingStatus: "failed",
-            embeddingAttempts: 1,
-            embeddingNextRunAt: null,
-          },
-        ]); // vector_documents (embedding)
+        .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]); // context_nodes
 
       const records = await (
         reconcileLoop as unknown as { scanPendingRecords: () => Promise<unknown[]> }
       ).scanPendingRecords();
 
+      expect(records).toHaveLength(3);
       expect(records).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ id: 11, table: "batches", status: "pending", attempts: 0 }),
@@ -211,12 +197,6 @@ describe("ReconcileLoop", () => {
             table: "context_nodes",
             status: "pending",
             attempts: 0,
-          }),
-          expect.objectContaining({
-            id: 31,
-            table: "vector_documents",
-            status: "failed",
-            attempts: 1,
           }),
         ])
       );
@@ -263,7 +243,7 @@ describe("ReconcileLoop", () => {
       const mockNode = {
         id: 1,
         kind: "event",
-        mergeAttempts: retryConfig.maxAttempts - 1, // Will reach max
+        mergeAttempts: processingConfig.scheduler.retryConfig.maxAttempts - 1, // Will reach max
       } as ContextNodeRecord;
 
       mockDb.get.mockReturnValueOnce(mockNode);
@@ -281,13 +261,13 @@ describe("ReconcileLoop", () => {
         id: 1,
         table: "context_nodes",
         status: "pending",
-        attempts: retryConfig.maxAttempts - 1,
+        attempts: processingConfig.scheduler.retryConfig.maxAttempts - 1,
       });
 
       expect(mockDb.set).toHaveBeenLastCalledWith(
         expect.objectContaining({
           mergeStatus: "failed_permanent",
-          mergeAttempts: retryConfig.maxAttempts,
+          mergeAttempts: processingConfig.scheduler.retryConfig.maxAttempts,
         })
       );
     });

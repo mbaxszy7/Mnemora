@@ -426,7 +426,9 @@ export class ContextSearchService {
       }
 
       return {
-        nodes: otherNodes.filter((n) => n.kind === queryPlan!.kindHint),
+        nodes: queryPlan?.kindHint
+          ? otherNodes.filter((n) => n.kind === queryPlan.kindHint)
+          : otherNodes,
         relatedEvents,
         evidence,
         queryPlan: queryPlan ?? undefined,

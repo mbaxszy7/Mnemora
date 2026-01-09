@@ -15,8 +15,9 @@ import { eq, and, lt, or, isNull, lte, desc, asc, gte, inArray } from "drizzle-o
 import { getDb } from "../../database";
 import { activitySummaries, activityEvents, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
-import { activitySummaryConfig, retryConfig, reconcileConfig } from "./config";
+import { processingConfig } from "./config";
 import { activityMonitorService } from "./activity-monitor-service";
+import { BaseScheduler } from "./base-scheduler";
 
 const logger = getLogger("activity-timeline-scheduler");
 
@@ -24,11 +25,7 @@ const logger = getLogger("activity-timeline-scheduler");
  * ActivityTimelineScheduler runs independently of ReconcileLoop.
  * It manages the lifecycle of activity summary and event details generation.
  */
-export class ActivityTimelineScheduler {
-  private timer: NodeJS.Timeout | null = null;
-  private isRunning = false;
-  private isProcessing = false;
-
+export class ActivityTimelineScheduler extends BaseScheduler {
   private lastSeedAt = 0;
   private appStartedAt: number | null = null;
 
@@ -36,10 +33,6 @@ export class ActivityTimelineScheduler {
    * Start the scheduler
    */
   start(): void {
-    if (!activitySummaryConfig.enabled) {
-      logger.info("Activity timeline scheduler disabled by config");
-      return;
-    }
     if (this.isRunning) return;
 
     this.isRunning = true;
@@ -59,58 +52,22 @@ export class ActivityTimelineScheduler {
     logger.info("Activity timeline scheduler stopped");
   }
 
-  private clearTimer(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+  protected getDefaultIntervalMs(): number {
+    return processingConfig.activitySummary.generationIntervalMs;
   }
 
-  private scheduleSoon(): void {
-    this.clearTimer();
-    if (!this.isRunning) return;
-
-    // Run soon (1 second delay) to allow other initialization to complete
-    this.timer = setTimeout(() => {
-      void this.runCycle();
-    }, 1000);
+  protected getMinDelayMs(): number {
+    return 10000;
   }
 
-  private scheduleNext(): void {
-    this.clearTimer();
-    if (!this.isRunning) return;
-
-    // 计算下一次需要执行的最早时间（nextRunAt），用于动态调度下一轮 cycle
-    const earliestNextRun = this.computeEarliestNextRun();
-    const now = Date.now();
-    const defaultIntervalMs = activitySummaryConfig.generationIntervalMs;
-
-    // 防 tight loop：即使任务已经 due（earliestNextRun <= now）或者马上 due，
-    // 也至少等待一个最小间隔再跑下一轮。
-    // 这样可以显著降低 CPU/DB 压力，并给 VLM/embedding 等异步流水线留出推进时间。
-    const minDelayMs = 10000;
-
-    // 如果有 earliestNextRun，则把 delay clamp 到 [minDelayMs, defaultIntervalMs]。
-    // - 不会因为 due task 导致 0ms/1s 紧循环
-    // - 也不会 sleep 超过默认周期（防止调度“睡过头”）
-    let delayMs: number;
-    if (earliestNextRun !== null) {
-      delayMs = Math.min(Math.max(earliestNextRun - now, minDelayMs), defaultIntervalMs);
-    } else {
-      delayMs = defaultIntervalMs;
-    }
-
-    this.timer = setTimeout(() => {
-      void this.runCycle();
-    }, delayMs);
-
+  protected onScheduledNext(delayMs: number, earliestNextRun: number | null): void {
     logger.debug({ delayMs, earliestNextRun }, "Scheduled next timeline cycle");
   }
 
   /**
    * Compute the earliest nextRunAt across pending activity_summaries and activity_events
    */
-  private computeEarliestNextRun(): number | null {
+  protected computeEarliestNextRun(): number | null {
     const db = getDb();
     const now = Date.now();
     let earliest: number | null = null;
@@ -128,7 +85,7 @@ export class ActivityTimelineScheduler {
       .where(
         and(
           or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
-          lt(activitySummaries.attempts, retryConfig.maxAttempts)
+          lt(activitySummaries.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(activitySummaries.nextRunAt))
@@ -147,7 +104,7 @@ export class ActivityTimelineScheduler {
               eq(activityEvents.detailsStatus, "pending"),
               eq(activityEvents.detailsStatus, "failed")
             ),
-            lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
+            lt(activityEvents.detailsAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
           )
         )
         .orderBy(asc(activityEvents.detailsNextRunAt))
@@ -169,9 +126,8 @@ export class ActivityTimelineScheduler {
   /**
    * Main cycle: recover stale states, seed windows, process pending tasks
    */
-  private async runCycle(): Promise<void> {
-    if (!this.isRunning) return;
-    if (this.isProcessing) return;
+  protected override async runCycle(): Promise<void> {
+    if (!this.isRunning || this.isProcessing) return;
 
     this.isProcessing = true;
     logger.debug("Starting timeline scheduler cycle");
@@ -215,7 +171,7 @@ export class ActivityTimelineScheduler {
       .where(
         and(
           or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
-          lt(activitySummaries.attempts, retryConfig.maxAttempts)
+          lt(activitySummaries.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .limit(1)
@@ -230,7 +186,7 @@ export class ActivityTimelineScheduler {
   private async recoverStaleStates(): Promise<void> {
     const db = getDb();
     const now = Date.now();
-    const staleThreshold = now - reconcileConfig.staleRunningThresholdMs;
+    const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
 
     // Recover activity_summaries
     const staleSummaries = db
@@ -364,7 +320,7 @@ export class ActivityTimelineScheduler {
     }
 
     const now = Date.now();
-    const intervalMs = activitySummaryConfig.generationIntervalMs;
+    const intervalMs = processingConfig.activitySummary.generationIntervalMs;
 
     // Only seed once per minute to avoid redundant work
     if (now - this.lastSeedAt < 60_000) {
@@ -432,7 +388,7 @@ export class ActivityTimelineScheduler {
               inArray(screenshots.vlmStatus, ["succeeded", "failed_permanent"]),
               and(
                 eq(screenshots.vlmStatus, "failed"),
-                gte(screenshots.vlmAttempts, retryConfig.maxAttempts)
+                gte(screenshots.vlmAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
               )
             )
           )
@@ -504,7 +460,7 @@ export class ActivityTimelineScheduler {
         and(
           or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
           or(isNull(activitySummaries.nextRunAt), lte(activitySummaries.nextRunAt, now)),
-          lt(activitySummaries.attempts, retryConfig.maxAttempts)
+          lt(activitySummaries.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(activitySummaries.windowStart))
@@ -552,17 +508,10 @@ export class ActivityTimelineScheduler {
         "Processing activity summary"
       );
 
-      const success = await activityMonitorService.generateWindowSummary(
-        record.windowStart,
-        record.windowEnd
-      );
-
-      if (!success) {
-        throw new Error("Summary generation returned false");
-      }
+      await activityMonitorService.generateWindowSummary(record.windowStart, record.windowEnd);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const isPermanent = claimedAttempts >= retryConfig.maxAttempts;
+      const isPermanent = claimedAttempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRunAt = isPermanent ? null : this.calculateNextRun();
 
       db.update(activitySummaries)
@@ -604,7 +553,7 @@ export class ActivityTimelineScheduler {
             eq(activityEvents.detailsStatus, "failed")
           ),
           or(isNull(activityEvents.detailsNextRunAt), lte(activityEvents.detailsNextRunAt, now)),
-          lt(activityEvents.detailsAttempts, retryConfig.maxAttempts)
+          lt(activityEvents.detailsAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(activityEvents.updatedAt))
@@ -658,7 +607,7 @@ export class ActivityTimelineScheduler {
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      const isPermanent = claimedAttempts >= retryConfig.maxAttempts;
+      const isPermanent = claimedAttempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRunAt = isPermanent ? null : this.calculateNextRun();
 
       db.update(activityEvents)

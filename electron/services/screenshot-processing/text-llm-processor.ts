@@ -40,7 +40,7 @@ import type {
   ContextKind,
   EvidencePack as EvidencePackType,
 } from "./types";
-import { aiConcurrencyConfig } from "./config";
+import { processingConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 import { aiRuntimeService } from "../ai-runtime-service";
 
@@ -924,7 +924,7 @@ export class TextLLMProcessor {
 
     // Setup timeout with AbortController
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
     try {
       const response = await generateObject({
@@ -1041,7 +1041,7 @@ export class TextLLMProcessor {
 
     // Setup timeout with AbortController
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
     try {
       const response = await generateObject({

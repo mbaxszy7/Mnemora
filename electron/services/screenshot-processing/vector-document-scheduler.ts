@@ -2,7 +2,7 @@ import { eq, and, or, lt, isNull, lte, asc } from "drizzle-orm";
 import { getDb } from "../../database";
 import { vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
-import { retryConfig, reconcileConfig } from "./config";
+import { processingConfig } from "./config";
 import { aiRuntimeService } from "../ai-runtime-service";
 import {
   onVectorDocumentsDirty,
@@ -12,6 +12,7 @@ import {
 import { embeddingService } from "./embedding-service";
 import { vectorIndexService } from "./vector-index-service";
 import type { PendingRecord } from "./types";
+import { BaseScheduler } from "./base-scheduler";
 
 const logger = getLogger("vector-document-scheduler");
 
@@ -41,17 +42,14 @@ const logger = getLogger("vector-document-scheduler");
  * - scheduleNext() 会按最早 nextRunAt 计算延迟，但受 minDelayMs 与 defaultIntervalMs 双重夹逼，避免 tight loop。
  */
 
-export class VectorDocumentScheduler {
-  private timer: NodeJS.Timeout | null = null;
-  private isRunning = false;
-  private isProcessing = false;
-  private wakeRequested = false;
+export class VectorDocumentScheduler extends BaseScheduler {
   private offDirtyListener: (() => void) | null = null;
 
   private minDelayMs = 5000; // 最小 5s 间隔：避免 DB 为空或任务异常时紧循环
-  private defaultIntervalMs = reconcileConfig.scanIntervalMs;
+  private defaultIntervalMs = processingConfig.scheduler.scanIntervalMs;
 
   constructor() {
+    super();
     this.onDirty = this.onDirty.bind(this);
   }
 
@@ -90,44 +88,19 @@ export class VectorDocumentScheduler {
     this.scheduleSoon();
   }
 
-  private clearTimer(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+  protected getDefaultIntervalMs(): number {
+    return this.defaultIntervalMs;
   }
 
-  private scheduleSoon(): void {
-    this.clearTimer();
-    if (!this.isRunning) return;
-
-    this.timer = setTimeout(() => {
-      void this.runCycle();
-    }, 1000);
+  protected getMinDelayMs(): number {
+    return this.minDelayMs;
   }
 
-  private scheduleNext(): void {
-    this.clearTimer();
-    if (!this.isRunning) return;
-
-    const earliestNextRun = this.computeEarliestNextRun();
-    const now = Date.now();
-
-    let delayMs: number;
-    if (earliestNextRun !== null) {
-      delayMs = Math.min(Math.max(earliestNextRun - now, this.minDelayMs), this.defaultIntervalMs);
-    } else {
-      delayMs = this.defaultIntervalMs;
-    }
-
-    this.timer = setTimeout(() => {
-      void this.runCycle();
-    }, delayMs);
-
+  protected onScheduledNext(delayMs: number, earliestNextRun: number | null): void {
     logger.debug({ delayMs, earliestNextRun }, "Scheduled next vector document cycle");
   }
 
-  private computeEarliestNextRun(): number | null {
+  protected computeEarliestNextRun(): number | null {
     const db = getDb();
     const now = Date.now();
     let earliest: number | null = null;
@@ -149,7 +122,7 @@ export class VectorDocumentScheduler {
             eq(vectorDocuments.embeddingStatus, "pending"),
             eq(vectorDocuments.embeddingStatus, "failed")
           ),
-          lt(vectorDocuments.embeddingAttempts, retryConfig.maxAttempts)
+          lt(vectorDocuments.embeddingAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(vectorDocuments.embeddingNextRunAt))
@@ -167,7 +140,7 @@ export class VectorDocumentScheduler {
         and(
           eq(vectorDocuments.embeddingStatus, "succeeded"),
           or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
-          lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
+          lt(vectorDocuments.indexAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(vectorDocuments.indexNextRunAt))
@@ -180,7 +153,7 @@ export class VectorDocumentScheduler {
     return earliest;
   }
 
-  private async runCycle(): Promise<void> {
+  protected override async runCycle(): Promise<void> {
     if (!this.isRunning || this.isProcessing) return;
 
     this.isProcessing = true;
@@ -228,7 +201,7 @@ export class VectorDocumentScheduler {
   private async recoverStaleStates(): Promise<void> {
     const db = getDb();
     const now = Date.now();
-    const staleThreshold = now - reconcileConfig.staleRunningThresholdMs;
+    const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
 
     const staleVectorEmbeddings = db
       .update(vectorDocuments)
@@ -293,7 +266,7 @@ export class VectorDocumentScheduler {
             isNull(vectorDocuments.embeddingNextRunAt),
             lte(vectorDocuments.embeddingNextRunAt, now)
           ),
-          lt(vectorDocuments.embeddingAttempts, retryConfig.maxAttempts)
+          lt(vectorDocuments.embeddingAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .limit(limit)
@@ -324,7 +297,7 @@ export class VectorDocumentScheduler {
           eq(vectorDocuments.embeddingStatus, "succeeded"),
           or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
           or(isNull(vectorDocuments.indexNextRunAt), lte(vectorDocuments.indexNextRunAt, now)),
-          lt(vectorDocuments.indexAttempts, retryConfig.maxAttempts)
+          lt(vectorDocuments.indexAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .limit(limit)
@@ -381,10 +354,6 @@ export class VectorDocumentScheduler {
 
   private async processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void> {
     const db = getDb();
-    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
-
-    if (!doc || doc.embeddingStatus === "succeeded") return;
-
     try {
       // 认领（claim）：把 pending/failed 原子地改为 running，避免并发重复处理。
       const claim = db
@@ -392,7 +361,7 @@ export class VectorDocumentScheduler {
         .set({ embeddingStatus: "running", updatedAt: Date.now() })
         .where(
           and(
-            eq(vectorDocuments.id, doc.id),
+            eq(vectorDocuments.id, record.id),
             or(
               eq(vectorDocuments.embeddingStatus, "pending"),
               eq(vectorDocuments.embeddingStatus, "failed")
@@ -402,6 +371,9 @@ export class VectorDocumentScheduler {
         .run();
 
       if (claim.changes === 0) return;
+
+      const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+      if (!doc || doc.embeddingStatus === "succeeded") return;
 
       if (!doc.refId) throw new Error("Vector document missing refId");
 
@@ -422,14 +394,16 @@ export class VectorDocumentScheduler {
           indexNextRunAt: null,
           updatedAt: Date.now(),
         })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.embeddingStatus, "running")))
         .run();
 
       logger.debug({ docId: doc.id }, "Generated embedding for vector document");
     } catch (error) {
+      const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+      if (!doc) return;
       const message = error instanceof Error ? error.message : String(error);
       const attempts = doc.embeddingAttempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const isPermanent = attempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
 
       db.update(vectorDocuments)
@@ -440,17 +414,13 @@ export class VectorDocumentScheduler {
           errorMessage: message,
           updatedAt: Date.now(),
         })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.embeddingStatus, "running")))
         .run();
     }
   }
 
   private async processVectorDocumentIndexRecord(record: PendingRecord): Promise<void> {
     const db = getDb();
-    const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
-
-    if (!doc || doc.embeddingStatus !== "succeeded" || !doc.embedding) return;
-
     try {
       // 认领（claim）：把 pending/failed 原子地改为 running。
       const claim = db
@@ -458,7 +428,8 @@ export class VectorDocumentScheduler {
         .set({ indexStatus: "running", updatedAt: Date.now() })
         .where(
           and(
-            eq(vectorDocuments.id, doc.id),
+            eq(vectorDocuments.id, record.id),
+            eq(vectorDocuments.embeddingStatus, "succeeded"),
             or(
               eq(vectorDocuments.indexStatus, "pending"),
               eq(vectorDocuments.indexStatus, "failed")
@@ -468,6 +439,9 @@ export class VectorDocumentScheduler {
         .run();
 
       if (claim.changes === 0) return;
+
+      const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+      if (!doc || doc.embeddingStatus !== "succeeded" || !doc.embedding) return;
 
       // DB 中 embedding 以 Buffer 存储，读取后映射回 Float32Array。
       const buffer = doc.embedding as Buffer;
@@ -483,14 +457,16 @@ export class VectorDocumentScheduler {
           errorMessage: null,
           updatedAt: Date.now(),
         })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.indexStatus, "running")))
         .run();
 
       logger.debug({ docId: doc.id }, "Indexed vector document");
     } catch (error) {
+      const doc = db.select().from(vectorDocuments).where(eq(vectorDocuments.id, record.id)).get();
+      if (!doc) return;
       const message = error instanceof Error ? error.message : String(error);
       const attempts = doc.indexAttempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const isPermanent = attempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
 
       db.update(vectorDocuments)
@@ -501,13 +477,13 @@ export class VectorDocumentScheduler {
           errorMessage: message,
           updatedAt: Date.now(),
         })
-        .where(eq(vectorDocuments.id, doc.id))
+        .where(and(eq(vectorDocuments.id, doc.id), eq(vectorDocuments.indexStatus, "running")))
         .run();
     }
   }
 
   private calculateNextRun(attempts: number): number {
-    const { backoffScheduleMs, jitterMs } = retryConfig;
+    const { backoffScheduleMs, jitterMs } = processingConfig.scheduler.retryConfig;
     const baseDelay = backoffScheduleMs[Math.min(attempts - 1, backoffScheduleMs.length - 1)];
     const jitter = Math.random() * jitterMs;
     return Date.now() + baseDelay + jitter;

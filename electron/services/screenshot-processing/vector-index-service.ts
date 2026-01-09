@@ -4,14 +4,10 @@ import hnswlib from "hnswlib-node";
 import { and, count, eq, isNotNull } from "drizzle-orm";
 import { getDb } from "../../database";
 import { vectorDocuments } from "../../database/schema";
-import { vectorStoreConfig } from "./config";
+import { processingConfig } from "./config";
 import { getLogger } from "../logger";
 
 const logger = getLogger("vector-index-service");
-
-// 当 DB 里还没有任何 embedding 时的兜底维度。
-const DEFAULT_DIMENSIONS = 1536;
-const DEFAULT_FLUSH_DEBOUNCE_MS = 500;
 
 export class VectorIndexService {
   private index: hnswlib.HierarchicalNSW | null = null;
@@ -43,10 +39,10 @@ export class VectorIndexService {
     }
 
     logger.info(
-      { defaultDimensions: DEFAULT_DIMENSIONS },
+      { defaultDimensions: processingConfig.vectorStore.defaultDimensions },
       "No existing embeddings, using default dimensions"
     );
-    return DEFAULT_DIMENSIONS;
+    return processingConfig.vectorStore.defaultDimensions;
   }
 
   /**
@@ -62,7 +58,7 @@ export class VectorIndexService {
       return this.loadPromise;
     }
 
-    const { indexFilePath } = vectorStoreConfig;
+    const { indexFilePath } = processingConfig.vectorStore;
     const db = getDb();
 
     this.loadPromise = (async () => {
@@ -164,7 +160,7 @@ export class VectorIndexService {
    */
   async flush(): Promise<void> {
     if (!this.index) return;
-    const { indexFilePath } = vectorStoreConfig;
+    const { indexFilePath } = processingConfig.vectorStore;
     try {
       this.index.writeIndexSync(indexFilePath);
       logger.debug("Flushed vector index to disk");
@@ -278,7 +274,7 @@ export class VectorIndexService {
    * 因此这里用 setTimeout 做一次合并写。
    */
   requestFlush(): void {
-    const delay = vectorStoreConfig.flushDebounceMs ?? DEFAULT_FLUSH_DEBOUNCE_MS;
+    const delay = processingConfig.vectorStore.flushDebounceMs;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(async () => {
       this.flushTimer = null;

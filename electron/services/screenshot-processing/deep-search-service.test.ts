@@ -150,7 +150,7 @@ describe("DeepSearchService", () => {
 
   describe("synthesizeAnswer", () => {
     it("should return null when nodes array is empty", async () => {
-      const result = await service.synthesizeAnswer("test query", [], []);
+      const result = await service.synthesizeAnswer("test query", [], [], Date.now(), "UTC");
 
       expect(result).toBeNull();
     });
@@ -172,12 +172,17 @@ describe("DeepSearchService", () => {
       const testEvidence: ScreenshotEvidence[] = [
         {
           screenshotId: 100,
-          ts: 1000,
-          storageState: "persisted",
+          timestamp: 1000,
         },
       ];
 
-      const result = await service.synthesizeAnswer("test query", testNodes, testEvidence);
+      const result = await service.synthesizeAnswer(
+        "test query",
+        testNodes,
+        testEvidence,
+        Date.now(),
+        "UTC"
+      );
 
       expect(result).toBeNull();
     });

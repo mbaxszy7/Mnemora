@@ -1,10 +1,31 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest";
 import { getDb, type DrizzleDB } from "../../database";
 import { vectorDocumentService } from "./vector-document-service";
+import { VectorDocumentScheduler } from "./vector-document-scheduler";
+import { vectorDocuments } from "../../database/schema";
+import { embeddingService } from "./embedding-service";
+import { vectorIndexService } from "./vector-index-service";
 import crypto from "node:crypto";
+
+import type { PendingRecord } from "./types";
 
 vi.mock("../../database", () => ({
   getDb: vi.fn(),
+}));
+
+vi.mock("./embedding-service", () => ({
+  embeddingService: {
+    embed: vi.fn(),
+  },
+}));
+
+vi.mock("./vector-index-service", () => ({
+  vectorIndexService: {
+    upsert: vi.fn(),
+    requestFlush: vi.fn(),
+    load: vi.fn(),
+    search: vi.fn(),
+  },
 }));
 
 describe("VectorDocumentService", () => {
@@ -263,6 +284,186 @@ describe("VectorDocumentService", () => {
       expect(result2.vectorId).toBe("node:2");
       expect(mockDb.insert).toHaveBeenCalledTimes(2);
       expect(mockDb.update).not.toHaveBeenCalled();
+    });
+  });
+});
+
+// Helper type for accessing private methods in tests
+type VectorDocumentSchedulerPrivate = {
+  processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void>;
+  processVectorDocumentIndexRecord(record: PendingRecord): Promise<void>;
+};
+
+type SchedulerMockDB = {
+  select: Mock;
+  from: Mock;
+  where: Mock;
+  orderBy: Mock;
+  limit: Mock;
+  all: Mock;
+  get: Mock;
+  update: Mock;
+  insert: Mock;
+  set: Mock;
+  values: Mock;
+  run: Mock;
+};
+
+describe("VectorDocumentScheduler - Vector Documents", () => {
+  let scheduler: VectorDocumentScheduler;
+  let mockDb: SchedulerMockDB;
+  const now = 1000;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+
+    mockDb = {
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockReturnThis(),
+      orderBy: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      all: vi.fn(),
+      get: vi.fn(),
+      update: vi.fn().mockReturnThis(),
+      insert: vi.fn().mockReturnThis(),
+      set: vi.fn().mockReturnThis(),
+      values: vi.fn().mockReturnThis(),
+      run: vi.fn().mockReturnThis(),
+    };
+
+    vi.mocked(getDb).mockReturnValue(mockDb as unknown as DrizzleDB);
+    scheduler = new VectorDocumentScheduler();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.useRealTimers();
+  });
+
+  describe("processVectorDocumentEmbeddingRecord", () => {
+    it("should process pending embedding record successfully", async () => {
+      const mockRecord = {
+        id: 1,
+        table: "vector_documents" as const,
+        status: "pending" as const,
+        attempts: 0,
+        subtask: "embedding" as const,
+      };
+
+      const mockDoc = {
+        id: 1,
+        refId: 100,
+        embeddingStatus: "pending",
+        embeddingAttempts: 0,
+      };
+
+      mockDb.get.mockReturnValue(mockDoc);
+      mockDb.run.mockReturnValue({ changes: 1 }); // claim succeeds
+      const buildTextSpy = vi
+        .spyOn(vectorDocumentService, "buildTextForNode")
+        .mockResolvedValue("mock text content");
+      const mockVector = new Float32Array([0.1, 0.2, 0.3]);
+      vi.mocked(embeddingService.embed).mockResolvedValue(mockVector);
+
+      await (
+        scheduler as unknown as VectorDocumentSchedulerPrivate
+      ).processVectorDocumentEmbeddingRecord(mockRecord);
+
+      expect(mockDb.update).toHaveBeenCalledWith(vectorDocuments);
+      expect(mockDb.set).toHaveBeenCalledWith({
+        embeddingStatus: "running",
+        updatedAt: 1000,
+      });
+
+      expect(buildTextSpy).toHaveBeenCalledWith(100);
+      expect(embeddingService.embed).toHaveBeenCalledWith("mock text content");
+
+      expect(mockDb.set).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          embeddingStatus: "succeeded",
+          indexStatus: "pending",
+        })
+      );
+
+      buildTextSpy.mockRestore();
+    });
+
+    it("should handle embedding failure", async () => {
+      const mockRecord = {
+        id: 1,
+        table: "vector_documents" as const,
+        status: "pending" as const,
+        attempts: 0,
+        subtask: "embedding" as const,
+      };
+
+      const mockDoc = {
+        id: 1,
+        refId: 100,
+        embeddingStatus: "pending",
+        embeddingAttempts: 0,
+      };
+
+      mockDb.get.mockReturnValue(mockDoc);
+      mockDb.run.mockReturnValue({ changes: 1 }); // claim succeeds
+      const buildTextSpy = vi
+        .spyOn(vectorDocumentService, "buildTextForNode")
+        .mockResolvedValue("text");
+      vi.mocked(embeddingService.embed).mockRejectedValue(new Error("API Error"));
+
+      await (
+        scheduler as unknown as VectorDocumentSchedulerPrivate
+      ).processVectorDocumentEmbeddingRecord(mockRecord);
+
+      expect(mockDb.set).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          embeddingStatus: "failed",
+          errorMessage: "API Error",
+        })
+      );
+
+      buildTextSpy.mockRestore();
+    });
+  });
+
+  describe("processVectorDocumentIndexRecord", () => {
+    it("should process pending index record successfully", async () => {
+      const mockRecord = {
+        id: 1,
+        table: "vector_documents" as const,
+        status: "pending" as const,
+        attempts: 0,
+        subtask: "index" as const,
+      };
+
+      const mockEmbeddingVector = new Float32Array([0.1, 0.2]);
+      const mockBuffer = Buffer.from(mockEmbeddingVector.buffer);
+
+      const mockDoc = {
+        id: 1,
+        embeddingStatus: "succeeded",
+        embedding: mockBuffer,
+        indexStatus: "pending",
+        indexAttempts: 0,
+      };
+
+      mockDb.get.mockReturnValue(mockDoc);
+      mockDb.run.mockReturnValue({ changes: 1 }); // claim succeeds
+
+      await (
+        scheduler as unknown as VectorDocumentSchedulerPrivate
+      ).processVectorDocumentIndexRecord(mockRecord);
+
+      expect(vectorIndexService.upsert).toHaveBeenCalledWith(1, expect.any(Float32Array));
+      expect(vectorIndexService.requestFlush).toHaveBeenCalled();
+
+      expect(mockDb.set).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          indexStatus: "succeeded",
+        })
+      );
     });
   });
 });

@@ -26,7 +26,7 @@ import type {
   ScreenshotEvidence,
   ContextKind,
 } from "./types";
-import { aiConcurrencyConfig } from "./config";
+import { processingConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 import { aiRuntimeService } from "../ai-runtime-service";
 
@@ -123,7 +123,7 @@ export class DeepSearchService {
     const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
     const onAbort = () => controller.abort();
     abortSignal?.addEventListener("abort", onAbort);
 
@@ -281,7 +281,7 @@ export class DeepSearchService {
     const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+    const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
     const onAbort = () => controller.abort();
     abortSignal?.addEventListener("abort", onAbort);
 

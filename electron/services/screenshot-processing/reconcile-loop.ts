@@ -3,7 +3,7 @@ import { getDb } from "../../database";
 import { batches, contextNodes, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { batchConfig, evidenceConfig, reconcileConfig, retryConfig } from "./config";
+import { batchConfig, evidenceConfig, processingConfig } from "./config";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { batchBuilder } from "./batch-builder";
 import { contextGraphService } from "./context-graph-service";
@@ -27,7 +27,7 @@ import type {
 import type { ContextNodeRecord } from "../../database/schema";
 
 const logger = getLogger("reconcile-loop");
-const IDLE_SCAN_INTERVAL_MS = reconcileConfig.scanIntervalMs;
+const IDLE_SCAN_INTERVAL_MS = processingConfig.scheduler.scanIntervalMs;
 
 function getCanonicalAppCandidates(): string[] {
   return Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
@@ -107,10 +107,6 @@ export class ReconcileLoop {
    * - 每轮结束后根据 `computeNextRunAt()` 计算下一次 `setTimeout`。
    */
   start(): void {
-    if (!reconcileConfig.enabled) {
-      logger.info("Reconcile loop disabled by config");
-      return;
-    }
     if (this.isRunning) return;
     this.isRunning = true;
     logger.info("Reconcile loop started");
@@ -155,7 +151,7 @@ export class ReconcileLoop {
       .where(
         and(
           or(eq(batches.status, "pending"), eq(batches.status, "failed")),
-          lt(batches.attempts, retryConfig.maxAttempts)
+          lt(batches.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(batches.nextRunAt))
@@ -171,7 +167,7 @@ export class ReconcileLoop {
       .where(
         and(
           or(eq(contextNodes.mergeStatus, "pending"), eq(contextNodes.mergeStatus, "failed")),
-          lt(contextNodes.mergeAttempts, retryConfig.maxAttempts)
+          lt(contextNodes.mergeAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(asc(contextNodes.mergeNextRunAt))
@@ -187,7 +183,7 @@ export class ReconcileLoop {
         and(
           isNull(screenshots.enqueuedBatchId),
           or(eq(screenshots.vlmStatus, "pending"), eq(screenshots.vlmStatus, "failed")),
-          lt(screenshots.vlmAttempts, retryConfig.maxAttempts),
+          lt(screenshots.vlmAttempts, processingConfig.scheduler.retryConfig.maxAttempts),
           isNotNull(screenshots.filePath),
           ne(screenshots.storageState, "deleted")
         )
@@ -226,7 +222,7 @@ export class ReconcileLoop {
             eq(batches.status, "failed"),
             eq(batches.status, "running")
           ),
-          lt(batches.attempts, retryConfig.maxAttempts)
+          lt(batches.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .orderBy(desc(batches.updatedAt))
@@ -265,7 +261,7 @@ export class ReconcileLoop {
         and(
           isNull(screenshots.enqueuedBatchId),
           or(eq(screenshots.vlmStatus, "pending"), eq(screenshots.vlmStatus, "failed")),
-          lt(screenshots.vlmAttempts, retryConfig.maxAttempts),
+          lt(screenshots.vlmAttempts, processingConfig.scheduler.retryConfig.maxAttempts),
           lte(screenshots.createdAt, cutoffCreatedAt),
           isNotNull(screenshots.filePath),
           ne(screenshots.storageState, "deleted")
@@ -555,7 +551,7 @@ export class ReconcileLoop {
    */
   private async recoverStaleStates(): Promise<void> {
     const db = getDb();
-    const staleThreshold = Date.now() - reconcileConfig.staleRunningThresholdMs;
+    const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
 
     const staleScreenshots = db
       .update(screenshots)
@@ -622,7 +618,7 @@ export class ReconcileLoop {
         and(
           or(eq(batches.status, "pending"), eq(batches.status, "failed")),
           or(isNull(batches.nextRunAt), lte(batches.nextRunAt, now)),
-          lt(batches.attempts, retryConfig.maxAttempts)
+          lt(batches.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .limit(limit)
@@ -640,7 +636,7 @@ export class ReconcileLoop {
         and(
           or(eq(contextNodes.mergeStatus, "pending"), eq(contextNodes.mergeStatus, "failed")),
           or(isNull(contextNodes.mergeNextRunAt), lte(contextNodes.mergeNextRunAt, now)),
-          lt(contextNodes.mergeAttempts, retryConfig.maxAttempts)
+          lt(contextNodes.mergeAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
       .limit(limit)
@@ -690,7 +686,7 @@ export class ReconcileLoop {
       return;
     }
 
-    if (batchRecord.attempts >= retryConfig.maxAttempts) {
+    if (batchRecord.attempts >= processingConfig.scheduler.retryConfig.maxAttempts) {
       return;
     }
 
@@ -837,7 +833,7 @@ export class ReconcileLoop {
         "Batch processing failed"
       );
       const attempts = batchRecord.attempts + 1;
-      const isPermanent = attempts >= retryConfig.maxAttempts;
+      const isPermanent = attempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRun = isPermanent ? null : this.calculateNextRun(attempts);
       const updatedAt = Date.now();
 
@@ -860,7 +856,7 @@ export class ReconcileLoop {
           .all();
         for (const s of shotRows) {
           const nextAttempts = s.vlmAttempts + 1;
-          const shotPermanent = nextAttempts >= retryConfig.maxAttempts;
+          const shotPermanent = nextAttempts >= processingConfig.scheduler.retryConfig.maxAttempts;
           const shotNextRun = shotPermanent ? null : this.calculateNextRun(nextAttempts);
           db.update(screenshots)
             .set({
@@ -1022,7 +1018,7 @@ export class ReconcileLoop {
 
       await this.handleSingleMerge(node);
     } catch (error) {
-      const isPermanent = claimedAttempts >= retryConfig.maxAttempts;
+      const isPermanent = claimedAttempts >= processingConfig.scheduler.retryConfig.maxAttempts;
       const nextRun = isPermanent ? null : this.calculateNextRun(claimedAttempts);
 
       db.update(contextNodes)
@@ -1186,7 +1182,7 @@ export class ReconcileLoop {
    * - 随机抖动用于打散同一时刻大量任务同时重试造成的尖峰。
    */
   private calculateNextRun(attempts: number): number {
-    const { backoffScheduleMs, jitterMs } = retryConfig;
+    const { backoffScheduleMs, jitterMs } = processingConfig.scheduler.retryConfig;
     const baseDelay = backoffScheduleMs[Math.min(attempts - 1, backoffScheduleMs.length - 1)];
     const jitter = Math.random() * jitterMs;
     return Date.now() + baseDelay + jitter;

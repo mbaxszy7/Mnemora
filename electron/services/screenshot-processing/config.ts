@@ -96,31 +96,14 @@ export const phashConfig: PHashConfig = {
  * Controls global concurrency limits for AI API calls to prevent
  * overwhelming the provider with too many concurrent requests.
  */
-interface AIConcurrencyConfig {
-  vlmGlobalConcurrency: number;
-  textGlobalConcurrency: number;
-  embeddingGlobalConcurrency: number;
-  vlmTimeoutMs: number;
-  textTimeoutMs: number;
-  embeddingTimeoutMs: number;
 
-  adaptiveEnabled: boolean;
-  adaptiveMinConcurrency: number;
-  adaptiveWindowSize: number;
-  adaptiveFailureRateThreshold: number;
-  adaptiveConsecutiveFailureThreshold: number;
-  adaptiveCooldownMs: number;
-  adaptiveRecoveryStep: number;
-  adaptiveRecoverySuccessThreshold: number;
-}
-
-export const aiConcurrencyConfig: AIConcurrencyConfig = {
+const aiConcurrencyConfig = {
   vlmGlobalConcurrency: 10,
   textGlobalConcurrency: 10,
   embeddingGlobalConcurrency: 10,
   vlmTimeoutMs: 120000, // 2 minutes
   textTimeoutMs: 120000, // 2 minutes
-  embeddingTimeoutMs: 30000, // 30 seconds
+  embeddingTimeoutMs: 60000, // 60 seconds
 
   adaptiveEnabled: true,
   adaptiveMinConcurrency: 1,
@@ -130,28 +113,6 @@ export const aiConcurrencyConfig: AIConcurrencyConfig = {
   adaptiveCooldownMs: 30000,
   adaptiveRecoveryStep: 1,
   adaptiveRecoverySuccessThreshold: 20,
-};
-
-// ============================================================================
-// Retry Configuration
-// ============================================================================
-
-/**
- * Retry and recovery configuration
- */
-interface RetryConfig {
-  /** Maximum number of retry attempts (default: 3) */
-  maxAttempts: number;
-  /** Backoff schedule in milliseconds (default: [5000, 20000, 60000, 300000]) */
-  backoffScheduleMs: number[];
-  /** Random jitter to add to backoff in milliseconds (default: 5000) */
-  jitterMs: number;
-}
-
-export const retryConfig: RetryConfig = {
-  maxAttempts: 5,
-  backoffScheduleMs: [10000, 30000, 120000, 300000, 600000], // 10s, 30s, 2m, 5m, 10m
-  jitterMs: 5000,
 };
 
 // ============================================================================
@@ -198,70 +159,36 @@ export const evidenceConfig: EvidenceConfig = {
   maxUiTextSnippets: 20,
 };
 
-// ============================================================================
-// Reconcile Loop Configuration
-// ============================================================================
-
-/**
- * Reconcile loop configuration
- */
-interface ReconcileConfig {
-  /** Scan interval in milliseconds (default: 30000 = 30s) */
-  scanIntervalMs: number;
-  /** Threshold for considering a running record as stale in milliseconds (default: 300000 = 5min) */
-  staleRunningThresholdMs: number;
-  /** Whether to enable the reconcile loop (default: true) */
-  enabled: boolean;
-}
-
-export const reconcileConfig: ReconcileConfig = {
+const schedulerConfig = {
   scanIntervalMs: 30000,
   staleRunningThresholdMs: 600000,
-  enabled: true,
+  retryConfig: {
+    maxAttempts: 5,
+    /** Backoff schedule in milliseconds */
+    backoffScheduleMs: [10000, 30000, 120000, 300000], // 10s, 30s, 2m, 5m, 10m
+    /** Random jitter to add to backoff in milliseconds (default: 5000) */
+    jitterMs: 5000,
+  },
 };
 
-const processingConfigInternal = {
-  batch: batchConfig,
-  reconcile: reconcileConfig,
-  ai: aiConcurrencyConfig,
-};
-
-export const processingConfig = processingConfigInternal;
-
-// ============================================================================
-// Activity Summary Configuration
-// ============================================================================
-
-/**
- * Activity summary generation configuration
- */
-interface ActivitySummaryConfig {
-  /** Generation interval in milliseconds (default: 1200000 = 20min) */
-  generationIntervalMs: number;
-  /** Whether to enable automatic generation (default: true) */
-  enabled: boolean;
-}
-
-export const activitySummaryConfig: ActivitySummaryConfig = {
+const activitySummaryConfig = {
   generationIntervalMs: 1200000, // 20 minutes
-  enabled: true,
+  longEventThresholdMs: 25 * 60 * 1000, // 25 minutes threshold for long events
+  eventDetailsEvidenceMaxNodes: 50,
+  eventDetailsEvidenceMaxChars: 24000,
 };
 
-// ============================================================================
-// Vector Store Configuration
-// ============================================================================
-
-/**
- * Vector store configuration
- */
-interface VectorStoreConfig {
-  /** Path to store the HNSW index file */
-  indexFilePath: string;
-  /** Debounce interval for flushing index to disk (ms) */
-  flushDebounceMs?: number;
-}
-
-export const vectorStoreConfig: VectorStoreConfig = {
+const vectorStoreConfig = {
   indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
+  /** Debounce interval for flushing index to disk (ms) */
   flushDebounceMs: 500,
+  defaultDimensions: 1536,
+};
+
+export const processingConfig = {
+  batch: batchConfig,
+  scheduler: schedulerConfig,
+  ai: aiConcurrencyConfig,
+  activitySummary: activitySummaryConfig,
+  vectorStore: vectorStoreConfig,
 };

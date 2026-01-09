@@ -20,7 +20,7 @@ import { screenshots } from "../../database/schema";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
-import { vlmConfig, aiConcurrencyConfig } from "./config";
+import { vlmConfig, processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
 import {
   VLMIndexResultSchema,
@@ -170,7 +170,7 @@ class VLMProcessor {
     const runAttempt = async (degraded: boolean) => {
       const attemptStart = Date.now();
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.vlmTimeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.vlmTimeoutMs);
       try {
         const req = degraded ? this.buildVLMRequest(shard, { degraded: true }) : request;
         const { object: rawResult, usage } = await generateObject({
@@ -402,7 +402,7 @@ class VLMProcessor {
       {
         batchId: batch.batchId,
         shardCount: shards.length,
-        globalConcurrency: aiConcurrencyConfig.vlmGlobalConcurrency,
+        globalConcurrency: processingConfig.ai.vlmGlobalConcurrency,
       },
       "Processing batch"
     );

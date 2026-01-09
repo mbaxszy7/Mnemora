@@ -2,7 +2,7 @@ import { embed } from "ai";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
 import { llmUsageService } from "../llm-usage-service";
-import { aiConcurrencyConfig } from "./config";
+import { processingConfig } from "./config";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 import { aiRuntimeService } from "../ai-runtime-service";
 
@@ -22,8 +22,7 @@ export class EmbeddingService {
 
     // Setup timeout with AbortController (combine with external signal if provided)
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.embeddingTimeoutMs);
-
+    const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.embeddingTimeoutMs);
     // If external abort signal is provided, forward abort to our controller
     const onAbort = () => controller.abort();
     abortSignal?.addEventListener("abort", onAbort);

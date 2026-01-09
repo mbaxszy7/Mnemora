@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { VectorIndexService } from "./vector-index-service";
-import { vectorStoreConfig } from "./config";
+import { processingConfig } from "./config";
 
 vi.mock("../logger", () => ({
   getLogger: vi.fn(() => ({
@@ -48,13 +48,13 @@ vi.mock("../../database", () => ({
 }));
 
 describe("VectorIndexService (integration with hnswlib-node)", () => {
-  const originalConfig = { ...vectorStoreConfig };
+  const originalConfig = { ...processingConfig.vectorStore };
   let tmpDir: string;
   let service: VectorIndexService;
 
   beforeEach(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "hnsw-test-"));
-    vectorStoreConfig.indexFilePath = path.join(tmpDir, "index.bin");
+    processingConfig.vectorStore.indexFilePath = path.join(tmpDir, "index.bin");
 
     service = new VectorIndexService();
     mockDb.select.mockClear();
@@ -62,7 +62,7 @@ describe("VectorIndexService (integration with hnswlib-node)", () => {
   });
 
   afterEach(() => {
-    vectorStoreConfig.indexFilePath = originalConfig.indexFilePath;
+    processingConfig.vectorStore.indexFilePath = originalConfig.indexFilePath;
 
     if (fs.existsSync(tmpDir)) {
       fs.rmSync(tmpDir, { recursive: true, force: true });

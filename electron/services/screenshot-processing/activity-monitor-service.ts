@@ -40,18 +40,12 @@ import {
   ActivityEventDetailsLLMProcessedSchema,
 } from "./schemas";
 
-import { activitySummaryConfig, retryConfig, aiConcurrencyConfig } from "./config";
+import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { mainI18n } from "../i18n-service";
 
 const logger = getLogger("activity-monitor-service");
-
-// 25 minutes threshold for long events
-const LONG_EVENT_THRESHOLD_MS = 25 * 60 * 1000;
-
-const EVENT_DETAILS_EVIDENCE_MAX_NODES = 50;
-const EVENT_DETAILS_EVIDENCE_MAX_CHARS = 24000;
 
 let activityTimelineChangedRevision = 0;
 let activityTimelineChangedTimer: NodeJS.Timeout | null = null;
@@ -389,7 +383,7 @@ class ActivityMonitorService {
   /**
    * Trigger LLM generation for a 20-minute window summary
    */
-  async generateWindowSummary(windowStart: number, windowEnd: number): Promise<boolean> {
+  async generateWindowSummary(windowStart: number, windowEnd: number) {
     const db = getDb();
     const aiService = AISDKService.getInstance();
 
@@ -459,7 +453,10 @@ class ActivityMonitorService {
                     inArray(screenshots.vlmStatus, ["pending", "running"]),
                     and(
                       eq(screenshots.vlmStatus, "failed"),
-                      lt(screenshots.vlmAttempts, retryConfig.maxAttempts)
+                      lt(
+                        screenshots.vlmAttempts,
+                        processingConfig.scheduler.retryConfig.maxAttempts
+                      )
                     )
                   )
                 )
@@ -497,7 +494,6 @@ class ActivityMonitorService {
           )
           .run();
         emitActivityTimelineChanged(windowStart, windowEnd);
-        return true;
       }
 
       // Branch: Processing (screens exist but no nodes yet)
@@ -514,14 +510,19 @@ class ActivityMonitorService {
         const delayMs = Math.round(minDelayMs + (maxDelayMs - minDelayMs) * pendingRatio);
 
         // 叠加随机抖动：避免多个窗口在同一时刻集中醒来，造成突发的 DB/CPU 峰值。
-        const nextRunAt = Date.now() + delayMs + Math.floor(Math.random() * retryConfig.jitterMs);
+        const nextRunAt =
+          Date.now() +
+          delayMs +
+          Math.floor(Math.random() * processingConfig.scheduler.retryConfig.jitterMs);
 
         // 只是在等待 VLM 时，不应该把这次当作失败重试。
         // scheduler 在 claim 时会先 +1，这里在 VLM 仍未完成时把 attempts 回滚（避免把 "Processing" 等待耗尽重试次数）。
         const newAttempts = pendingVlmCount > 0 ? Math.max(0, attempts - 1) : attempts;
 
         // 只有在：重试次数耗尽 且 VLM 已经对窗口内所有截图处理完成 时，才允许 "Processing" 变成 "No Data" 并结束重试。
-        const shouldStopRetry = newAttempts >= retryConfig.maxAttempts && pendingVlmCount === 0;
+        const shouldStopRetry =
+          newAttempts >= processingConfig.scheduler.retryConfig.maxAttempts &&
+          pendingVlmCount === 0;
 
         const emptySummary = buildEmptyWindowSummary();
         const stats: ActivityStats = {
@@ -698,7 +699,7 @@ class ActivityMonitorService {
       // Use semaphore for concurrency control and AbortController for timeout
       const releaseText = await aiRuntimeService.acquire("text");
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
@@ -774,7 +775,7 @@ class ActivityMonitorService {
       // 6. Save Events
       // Allow small gaps when merging events across windows for the same threadId.
       // This tolerates boundary jitter and LLM offsets when a continuous activity spans windows.
-      const mergeGapMs = activitySummaryConfig.generationIntervalMs + 2 * 60 * 1000;
+      const mergeGapMs = processingConfig.activitySummary.generationIntervalMs + 2 * 60 * 1000;
       for (const [idx, event] of data.events.entries()) {
         // LLM returns start/end as minute offsets relative to windowStart.
         // Convert them to absolute timestamps for persistence and cross-window merging.
@@ -875,7 +876,8 @@ class ActivityMonitorService {
         .run();
 
       emitActivityTimelineChanged(windowStart, windowEnd);
-      return false;
+
+      throw error;
     }
   }
 
@@ -957,8 +959,8 @@ class ActivityMonitorService {
 
       const { items: nodesDataCapped, approxChars: nodesDataApproxChars } = capJsonArrayByChars(
         nodesDataRaw,
-        EVENT_DETAILS_EVIDENCE_MAX_NODES,
-        EVENT_DETAILS_EVIDENCE_MAX_CHARS
+        processingConfig.activitySummary.eventDetailsEvidenceMaxNodes,
+        processingConfig.activitySummary.eventDetailsEvidenceMaxChars
       );
 
       const nodesData = nodesDataCapped.map(({ eventTimeMs, ...rest }) => ({
@@ -988,8 +990,8 @@ class ActivityMonitorService {
             originalNodeCount: nodeMap.size,
             returnedNodeCount: nodesData.length,
             returnedApproxChars: nodesDataApproxChars,
-            maxNodes: EVENT_DETAILS_EVIDENCE_MAX_NODES,
-            maxChars: EVENT_DETAILS_EVIDENCE_MAX_CHARS,
+            maxNodes: processingConfig.activitySummary.eventDetailsEvidenceMaxNodes,
+            maxChars: processingConfig.activitySummary.eventDetailsEvidenceMaxChars,
           },
           activityLogs: nodesData,
           outputSchema: {
@@ -1008,7 +1010,7 @@ class ActivityMonitorService {
       logger.debug({ eventId, waitMs: semaphoreWaitDuration }, "Event details semaphore acquired");
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), aiConcurrencyConfig.textTimeoutMs);
+      const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
@@ -1121,7 +1123,7 @@ class ActivityMonitorService {
     const db = getDb();
     const now = Date.now();
     const durationMs = params.endTs - params.startTs;
-    const isLong = durationMs >= LONG_EVENT_THRESHOLD_MS;
+    const isLong = durationMs >= processingConfig.activitySummary.longEventThresholdMs;
 
     // Check if event exists
     const existing = await db
@@ -1136,7 +1138,7 @@ class ActivityMonitorService {
       const newStartTs = Math.min(event.startTs, params.startTs);
       const newEndTs = Math.max(event.endTs, params.endTs);
       const newDurationMs = newEndTs - newStartTs;
-      const newIsLong = newDurationMs >= LONG_EVENT_THRESHOLD_MS;
+      const newIsLong = newDurationMs >= processingConfig.activitySummary.longEventThresholdMs;
 
       // Merge nodeIds
       const existingNodeIds = parseJsonSafe<number[]>(event.nodeIds, []);

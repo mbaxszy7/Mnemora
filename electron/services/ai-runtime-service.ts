@@ -6,7 +6,7 @@ import type { LLMConfig } from "@shared/llm-config-types";
 
 import { getLogger } from "./logger";
 import { llmConfigService } from "./llm-config-service";
-import { aiConcurrencyConfig } from "./screenshot-processing/config";
+import { processingConfig } from "./screenshot-processing/config";
 
 /**
  * AI 能力类型（贯穿 semaphore/tuner/breaker 以及所有调用点）。
@@ -185,21 +185,21 @@ class AISemaphoreManager {
 
   get vlm(): Semaphore {
     if (!this._vlm) {
-      this._vlm = new Semaphore(aiConcurrencyConfig.vlmGlobalConcurrency);
+      this._vlm = new Semaphore(processingConfig.ai.vlmGlobalConcurrency);
     }
     return this._vlm;
   }
 
   get text(): Semaphore {
     if (!this._text) {
-      this._text = new Semaphore(aiConcurrencyConfig.textGlobalConcurrency);
+      this._text = new Semaphore(processingConfig.ai.textGlobalConcurrency);
     }
     return this._text;
   }
 
   get embedding(): Semaphore {
     if (!this._embedding) {
-      this._embedding = new Semaphore(aiConcurrencyConfig.embeddingGlobalConcurrency);
+      this._embedding = new Semaphore(processingConfig.ai.embeddingGlobalConcurrency);
     }
     return this._embedding;
   }
@@ -232,7 +232,7 @@ class AISemaphoreManager {
 // =========================================================================
 
 type CapabilityState = {
-  /** 初始并发上限（通常来自 aiConcurrencyConfig.*GlobalConcurrency） */
+  /** 初始并发上限（通常来自 processingConfig.ai.*GlobalConcurrency） */
   base: number;
 
   /** 当前并发上限（会被 degrade/recover 调整） */
@@ -276,9 +276,9 @@ class AIConcurrencyTuner {
 
     const now = this.nowFn();
     this.state = {
-      vlm: this.makeState(aiConcurrencyConfig.vlmGlobalConcurrency, now),
-      text: this.makeState(aiConcurrencyConfig.textGlobalConcurrency, now),
-      embedding: this.makeState(aiConcurrencyConfig.embeddingGlobalConcurrency, now),
+      vlm: this.makeState(processingConfig.ai.vlmGlobalConcurrency, now),
+      text: this.makeState(processingConfig.ai.textGlobalConcurrency, now),
+      embedding: this.makeState(processingConfig.ai.embeddingGlobalConcurrency, now),
     };
   }
 
@@ -307,14 +307,14 @@ class AIConcurrencyTuner {
   }
 
   private record(capability: AICapability, ok: boolean, error?: unknown): void {
-    if (!aiConcurrencyConfig.adaptiveEnabled) {
+    if (!processingConfig.ai.adaptiveEnabled) {
       return;
     }
 
     const st = this.state[capability];
 
     st.window.push(ok);
-    if (st.window.length > aiConcurrencyConfig.adaptiveWindowSize) {
+    if (st.window.length > processingConfig.ai.adaptiveWindowSize) {
       st.window.shift();
     }
 
@@ -327,7 +327,7 @@ class AIConcurrencyTuner {
     }
 
     const now = this.nowFn();
-    if (now - st.lastAdjustedAt < aiConcurrencyConfig.adaptiveCooldownMs) {
+    if (now - st.lastAdjustedAt < processingConfig.ai.adaptiveCooldownMs) {
       return;
     }
 
@@ -336,13 +336,13 @@ class AIConcurrencyTuner {
     const failureRate = windowSize > 0 ? failures / windowSize : 0;
 
     const shouldDegrade =
-      st.consecutiveFailures >= aiConcurrencyConfig.adaptiveConsecutiveFailureThreshold ||
-      (windowSize >= Math.min(5, aiConcurrencyConfig.adaptiveWindowSize) &&
-        failureRate >= aiConcurrencyConfig.adaptiveFailureRateThreshold);
+      st.consecutiveFailures >= processingConfig.ai.adaptiveConsecutiveFailureThreshold ||
+      (windowSize >= Math.min(5, processingConfig.ai.adaptiveWindowSize) &&
+        failureRate >= processingConfig.ai.adaptiveFailureRateThreshold);
 
     if (shouldDegrade) {
       // Multiplicative Decrease
-      const min = Math.max(1, Math.floor(aiConcurrencyConfig.adaptiveMinConcurrency));
+      const min = Math.max(1, Math.floor(processingConfig.ai.adaptiveMinConcurrency));
       const next = Math.max(min, Math.floor(st.current / 2));
 
       if (next < st.current) {
@@ -371,10 +371,10 @@ class AIConcurrencyTuner {
 
     if (
       st.current < st.base &&
-      st.consecutiveSuccesses >= aiConcurrencyConfig.adaptiveRecoverySuccessThreshold
+      st.consecutiveSuccesses >= processingConfig.ai.adaptiveRecoverySuccessThreshold
     ) {
       // Additive Increase
-      const step = Math.max(1, Math.floor(aiConcurrencyConfig.adaptiveRecoveryStep));
+      const step = Math.max(1, Math.floor(processingConfig.ai.adaptiveRecoveryStep));
       const next = Math.min(st.base, st.current + step);
 
       if (next > st.current) {

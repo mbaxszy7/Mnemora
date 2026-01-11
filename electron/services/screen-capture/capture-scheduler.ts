@@ -2,22 +2,18 @@
  * ScreenCaptureScheduler - Self-correcting capture scheduling with delay compensation
  */
 
-import { EventEmitter } from "events";
+import { getLogger } from "../logger";
+import { screenCaptureEventBus } from "./event-bus";
 import type {
   SchedulerConfig,
   CaptureSchedulerState,
   CaptureResult,
-  SchedulerEvent,
-  SchedulerEventHandler,
   CaptureStartEvent,
   CaptureCompleteEvent,
   CaptureErrorEvent,
   CaptureSchedulerStateEvent,
-  PreferencesChangedEvent,
-  SchedulerEventPayload,
 } from "./types";
 import { DEFAULT_SCHEDULER_CONFIG } from "./types";
-import { getLogger } from "../logger";
 
 const logger = getLogger("scheduler");
 
@@ -31,30 +27,11 @@ export function calculateNextDelay(
   return Math.max(compensatedDelay, minDelay);
 }
 
-export interface IScreenCaptureScheduler {
-  start(): void;
-  stop(): void;
-  pause(): void;
-  resume(): void;
-  updateConfig(config: Partial<SchedulerConfig>): void;
-  getState(): CaptureSchedulerState;
-  notifyPreferencesChanged(): void;
-  on<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void;
-  off<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void;
-}
-
 export type CaptureTask = () => Promise<CaptureResult[]>;
 
-export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
+export class ScreenCaptureScheduler {
   private config: SchedulerConfig;
   private state: CaptureSchedulerState;
-  private emitter: EventEmitter;
   private timerId: ReturnType<typeof setTimeout> | null = null;
   private captureTask!: CaptureTask;
   private generation = 0;
@@ -63,7 +40,6 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     this.config = { ...DEFAULT_SCHEDULER_CONFIG, ...config };
     // Default no-op capture task for testing state machine without actual captures
     this.captureTask = captureTask;
-    this.emitter = new EventEmitter();
     this.state = {
       status: "idle",
       lastCaptureTime: null,
@@ -148,30 +124,8 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
     this.config = { ...this.config, ...config };
   }
 
-  notifyPreferencesChanged(): void {
-    const event: PreferencesChangedEvent = {
-      type: "preferences:changed",
-      timestamp: Date.now(),
-    };
-    this.emitter.emit("preferences:changed", event);
-  }
-
   getState(): CaptureSchedulerState {
     return { ...this.state };
-  }
-
-  on<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void {
-    this.emitter.on(event, handler);
-  }
-
-  off<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void {
-    this.emitter.off(event, handler);
   }
 
   private scheduleNext(delay: number): void {
@@ -275,7 +229,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       timestamp,
       captureId,
     };
-    this.emitter.emit("capture:start", event);
+    screenCaptureEventBus.emit("capture:start", event);
   }
 
   private emitCaptureComplete(
@@ -290,7 +244,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       result,
       executionTime,
     };
-    this.emitter.emit("capture:complete", event);
+    screenCaptureEventBus.emit("capture:complete", event);
   }
 
   private emitCaptureError(captureId: string, error: Error): void {
@@ -300,7 +254,7 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       captureId,
       error,
     };
-    this.emitter.emit("capture:error", event);
+    screenCaptureEventBus.emit("capture:error", event);
   }
 
   private emitStateChange(
@@ -313,6 +267,6 @@ export class ScreenCaptureScheduler implements IScreenCaptureScheduler {
       previousState,
       currentState,
     };
-    this.emitter.emit("capture-scheduler:state", event);
+    screenCaptureEventBus.emit("capture-scheduler:state", event);
   }
 }

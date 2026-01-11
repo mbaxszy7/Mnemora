@@ -87,7 +87,16 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
 
   private getMergeWorkerLimit(): number {
     const textLimit = aiRuntimeService.getLimit("text");
-    return this.clampInt(textLimit, 1, 10);
+
+    // 预留少量全局 `text` 信号量给其他 text 任务（例如 Activity Summary 生成），
+    // 避免在 merge backlog 较大时 merge worker 占满 `text` 并发导致 summary 饥饿。
+    // 注意：这里只是调度器层面的并发上限控制，不是严格的公平/配额保证。
+    const reservedTextPermits = 2;
+    // 还需扣除 batch worker 可能占用的数量
+    const batchWorkers = this.getBatchWorkerLimit();
+    const mergeWorkers = Math.max(1, textLimit - reservedTextPermits - batchWorkers);
+
+    return this.clampInt(mergeWorkers, 1, 10);
   }
 
   /**
@@ -378,8 +387,8 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
       const batchPromise =
         batchRecords.length > 0 ? this.processBatchesConcurrently(batchRecords) : Promise.resolve();
 
-      // otherRecords 内部按类型（合并 / 向量生成 / 索引）继续并行。
-      const otherPromise = this.processOtherRecordsConcurrently(otherRecords);
+      // otherRecords （合并类型）继续并行。
+      const otherPromise = this.processMergeRecordsConcurrently(otherRecords);
 
       // 等两条流水线都结束，再做补扫。
       await Promise.all([batchPromise, otherPromise]);
@@ -434,77 +443,109 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
       "Starting concurrent batch processing"
     );
 
-    // 按并发上限分块处理：每个 `chunk` 内并行，`chunk` 与 `chunk` 之间串行。
-    for (let i = 0; i < records.length; i += concurrency) {
-      const chunk = records.slice(i, i + concurrency);
-      const chunkIndex = Math.floor(i / concurrency) + 1;
-      const totalChunks = Math.ceil(records.length / concurrency);
+    const lanes = this.splitBatchesIntoLanes(records);
+    await this.processInLanes({
+      lanes,
+      concurrency,
+      laneWeights: { realtime: 3, recovery: 1 },
+      handler: async (record) => {
+        await this.processBatchRecord(record);
+      },
+      onError: (error, record, lane) => {
+        logger.warn(
+          {
+            lane,
+            recordId: record.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          "Batch processing failed"
+        );
+      },
+    });
+  }
 
-      logger.debug({ chunkIndex, totalChunks, chunkSize: chunk.length }, "Processing batch chunk");
+  /**
+   * 并发处理 merge 类任务。
+   */
+  private async processMergeRecordsConcurrently(records: PendingRecord[]): Promise<void> {
+    if (records.length === 0) return;
+    const concurrency = this.getMergeWorkerLimit();
 
-      const results = await Promise.allSettled(
-        chunk.map((record) => this.processBatchRecord(record))
-      );
+    const lanes = this.splitRecordsIntoLanes(records);
+    await this.processInLanes({
+      lanes,
+      concurrency,
+      laneWeights: { realtime: 3, recovery: 1 },
+      handler: async (record) => {
+        await this.processContextNodeMergeRecord(record);
+      },
+      onError: (error, record, lane) => {
+        logger.error(
+          { lane, recordId: record.id, error: String(error) },
+          "Failed to process mergerecord"
+        );
+      },
+    });
+  }
 
-      // 汇总本分块的执行结果（不影响后续分块）。
-      const succeeded = results.filter((r) => r.status === "fulfilled").length;
-      const failed = results.filter((r) => r.status === "rejected").length;
+  private splitBatchesIntoLanes(
+    records: PendingRecord[]
+  ): Record<"realtime" | "recovery", PendingRecord[]> {
+    const now = Date.now();
+    const recoveryAgeMs = processingConfig.scheduler.laneRecoveryAgeMs;
 
-      if (failed > 0) {
-        logger.warn({ chunkIndex, succeeded, failed }, "Some batches in chunk failed");
+    const realtime: PendingRecord[] = [];
+    const recovery: PendingRecord[] = [];
+
+    for (const r of records) {
+      // Lane classification:
+      // - retries (attempts > 0) are recovery
+      // - otherwise, older records become recovery so backlog doesn't dominate
+      if (r.attempts > 0) {
+        recovery.push(r);
+        continue;
+      }
+
+      const createdAt = r.createdAt ?? now;
+
+      if (now - createdAt >= recoveryAgeMs) {
+        recovery.push(r);
+      } else {
+        realtime.push(r);
       }
     }
+
+    return { realtime, recovery };
   }
 
-  /**
-   * 并发处理非批处理类任务。
-   *
-   * 做法：先按任务类型分组，再让每个组以自己的并发上限独立推进。
-   * 这样可以避免某一类任务“挤占”另一类任务的执行机会。
-   */
-  private async processOtherRecordsConcurrently(records: PendingRecord[]): Promise<void> {
-    if (records.length === 0) return;
+  private splitRecordsIntoLanes(
+    records: PendingRecord[]
+  ): Record<"realtime" | "recovery", PendingRecord[]> {
+    const now = Date.now();
+    const recoveryAgeMs = processingConfig.scheduler.laneRecoveryAgeMs;
 
-    // 两类任务并行推进；内部各自有并发控制。
-    await this.processRecordsWithConcurrency(records, this.getMergeWorkerLimit(), "merge");
-  }
+    const realtime: PendingRecord[] = [];
+    const recovery: PendingRecord[] = [];
 
-  /**
-   * 以“固定并发执行单元数 + 共享游标”的方式推进同一组任务。
-   *
-   * 这里不是严格意义的队列：
-   * - 每个并发执行单元从 `records[nextIndex]` 取一个任务执行；
-   * - 单个任务真正的互斥/去重依赖数据库的“认领”（UPDATE ... WHERE status...）。
-   */
-  private async processRecordsWithConcurrency(
-    records: PendingRecord[],
-    concurrency: number,
-    groupName: string
-  ): Promise<void> {
-    if (records.length === 0) return;
-
-    const workerCount = Math.max(1, Math.min(concurrency, records.length));
-    let nextIndex = 0;
-
-    const workers = Array.from({ length: workerCount }, async () => {
-      while (true) {
-        const current = nextIndex;
-        nextIndex++;
-        if (current >= records.length) return;
-
-        const record = records[current];
-        try {
-          await this.processRecord(record);
-        } catch (error) {
-          logger.error(
-            { group: groupName, recordId: record.id, error: String(error) },
-            "Failed to process record in group"
-          );
-        }
+    for (const r of records) {
+      // Lane classification:
+      // - retries (attempts > 0) are recovery
+      // - otherwise, older records become recovery so backlog doesn't dominate
+      if (r.attempts > 0) {
+        recovery.push(r);
+        continue;
       }
-    });
 
-    await Promise.all(workers);
+      const createdAt = r.createdAt ?? now;
+
+      if (now - createdAt >= recoveryAgeMs) {
+        recovery.push(r);
+      } else {
+        realtime.push(r);
+      }
+    }
+
+    return { realtime, recovery };
   }
 
   /**
@@ -567,15 +608,36 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
     const now = Date.now();
     const limit = this.getScanLimit();
 
+    // Fairness note:
+    // We intentionally scan both the *newest* and the *oldest* due records.
+    // - Newest => ensures realtime work gets picked up quickly.
+    // - Oldest => ensures historical backlog still makes progress.
+    // This also helps populate both `realtime` and `recovery` lanes in the same cycle.
+    const sliceLimit = Math.max(1, Math.ceil(limit / 2));
+
+    // newest+oldest scans may overlap. Merge by id to avoid duplicates.
+    const mergeUniqueById = <T extends { id: number }>(rows: T[]): T[] => {
+      const seen = new Set<number>();
+      const out: T[] = [];
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+
     // 说明：这里不再直接扫描 screenshots。
     // 所有截图都应该经由 batches 进入 VLM 流水线，避免“截图级 VLM”与“批级 VLM”之间的竞态。
 
-    const batchRows = db
+    const batchNewest = db
       .select({
         id: batches.id,
         status: batches.status,
         attempts: batches.attempts,
         nextRunAt: batches.nextRunAt,
+        createdAt: batches.createdAt,
+        updatedAt: batches.updatedAt,
       })
       .from(batches)
       .where(
@@ -585,15 +647,41 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
           lt(batches.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
-      .limit(limit)
+      .orderBy(desc(batches.createdAt))
+      .limit(sliceLimit)
       .all();
 
-    const mergeRows = db
+    const batchOldest = db
+      .select({
+        id: batches.id,
+        status: batches.status,
+        attempts: batches.attempts,
+        nextRunAt: batches.nextRunAt,
+        createdAt: batches.createdAt,
+        updatedAt: batches.updatedAt,
+      })
+      .from(batches)
+      .where(
+        and(
+          or(eq(batches.status, "pending"), eq(batches.status, "failed")),
+          or(isNull(batches.nextRunAt), lte(batches.nextRunAt, now)),
+          lt(batches.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(asc(batches.createdAt))
+      .limit(sliceLimit)
+      .all();
+
+    const batchRows = mergeUniqueById([...batchNewest, ...batchOldest]);
+
+    const mergeNewest = db
       .select({
         id: contextNodes.id,
         status: contextNodes.mergeStatus,
         attempts: contextNodes.mergeAttempts,
         nextRunAt: contextNodes.mergeNextRunAt,
+        createdAt: contextNodes.createdAt,
+        updatedAt: contextNodes.updatedAt,
       })
       .from(contextNodes)
       .where(
@@ -603,15 +691,42 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
           lt(contextNodes.mergeAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
-      .limit(limit)
+      .orderBy(desc(contextNodes.createdAt))
+      .limit(sliceLimit)
       .all();
 
+    const mergeOldest = db
+      .select({
+        id: contextNodes.id,
+        status: contextNodes.mergeStatus,
+        attempts: contextNodes.mergeAttempts,
+        nextRunAt: contextNodes.mergeNextRunAt,
+        createdAt: contextNodes.createdAt,
+        updatedAt: contextNodes.updatedAt,
+      })
+      .from(contextNodes)
+      .where(
+        and(
+          or(eq(contextNodes.mergeStatus, "pending"), eq(contextNodes.mergeStatus, "failed")),
+          or(isNull(contextNodes.mergeNextRunAt), lte(contextNodes.mergeNextRunAt, now)),
+          lt(contextNodes.mergeAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(asc(contextNodes.createdAt))
+      .limit(sliceLimit)
+      .all();
+
+    const mergeRows = mergeUniqueById([...mergeNewest, ...mergeOldest]);
+
+    // Carry createdAt/updatedAt so downstream lane classification does NOT need extra DB queries.
     const batchesPending: PendingRecord[] = batchRows.map((r) => ({
       id: r.id,
       table: "batches",
       status: r.status as "pending" | "failed",
       attempts: r.attempts,
       nextRunAt: r.nextRunAt ?? undefined,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     }));
 
     const mergesPending: PendingRecord[] = mergeRows.map((r) => ({
@@ -620,20 +735,11 @@ export class ScreenshotPipelineScheduler extends BaseScheduler {
       status: r.status as "pending" | "failed",
       attempts: r.attempts,
       nextRunAt: r.nextRunAt ?? undefined,
+      createdAt: r.createdAt,
+      updatedAt: r.updatedAt,
     }));
 
     return [...batchesPending, ...mergesPending];
-  }
-
-  private async processRecord(record: PendingRecord): Promise<void> {
-    switch (record.table) {
-      case "batches":
-        await this.processBatchRecord(record);
-        return;
-      case "context_nodes":
-        await this.processContextNodeMergeRecord(record);
-        return;
-    }
   }
 
   private async processBatchRecord(record: PendingRecord): Promise<void> {

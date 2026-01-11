@@ -143,8 +143,36 @@ export class VectorIndexService {
       .run();
   }
 
-  private createFreshIndex(capacity: number) {
-    if (!this.detectedDimensions) {
+  /**
+   * 维度变更时，重置所有 embedding 和 index 状态为 pending。
+   * 这会让调度器重新生成所有 embedding，确保维度一致性。
+   */
+  private resetAllEmbeddingsForDimensionChange(): void {
+    const db = getDb();
+    const now = Date.now();
+
+    db.update(vectorDocuments)
+      .set({
+        embedding: null,
+        embeddingStatus: "pending",
+        embeddingAttempts: 0,
+        embeddingNextRunAt: null,
+        indexStatus: "pending",
+        indexAttempts: 0,
+        indexNextRunAt: null,
+        errorCode: null,
+        errorMessage: null,
+        updatedAt: now,
+      })
+      .run();
+
+    logger.info("Reset all embeddings for dimension change");
+  }
+
+  private createFreshIndex(capacity: number, newDimensions?: number) {
+    if (newDimensions !== undefined) {
+      this.detectedDimensions = newDimensions;
+    } else if (!this.detectedDimensions) {
       this.detectedDimensions = this.detectDimensionsFromDb();
     }
     this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
@@ -182,9 +210,27 @@ export class VectorIndexService {
     }
     if (!this.index) throw new Error("Index not initialized");
 
+    // 检测维度变更：如果新 embedding 的维度与当前索引不同，触发维度迁移
     if (this.detectedDimensions && embedding.length !== this.detectedDimensions) {
+      logger.warn(
+        {
+          oldDimensions: this.detectedDimensions,
+          newDimensions: embedding.length,
+          docId,
+        },
+        "Embedding dimension change detected, triggering dimension migration"
+      );
+
+      // 用新维度重建索引
+      const capacity = this.index?.getMaxElements() ?? 5000;
+      this.createFreshIndex(capacity, embedding.length);
+
+      // 重置所有 embedding 为 pending，让调度器用新模型重新生成
+      this.resetAllEmbeddingsForDimensionChange();
+
+      // 抛出一个特殊错误，让调度器知道需要重试
       throw new Error(
-        `Embedding dimensions mismatch: expected ${this.detectedDimensions}, got ${embedding.length}`
+        `Dimension migration triggered: ${this.detectedDimensions} dimensions. All embeddings reset to pending.`
       );
     }
 
@@ -204,11 +250,11 @@ export class VectorIndexService {
       this.index.addPoint(Array.from(embedding), docId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (message.includes("dimensions mismatch")) {
-        // 维度不一致：重建索引，并重置 DB 状态，让 index 子任务重试。
+      // 如果是 hnswlib 内部检测到的维度不匹配（理论上不应该发生，因为上面已经处理了）
+      if (message.includes("dimensions mismatch") && !message.includes("migration triggered")) {
         const capacity = this.index?.getMaxElements() ?? 5000;
-        this.createFreshIndex(capacity);
-        this.resetSucceededIndexStatuses();
+        this.createFreshIndex(capacity, embedding.length);
+        this.resetAllEmbeddingsForDimensionChange();
       }
       logger.error({ error: err, docId }, "Failed to upsert vector");
       throw err;
@@ -232,9 +278,14 @@ export class VectorIndexService {
     }
 
     if (this.detectedDimensions && queryEmbedding.length !== this.detectedDimensions) {
-      throw new Error(
-        `Query embedding dimensions mismatch: expected ${this.detectedDimensions}, got ${queryEmbedding.length}`
+      logger.warn(
+        {
+          expectedDimensions: this.detectedDimensions,
+          queryDimensions: queryEmbedding.length,
+        },
+        "Query embedding dimensions mismatch, returning empty results"
       );
+      return [];
     }
 
     try {

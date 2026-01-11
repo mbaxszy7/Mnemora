@@ -137,8 +137,8 @@ describe("AIRuntimeService", () => {
   });
 
   it("stops and auto-resumes capture after successful config validation", async () => {
-    const stop = vi.fn();
-    const start = vi.fn();
+    const stop = vi.fn(async () => {});
+    const start = vi.fn(async () => {});
     service.registerCaptureControlCallbacks({
       stop,
       start,

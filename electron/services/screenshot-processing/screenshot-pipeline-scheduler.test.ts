@@ -293,8 +293,13 @@ describe("ScreenshotPipelineScheduler", () => {
         .mockReturnValueOnce([
           { id: 11, status: "pending", attempts: 0, nextRunAt: null },
           { id: 12, status: "failed", attempts: 1, nextRunAt: null },
-        ]) // batches
-        .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]); // context_nodes
+        ]) // batches newest
+        .mockReturnValueOnce([
+          { id: 11, status: "pending", attempts: 0, nextRunAt: null },
+          { id: 12, status: "failed", attempts: 1, nextRunAt: null },
+        ]) // batches oldest
+        .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]) // context_nodes newest
+        .mockReturnValueOnce([{ id: 21, status: "pending", attempts: 0, nextRunAt: null }]); // context_nodes oldest
 
       const records = await (
         screenshotPipelineScheduler as unknown as { scanPendingRecords: () => Promise<unknown[]> }

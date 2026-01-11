@@ -26,25 +26,37 @@ import { SourceBufferRegistry, type ScreenshotInput } from "./source-buffer-regi
 import { screenshotProcessingEventBus } from "./event-bus";
 import { processingConfig } from "./config";
 import type { AcceptedScreenshot, SourceKey } from "./types";
-import type { CapturePreferencesService } from "../capture-preferences-service";
+import type { CapturePreferences } from "@shared/capture-source-types";
 
 // ============================================================================
 // Test Helpers
 // ============================================================================
 
 /**
- * Create a mock CapturePreferencesService
+ * Create a mock CapturePreferences
  */
-function createMockPreferencesService(
-  screens: string[] = ["1"],
-  apps: string[] = []
-): CapturePreferencesService {
+function createMockPreferences(
+  screenDisplayIds: string[] = ["1"],
+  appIds: string[] = []
+): CapturePreferences {
   return {
-    getEffectiveCaptureSources: vi.fn().mockReturnValue({
-      selectedScreens: screens,
-      selectedApps: apps,
-    }),
-  } as unknown as CapturePreferencesService;
+    selectedScreens: screenDisplayIds.map((displayId, index) => ({
+      id: displayId,
+      name: `Screen ${displayId}`,
+      type: "screen" as const,
+      displayId,
+      bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+      isPrimary: index === 0,
+      thumbnail: "",
+    })),
+    selectedApps: appIds.map((id) => ({
+      id,
+      name: `App ${id}`,
+      type: "window" as const,
+      appIcon: "",
+      appName: `App ${id}`,
+    })),
+  };
 }
 
 /**
@@ -101,10 +113,9 @@ function createMockInput(
 describe("SourceBufferRegistry", () => {
   class TestSourceBufferRegistry extends SourceBufferRegistry {
     init(
-      preferencesService: CapturePreferencesService,
       onPersistAcceptedScreenshot: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>
     ): void {
-      this.initialize(preferencesService, onPersistAcceptedScreenshot);
+      this.initialize(onPersistAcceptedScreenshot);
     }
 
     shutdown(): void {
@@ -113,14 +124,13 @@ describe("SourceBufferRegistry", () => {
   }
 
   let registry: TestSourceBufferRegistry;
-  let mockPreferencesService: CapturePreferencesService;
+  let mockPreferences: CapturePreferences;
   let mockPHashDedup: ReturnType<typeof createMockPHashDedup>;
 
   // Store original config values
   const originalBatchSize = processingConfig.batch.batchSize;
   const originalBatchTimeoutMs = processingConfig.batch.batchTimeoutMs;
   const originalGracePeriodMs = processingConfig.captureSource.gracePeriodMs;
-  const originalRefreshIntervalMs = processingConfig.captureSource.refreshIntervalMs;
 
   beforeEach(async () => {
     vi.useFakeTimers();
@@ -129,19 +139,18 @@ describe("SourceBufferRegistry", () => {
     (processingConfig.batch as { batchSize: number }).batchSize = 10;
     (processingConfig.batch as { batchTimeoutMs: number }).batchTimeoutMs = 60000;
     (processingConfig.captureSource as { gracePeriodMs: number }).gracePeriodMs = 60000;
-    (processingConfig.captureSource as { refreshIntervalMs: number }).refreshIntervalMs = 10000;
 
     mockPHashDedup = createMockPHashDedup();
-    mockPreferencesService = createMockPreferencesService(["1", "2"], ["app1"]);
+    mockPreferences = createMockPreferences(["1", "2"], ["app1"]);
     registry = new TestSourceBufferRegistry(mockPHashDedup.computeHash);
     let nextDbId = 0;
     registry.init(
-      mockPreferencesService,
       vi.fn(async () => {
         nextDbId += 1;
         return nextDbId;
       })
     );
+    registry.setPreferences(mockPreferences);
     await registry.refresh();
   });
 
@@ -154,8 +163,6 @@ describe("SourceBufferRegistry", () => {
     (processingConfig.batch as { batchTimeoutMs: number }).batchTimeoutMs = originalBatchTimeoutMs;
     (processingConfig.captureSource as { gracePeriodMs: number }).gracePeriodMs =
       originalGracePeriodMs;
-    (processingConfig.captureSource as { refreshIntervalMs: number }).refreshIntervalMs =
-      originalRefreshIntervalMs;
   });
 
   describe("initialization", () => {
@@ -387,12 +394,7 @@ describe("SourceBufferRegistry", () => {
       await registry.add(createMockInput(2, "screen:2", Date.now(), generateTestPhash("grace_2")));
 
       // Update preferences to only include screen:1
-      (
-        mockPreferencesService.getEffectiveCaptureSources as ReturnType<typeof vi.fn>
-      ).mockReturnValue({
-        selectedScreens: ["1"],
-        selectedApps: [],
-      });
+      registry.setPreferences(createMockPreferences(["1"], []));
 
       // Advance time past grace period (60s) and trigger refresh
       vi.advanceTimersByTime(70000);
@@ -411,12 +413,7 @@ describe("SourceBufferRegistry", () => {
       await registry.add(createMockInput(2, "screen:2", Date.now(), generateTestPhash("grace_2")));
 
       // Update preferences to only include screen:1
-      (
-        mockPreferencesService.getEffectiveCaptureSources as ReturnType<typeof vi.fn>
-      ).mockReturnValue({
-        selectedScreens: ["1"],
-        selectedApps: [],
-      });
+      registry.setPreferences(createMockPreferences(["1"], []));
 
       // Advance time but stay within grace period (30s < 60s)
       vi.advanceTimersByTime(30000);

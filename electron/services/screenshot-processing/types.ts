@@ -312,4 +312,7 @@ export interface PendingRecord {
   nextRunAt?: number;
   /** Subtask type for tables with multiple disjoint separate processes (e.g. vector_documents) */
   subtask?: "embedding" | "index";
+
+  createdAt?: number;
+  updatedAt?: number;
 }

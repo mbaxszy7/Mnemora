@@ -7,6 +7,7 @@ import type { LLMConfig } from "@shared/llm-config-types";
 import { getLogger } from "./logger";
 import { llmConfigService } from "./llm-config-service";
 import { processingConfig } from "./screenshot-processing/config";
+import type { CaptureSchedulerState } from "./screen-capture/types";
 
 /**
  * AI 能力类型（贯穿 semaphore/tuner/breaker 以及所有调用点）。
@@ -392,17 +393,6 @@ class AIConcurrencyTuner {
   }
 }
 
-// =========================================================================
-// Failure Circuit Breaker
-// =========================================================================
-
-/**
- * capture 的状态结构（由 ScreenCaptureModule.getState() 提供）。
- *
- * 这里不强依赖具体的类型定义，只关心 status 字段。
- */
-type CaptureStatus = { status: string };
-
 /**
  * breaker 对 capture 的控制回调。
  *
@@ -411,9 +401,9 @@ type CaptureStatus = { status: string };
  * - `getState`: 可选，用于判断是否应该自动恢复（比如当时是 running/paused/idle）
  */
 type CaptureControlCallbacks = {
-  stop: () => void;
-  start: () => Promise<boolean>;
-  getState?: () => CaptureStatus | null | undefined;
+  stop: () => Promise<void>;
+  start: () => Promise<void>;
+  getState: () => Pick<CaptureSchedulerState, "status">;
 };
 
 /**
@@ -446,7 +436,7 @@ class AIFailureCircuitBreaker {
   private readonly logger = getLogger("ai-failure-circuit-breaker");
 
   private readonly nowFn: () => number;
-  private readonly windowMs = 30 * 1000;
+  private readonly windowMs = 10 * 1000;
   private readonly threshold = 3;
 
   private readonly validateConfig: (config: LLMConfig) => Promise<{ success: boolean }>;
@@ -539,7 +529,7 @@ class AIFailureCircuitBreaker {
 
     if (this.captureControlCallbacks?.stop) {
       try {
-        this.captureControlCallbacks.stop();
+        void this.captureControlCallbacks.stop();
       } catch (error) {
         this.logger.error({ error }, "Failed to stop screen capture during circuit trip");
       }

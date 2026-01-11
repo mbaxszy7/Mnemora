@@ -104,15 +104,17 @@ export class AutoRefreshCache<T> implements IAutoRefreshCache<T> {
       return;
     }
 
-    this.timerId = setTimeout(async () => {
+    this.timerId = setTimeout(() => {
+      this.timerId = null;
       if (this.disposed) {
         return;
       }
 
-      await this.doRefresh();
-
-      // Schedule the next refresh after this one completes
-      this.scheduleNextRefresh();
+      void this.doRefresh()
+        .catch(() => undefined)
+        .finally(() => {
+          this.scheduleNextRefresh();
+        });
     }, this.interval);
   }
 }

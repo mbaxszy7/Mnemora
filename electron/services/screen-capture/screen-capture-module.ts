@@ -16,18 +16,18 @@
 import { CaptureSourceProvider } from "./capture-source-provider";
 import { CaptureService } from "./capture-service";
 import { ScreenCaptureScheduler } from "./capture-scheduler";
+import { screenCaptureEventBus } from "./event-bus";
 
 import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
 import { BrowserWindow } from "electron";
 import type {
   SchedulerConfig,
-  SchedulerState,
+  CaptureSchedulerState,
   CaptureOptions,
   CaptureResult,
-  SchedulerEvent,
-  SchedulerEventHandler,
-  SchedulerStateEvent,
-  SchedulerEventPayload,
+  CaptureSchedulerStateEvent,
+  CaptureSchedulerEventHandler,
+  PreferencesChangedEvent,
 } from "./types";
 import { DEFAULT_SCHEDULER_CONFIG, DEFAULT_CAPTURE_OPTIONS } from "./types";
 import { getLogger } from "../logger";
@@ -48,23 +48,12 @@ import { aiRuntimeService } from "../ai-runtime-service";
 class ScreenCaptureModule {
   private readonly sourceProvider: CaptureSourceProvider;
   private readonly captureService: CaptureService;
-  private readonly scheduler: ScreenCaptureScheduler;
+  private readonly captureScheduler: ScreenCaptureScheduler;
   private readonly preferencesService: CapturePreferencesService;
   private readonly captureOptions = DEFAULT_CAPTURE_OPTIONS;
   private readonly logger = getLogger("screen-capture-module");
   private disposed = false;
   private processingInitialized = false;
-
-  private readonly onSchedulerStateChanged: SchedulerEventHandler<SchedulerStateEvent> = () => {
-    const payload = this.getState();
-    try {
-      for (const win of BrowserWindow.getAllWindows()) {
-        win.webContents.send(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, payload);
-      }
-    } catch {
-      // Ignore if BrowserWindow is not available (e.g. tests)
-    }
-  };
 
   constructor() {
     this.logger.info("Initializing ScreenCaptureModule");
@@ -72,26 +61,11 @@ class ScreenCaptureModule {
     this.sourceProvider = new CaptureSourceProvider();
     this.captureService = new CaptureService();
     this.preferencesService = new CapturePreferencesService();
-    this.scheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
+    this.captureScheduler = new ScreenCaptureScheduler(DEFAULT_SCHEDULER_CONFIG, () =>
       this.executeCaptureTask()
     );
 
-    this.scheduler.on("scheduler:state", this.onSchedulerStateChanged);
-
-    // Register callbacks for circuit breaker to avoid circular dependency
-    aiRuntimeService.registerCaptureControlCallbacks({
-      stop: () => this.stop(),
-      start: async () => {
-        const prepared = await this.isCapturePrepared();
-        if (!prepared) {
-          this.logger.warn("Cannot auto-resume capture: missing permission or LLM config");
-          return;
-        }
-        this.start();
-      },
-      getState: () => this.getState(),
-    });
-
+    screenCaptureEventBus.on("capture-scheduler:state", this.onSchedulerStateChanged);
     this.setupPowerMonitorCallbacks();
     this.logger.info("ScreenCaptureModule initialized");
   }
@@ -120,6 +94,18 @@ class ScreenCaptureModule {
     }
   }
 
+  private readonly onSchedulerStateChanged: CaptureSchedulerEventHandler<CaptureSchedulerStateEvent> =
+    () => {
+      const payload = this.getState();
+      try {
+        for (const win of BrowserWindow.getAllWindows()) {
+          win.webContents.send(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, payload);
+        }
+      } catch {
+        // Ignore if BrowserWindow is not available (e.g. tests)
+      }
+    };
+
   private async isCapturePrepared(): Promise<boolean> {
     const llmConfig = await llmConfigService.loadConfiguration();
     this.logger.debug(
@@ -132,10 +118,6 @@ class ScreenCaptureModule {
     this.logger.info({ hasPermissions }, "Permissions checked");
     return !!hasPermissions && !!llmConfig;
   }
-
-  // ============================================================================
-  // System Event Handlers
-  // ============================================================================
 
   private setupPowerMonitorCallbacks(): void {
     powerMonitorService.registerSuspendCallback(() => {
@@ -168,10 +150,6 @@ class ScreenCaptureModule {
 
     this.logger.debug("Power monitor callbacks registered");
   }
-
-  // ============================================================================
-  // Capture Task Execution
-  // ============================================================================
 
   /**
    * Execute the capture task - called by the scheduler on each cycle
@@ -255,11 +233,7 @@ class ScreenCaptureModule {
     // }
   }
 
-  // ============================================================================
-  // Public API: Scheduler Control
-  // ============================================================================
-
-  initializeProcessingPipeline(): void {
+  private initializeProcessingPipeline(): void {
     if (this.disposed) {
       this.logger.warn("Cannot initialize processing pipeline for disposed module");
       return;
@@ -270,8 +244,16 @@ class ScreenCaptureModule {
 
     screenshotProcessingModule.initialize({
       screenCapture: this,
-      preferencesService: this.preferencesService,
     });
+
+    // Ensure processing pipeline sees the current preferences even if they were set
+    // before the processing module was initialized.
+    const event: PreferencesChangedEvent = {
+      type: "preferences:changed",
+      timestamp: Date.now(),
+      preferences: this.preferencesService.getPreferences(),
+    };
+    screenCaptureEventBus.emit("preferences:changed", event);
     this.processingInitialized = true;
   }
 
@@ -282,12 +264,10 @@ class ScreenCaptureModule {
     }
 
     this.initializeProcessingPipeline();
-
     // Reset circuit breaker when starting capture
     aiRuntimeService.resetBreaker();
-
-    this.logger.info("Starting scheduler");
-    this.scheduler.start();
+    this.logger.info("Starting capture scheduler");
+    this.captureScheduler.start();
   }
 
   stop(): void {
@@ -296,7 +276,7 @@ class ScreenCaptureModule {
       return;
     }
     this.logger.info("Stopping scheduler");
-    this.scheduler.stop();
+    this.captureScheduler.stop();
   }
 
   pause(): void {
@@ -305,7 +285,7 @@ class ScreenCaptureModule {
       return;
     }
     this.logger.info("Pausing scheduler");
-    this.scheduler.pause();
+    this.captureScheduler.pause();
   }
 
   resume(): void {
@@ -314,60 +294,17 @@ class ScreenCaptureModule {
       return;
     }
     this.logger.info("Resuming scheduler");
-    this.scheduler.resume();
+    this.captureScheduler.resume();
   }
 
-  getState(): SchedulerState {
-    return this.scheduler.getState();
+  getState(): CaptureSchedulerState {
+    return this.captureScheduler.getState();
   }
 
   updateConfig(config: Partial<SchedulerConfig>): void {
     this.logger.info({ config }, "Updating scheduler config");
-    this.scheduler.updateConfig(config);
+    this.captureScheduler.updateConfig(config);
   }
-
-  // ============================================================================
-  // Public API: Event Subscription
-  // ============================================================================
-
-  on<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void {
-    this.scheduler.on(event, handler);
-  }
-
-  off<T extends SchedulerEventPayload>(
-    event: SchedulerEvent,
-    handler: SchedulerEventHandler<T>
-  ): void {
-    this.scheduler.off(event, handler);
-  }
-
-  // ============================================================================
-  // Public API: Source Access
-  // ============================================================================
-
-  // getSources(): CaptureSource[] {
-  //   return this.sourceProvider.getSources();
-  // }
-
-  // getScreens(): CaptureSource[] {
-  //   return this.sourceProvider.getScreens();
-  // }
-
-  // getWindows(): CaptureSource[] {
-  //   const windows = this.sourceProvider.getWindows();
-  //   return windowFilter.filterSystemWindows(windows);
-  // }
-
-  // async refreshSources(): Promise<void> {
-  //   await this.sourceProvider.refresh();
-  // }
-
-  // ============================================================================
-  // Public API: Capture Operations
-  // ============================================================================
 
   async captureScreens(options?: Partial<CaptureOptions>): Promise<CaptureResult[]> {
     return this.captureService.captureScreens({ ...this.captureOptions, ...options });
@@ -376,10 +313,6 @@ class ScreenCaptureModule {
   async cleanupOldCaptures(maxAge?: number, maxCount?: number): Promise<number> {
     return cleanupOldCaptures(maxAge, maxCount);
   }
-
-  // ============================================================================
-  // Public API: Service Access (for IPC handlers)
-  // ============================================================================
 
   getCaptureService(): CaptureService {
     return this.captureService;
@@ -395,12 +328,14 @@ class ScreenCaptureModule {
       return;
     }
     this.preferencesService.setPreferences(prefs);
-    this.scheduler.notifyPreferencesChanged();
+    const preferences = this.preferencesService.getPreferences();
+    const event: PreferencesChangedEvent = {
+      type: "preferences:changed",
+      timestamp: Date.now(),
+      preferences,
+    };
+    screenCaptureEventBus.emit("preferences:changed", event);
   }
-
-  // ============================================================================
-  // Public API: Lifecycle
-  // ============================================================================
 
   dispose(): void {
     if (this.disposed) {
@@ -410,8 +345,8 @@ class ScreenCaptureModule {
     this.logger.info("Disposing ScreenCaptureModule");
     this.disposed = true;
 
-    this.scheduler.off("scheduler:state", this.onSchedulerStateChanged);
-    this.scheduler.stop();
+    screenCaptureEventBus.off("capture-scheduler:state", this.onSchedulerStateChanged);
+    this.captureScheduler.stop();
     screenshotProcessingModule.dispose();
     this.processingInitialized = false;
 
@@ -422,5 +357,7 @@ class ScreenCaptureModule {
     return this.disposed;
   }
 }
+
+export type ScreenCaptureModuleType = ScreenCaptureModule;
 
 export const screenCaptureModule = new ScreenCaptureModule();

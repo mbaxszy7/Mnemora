@@ -13,7 +13,7 @@
  * - recordToExpandedNode
  */
 
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 
 import { getDb } from "../../database";
 import {
@@ -42,6 +42,7 @@ const logger = getLogger("context-graph-service");
 export interface CreateNodeInput {
   kind: ContextKind;
   threadId?: string;
+  originKey?: string;
   title: string;
   summary: string;
   keywords?: string[];
@@ -142,6 +143,7 @@ export class ContextGraphService {
     const nodeRecord: NewContextNodeRecord = {
       kind: input.kind,
       threadId: input.threadId,
+      originKey: input.originKey,
       title: input.title,
       summary: input.summary,
       keywords: input.keywords ? JSON.stringify(input.keywords) : null,
@@ -157,15 +159,46 @@ export class ContextGraphService {
       updatedAt: now,
     };
 
-    // Insert the node
-    const result = db.insert(contextNodes).values(nodeRecord).returning({ id: contextNodes.id });
-    const [inserted] = result.all();
+    const inserted = input.originKey
+      ? db
+          .insert(contextNodes)
+          .values(nodeRecord)
+          .onConflictDoUpdate({
+            target: contextNodes.originKey,
+            set: {
+              threadId: sql`coalesce(${contextNodes.threadId}, excluded.thread_id)`,
+              title: nodeRecord.title,
+              summary: nodeRecord.summary,
+              keywords: nodeRecord.keywords,
+              entities: nodeRecord.entities,
+              importance: nodeRecord.importance,
+              confidence: nodeRecord.confidence,
+              eventTime: nodeRecord.eventTime,
+              mergedFromIds: nodeRecord.mergedFromIds,
+              payloadJson: nodeRecord.payloadJson,
+              mergeStatus: sql`CASE WHEN ${contextNodes.mergeStatus} = 'running' THEN ${contextNodes.mergeStatus} ELSE 'pending' END`,
+              mergeAttempts: sql`CASE WHEN ${contextNodes.mergeStatus} = 'running' THEN ${contextNodes.mergeAttempts} ELSE 0 END`,
+              mergeNextRunAt: sql`CASE WHEN ${contextNodes.mergeStatus} = 'running' THEN ${contextNodes.mergeNextRunAt} ELSE NULL END`,
+              mergeErrorCode: sql`CASE WHEN ${contextNodes.mergeStatus} = 'running' THEN ${contextNodes.mergeErrorCode} ELSE NULL END`,
+              mergeErrorMessage: sql`CASE WHEN ${contextNodes.mergeStatus} = 'running' THEN ${contextNodes.mergeErrorMessage} ELSE NULL END`,
+              updatedAt: now,
+            },
+          })
+          .returning({ id: contextNodes.id, threadId: contextNodes.threadId })
+          .get()
+      : db
+          .insert(contextNodes)
+          .values(nodeRecord)
+          .returning({ id: contextNodes.id, threadId: contextNodes.threadId })
+          .get();
 
     if (!inserted) {
-      throw new Error("Failed to create context node");
+      throw new Error("Failed to create or update context node");
     }
 
     const nodeId = inserted.id;
+    const effectiveThreadId = inserted.threadId ?? undefined;
+
     logger.debug({ nodeId, kind: input.kind, title: input.title }, "Created context node");
 
     // For derived nodes, automatically create edge to source event
@@ -181,12 +214,12 @@ export class ContextGraphService {
     }
 
     // If this is an event node with a threadId, create event_next edge to previous event
-    if (input.kind === "event" && input.threadId && input.eventTime) {
-      const previousEvent = this.getPreviousEventInThread(input.threadId, input.eventTime);
+    if (input.kind === "event" && effectiveThreadId && input.eventTime) {
+      const previousEvent = this.getPreviousEventInThread(effectiveThreadId, input.eventTime);
       if (previousEvent) {
         this.createEdgeInternal(previousEvent.id, nodeId, "event_next");
         logger.debug(
-          { fromId: previousEvent.id, toId: nodeId, threadId: input.threadId },
+          { fromId: previousEvent.id, toId: nodeId, threadId: effectiveThreadId },
           "Created event_next edge for thread continuity"
         );
       }

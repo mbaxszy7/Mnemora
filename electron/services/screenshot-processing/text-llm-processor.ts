@@ -85,6 +85,7 @@ export interface MergeResult {
 interface PendingNode {
   kind: ContextKind;
   threadId?: string;
+  segmentId?: string;
   title: string;
   summary: string;
   keywords: string[];
@@ -166,7 +167,7 @@ export class TextLLMProcessor {
       const processedNodes = await this.processMergeHints(pendingNodes, vlmIndex.segments, batch);
 
       // Write to database
-      const nodeIds = await this.persistNodes(processedNodes);
+      const nodeIds = await this.persistNodes(processedNodes, batch);
 
       const threadIds = [
         ...new Set(processedNodes.filter((n) => n.threadId).map((n) => n.threadId!)),
@@ -441,7 +442,9 @@ export class TextLLMProcessor {
         appHint: screenshot.meta.appHint,
         windowTitle: screenshot.meta.windowTitle,
         ocrText: vlmScreenshot?.ocr_text,
-        uiTextSnippets: vlmScreenshot?.ui_text_snippets,
+        uiTextSnippets: vlmScreenshot?.ui_text_snippets?.filter(
+          (v): v is string => typeof v === "string"
+        ),
       });
     }
 
@@ -589,6 +592,7 @@ export class TextLLMProcessor {
       const eventNodeIndex = pendingNodes.length;
       pendingNodes.push({
         kind: "event",
+        segmentId: segment.segment_id,
         title: segment.event.title,
         summary: enrichedSummary,
         keywords: segment.keywords || [],
@@ -606,7 +610,8 @@ export class TextLLMProcessor {
         "knowledge",
         eventNodeIndex,
         screenshotIds,
-        eventTime
+        eventTime,
+        segment.segment_id
       );
       this.addDerivedNodes(
         pendingNodes,
@@ -614,7 +619,8 @@ export class TextLLMProcessor {
         "state_snapshot",
         eventNodeIndex,
         screenshotIds,
-        eventTime
+        eventTime,
+        segment.segment_id
       );
       this.addDerivedNodes(
         pendingNodes,
@@ -622,7 +628,8 @@ export class TextLLMProcessor {
         "procedure",
         eventNodeIndex,
         screenshotIds,
-        eventTime
+        eventTime,
+        segment.segment_id
       );
       this.addDerivedNodes(
         pendingNodes,
@@ -630,7 +637,8 @@ export class TextLLMProcessor {
         "plan",
         eventNodeIndex,
         screenshotIds,
-        eventTime
+        eventTime,
+        segment.segment_id
       );
     }
 
@@ -646,7 +654,8 @@ export class TextLLMProcessor {
     kind: ContextKind,
     sourceEventIndex: number,
     screenshotIds: number[],
-    eventTime: number
+    eventTime: number,
+    segmentId?: string
   ): void {
     for (const item of items) {
       // Build summary including steps for procedures
@@ -660,6 +669,7 @@ export class TextLLMProcessor {
 
       pendingNodes.push({
         kind,
+        segmentId,
         title: item.title,
         summary,
         keywords: [],
@@ -780,6 +790,7 @@ export class TextLLMProcessor {
 
       if (matchedSegmentIndex === undefined) {
         node.threadId = this.generateThreadId();
+        node.segmentId = undefined;
         logger.debug(
           { threadId: node.threadId, nodeTitle: node.title },
           "Creating new thread for event"
@@ -791,6 +802,7 @@ export class TextLLMProcessor {
       const mergeHint = segment?.merge_hint;
       if (!segment || !mergeHint) {
         node.threadId = this.generateThreadId();
+        node.segmentId = undefined;
         logger.debug(
           { threadId: node.threadId, nodeTitle: node.title },
           "Creating new thread for event"
@@ -799,6 +811,7 @@ export class TextLLMProcessor {
       }
 
       node.threadId = getThreadIdForSegment(segment, matchedSegmentIndex);
+      node.segmentId = segment.segment_id;
 
       if (mergeHint.decision === "MERGE" && mergeHint.thread_id) {
         logger.debug(
@@ -828,9 +841,38 @@ export class TextLLMProcessor {
    *
    * Creates nodes, edges, and screenshot links in proper order
    */
-  private async persistNodes(pendingNodes: PendingNode[]): Promise<string[]> {
+  private async persistNodes(pendingNodes: PendingNode[], batch: Batch): Promise<string[]> {
     const nodeIds: string[] = [];
     const nodeIdByIndex = new Map<number, string>();
+
+    const sortedScreenshotKey = (ids: number[]): string => {
+      const sorted = [...ids].sort((a, b) => a - b);
+      return sorted.join(",");
+    };
+
+    const derivedOrdinalByIndex = new Map<number, number>();
+    const derivedIndexesByGroup = new Map<string, number[]>();
+    for (let i = 0; i < pendingNodes.length; i++) {
+      const node = pendingNodes[i];
+      if (node.kind === "event") continue;
+      const key = `${node.sourceEventIndex ?? -1}|${node.kind}`;
+      const arr = derivedIndexesByGroup.get(key) ?? [];
+      arr.push(i);
+      derivedIndexesByGroup.set(key, arr);
+    }
+
+    for (const indexes of derivedIndexesByGroup.values()) {
+      indexes.sort((a, b) => {
+        const na = pendingNodes[a];
+        const nb = pendingNodes[b];
+        const byTitle = na.title.toLowerCase().localeCompare(nb.title.toLowerCase());
+        if (byTitle !== 0) return byTitle;
+        return a - b;
+      });
+      for (let ordinal = 1; ordinal <= indexes.length; ordinal++) {
+        derivedOrdinalByIndex.set(indexes[ordinal - 1], ordinal);
+      }
+    }
 
     // First pass: create all nodes
     for (let i = 0; i < pendingNodes.length; i++) {
@@ -845,9 +887,25 @@ export class TextLLMProcessor {
         }
       }
 
+      const sourceEventNode =
+        node.sourceEventIndex !== undefined ? pendingNodes[node.sourceEventIndex] : undefined;
+
+      const baseKey =
+        node.kind === "event"
+          ? `ss:${sortedScreenshotKey(node.screenshotIds)}`
+          : `ss:${sortedScreenshotKey(sourceEventNode?.screenshotIds ?? node.screenshotIds)}`;
+
+      const ordinal = node.kind === "event" ? 0 : (derivedOrdinalByIndex.get(i) ?? 0);
+
+      const originKey =
+        node.kind === "event"
+          ? `ctx_node:${batch.idempotencyKey}:${baseKey}:event`
+          : `ctx_node:${batch.idempotencyKey}:${baseKey}:${node.kind}:${ordinal}`;
+
       const input: CreateNodeInput = {
         kind: node.kind,
         threadId: node.threadId,
+        originKey,
         title: node.title,
         summary: node.summary,
         keywords: node.keywords,
@@ -909,7 +967,6 @@ export class TextLLMProcessor {
     batch: Batch,
     evidencePacks: EvidencePack[]
   ): Promise<TextLLMExpandResult> {
-    const startTime = Date.now();
     const aiService = AISDKService.getInstance();
 
     if (!aiService.isInitialized()) {
@@ -921,6 +978,9 @@ export class TextLLMProcessor {
 
     // Acquire global text semaphore
     const release = await aiRuntimeService.acquire("text");
+
+    // Start timing AFTER acquiring semaphore so durationMs reflects actual API call time
+    const startTime = Date.now();
 
     // Setup timeout with AbortController
     const controller = new AbortController();
@@ -1027,7 +1087,6 @@ export class TextLLMProcessor {
     existingNode: ExpandedContextNode,
     newNode: ExpandedContextNode
   ): Promise<TextLLMMergeResult> {
-    const startTime = Date.now();
     const aiService = AISDKService.getInstance();
     if (!aiService.isInitialized()) {
       throw new Error("AI SDK not initialized");
@@ -1037,7 +1096,16 @@ export class TextLLMProcessor {
     const modelName = aiService.getTextModelName();
 
     // Acquire global text semaphore
+    const semaphoreStart = Date.now();
     const release = await aiRuntimeService.acquire("text");
+    const semaphoreWaitMs = Date.now() - semaphoreStart;
+    logger.debug(
+      { sourceId: existingNode.id, targetId: newNode.id, waitMs: semaphoreWaitMs },
+      "Text LLM merge semaphore acquired"
+    );
+
+    // Start timing AFTER acquiring semaphore so durationMs reflects actual API call time
+    const startTime = Date.now();
 
     // Setup timeout with AbortController
     const controller = new AbortController();

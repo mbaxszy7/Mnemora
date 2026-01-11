@@ -1,14 +1,8 @@
-import { describe, it } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import * as fc from "fast-check";
 import { calculateNextDelay, ScreenCaptureScheduler } from "./capture-scheduler";
-import type {
-  CaptureErrorEvent,
-  CaptureStartEvent,
-  CaptureCompleteEvent,
-  CaptureSchedulerStateEvent,
-  CaptureResult,
-} from "./types";
-import { vi } from "vitest";
+import { screenCaptureEventBus } from "./event-bus";
+import type { CaptureCompleteEvent, CaptureResult } from "./types";
 
 vi.mock("../logger", () => ({
   getLogger: vi.fn(() => ({
@@ -19,6 +13,14 @@ vi.mock("../logger", () => ({
     child: vi.fn().mockReturnThis(),
   })),
 }));
+
+beforeEach(() => {
+  screenCaptureEventBus.removeAllListeners();
+});
+
+afterEach(() => {
+  screenCaptureEventBus.removeAllListeners();
+});
 
 type CaptureResultWithScreenId = CaptureResult & { screenId: string };
 
@@ -264,7 +266,8 @@ describe("ScreenCaptureScheduler Property Tests", () => {
             throw new Error(errorMessage);
           });
 
-          scheduler.on<CaptureErrorEvent>("capture:error", (event) => {
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture:error", (event) => {
             errorEventReceived = true;
             receivedErrorMessage = event.error.message;
           });
@@ -304,7 +307,8 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             return [captureResult];
           });
 
-          scheduler.on<CaptureStartEvent>("capture:start", (event) => {
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture:start", (event) => {
             startEvents.push({
               type: event.type,
               timestamp: event.timestamp,
@@ -345,7 +349,8 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             return [captureResult];
           });
 
-          scheduler.on<CaptureCompleteEvent>("capture:complete", (event) => {
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture:complete", (event) => {
             completeEvents.push(event);
           });
 
@@ -383,7 +388,8 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             dummyCaptureTask
           );
 
-          scheduler.on<CaptureSchedulerStateEvent>("capture-scheduler:state", (event) => {
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture-scheduler:state", (event) => {
             stateEvents.push({
               type: event.type,
               previousState: event.previousState,
@@ -436,8 +442,13 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             return [captureResult];
           });
 
-          scheduler.on("capture:start", () => eventOrder.push("start"));
-          scheduler.on("capture:complete", () => eventOrder.push("complete"));
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture:start", () => {
+            eventOrder.push("start");
+          });
+          screenCaptureEventBus.on("capture:complete", () => {
+            eventOrder.push("complete");
+          });
 
           scheduler.start();
           await new Promise((resolve) => setTimeout(resolve, captureCount * 30 + 100));
@@ -476,8 +487,13 @@ describe("ScreenCaptureScheduler Event Emission Property Tests", () => {
             throw new Error(errorMsg);
           });
 
-          scheduler.on("capture:start", () => eventOrder.push("start"));
-          scheduler.on("capture:error", () => eventOrder.push("error"));
+          screenCaptureEventBus.removeAllListeners();
+          screenCaptureEventBus.on("capture:start", () => {
+            eventOrder.push("start");
+          });
+          screenCaptureEventBus.on("capture:error", () => {
+            eventOrder.push("error");
+          });
 
           scheduler.start();
           await new Promise((resolve) => setTimeout(resolve, 50));

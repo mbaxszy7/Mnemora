@@ -11,7 +11,6 @@
 import { desktopCapturer, type SourcesOptions } from "electron";
 import type { VisibleSource } from "./types";
 import { DEFAULT_CACHE_INTERVAL } from "./types";
-import { getActiveAppsOnAllSpaces } from "./macos-window-helper";
 import { getLogger } from "../logger";
 // import { windowFilter } from "./window-filter";
 
@@ -95,14 +94,11 @@ export class CaptureSourceProvider {
       let result: VisibleSource[];
 
       if (appSourceIds && appSourceIds.length > 0) {
-        const activeAppsOnAllSpaces = await getActiveAppsOnAllSpaces();
         const visibleSources = await desktopCapturer.getSources({
           types: ["window"],
           thumbnailSize: { width: 1, height: 1 },
           fetchWindowIcons: false,
         });
-
-        logger.info({ activeAppsOnAllSpaces }, "Active apps on all spaces");
 
         result = appSourceIds.map((id) => {
           let isVisible = false;
@@ -145,9 +141,9 @@ export class CaptureSourceProvider {
           if (visibleSource) {
             isVisible = true;
             name = visibleSource.name;
-            logger.info(`Regular window found visible: ${id} -> ${name}`);
+            logger.debug(`Regular window found visible: ${id} -> ${name}`);
           } else {
-            logger.info(`Regular window NOT visible: ${id}`);
+            logger.debug(`Regular window NOT visible: ${id}`);
           }
           // }
 

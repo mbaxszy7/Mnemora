@@ -254,6 +254,10 @@ ${args.appCandidatesJson}
 
 ## App mapping rules (critical)
 - app_guess.name MUST be a canonical name from the list above.
+- **IMPORTANT**: These are commercial software products (IDEs, browsers, chat apps, etc.), NOT user projects or code repositories. Do NOT confuse an app name with a project name.
+  - Do NOT identify "Antigravity" as a user project - it is an IDE app, even if it appears in window titles like "Antigravity - mnemora".
+  - Do NOT identify "Visual Studio Code" as a user project - it is an IDE app.
+  - Do NOT identify "Google Chrome" or "Arc" as a user project - they are browsers.
 - If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
 - If you cannot confidently map to one canonical app, use "unknown" or "other" with low confidence.
 ${args.historySection}
@@ -305,6 +309,10 @@ ${args.appCandidatesJson}
 
 ## 应用映射规则（关键）
 - app_guess.name 必须是上述列表中的规范名称。
+- **重要**：这些是商业软件产品（IDE、浏览器、聊天应用等），而非用户的项目或代码仓库。不要将应用名称与项目名称混淆。
+  - 不要将 "Antigravity" 识别为用户项目 - 它是一个 IDE 应用，即使它出现在窗口标题中如 "Antigravity - mnemora"。
+  - 不要将 "Visual Studio Code" 识别为用户项目 - 它是一个 IDE 应用。
+  - 不要将 "Google Chrome" 或 "Arc" 识别为用户项目 - 它们是浏览器。
 - 如果 UI 显示别名如 "Chrome", "google chrome", "arc" 等，请将其映射到规范的应用名称。
 - 如果无法自信地映射到一个规范应用，请使用低置信度的 "unknown" 或 "other"。
 ${args.historySection}

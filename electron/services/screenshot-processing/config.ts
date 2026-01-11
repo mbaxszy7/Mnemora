@@ -13,8 +13,6 @@ import path from "node:path";
 const sourceBufferConfig = {
   /** Grace period before removing inactive source buffers in milliseconds (default: 60000 = 60s) */
   gracePeriodMs: 60000,
-  /** Refresh interval for active sources in milliseconds (default: 10000 = 10s) */
-  refreshIntervalMs: 10000,
 };
 
 const vlmConfig = {
@@ -78,8 +76,9 @@ const aiConcurrencyConfig = {
 const schedulerConfig = {
   scanIntervalMs: 30000,
   staleRunningThresholdMs: 600000,
+  laneRecoveryAgeMs: 600000,
   retryConfig: {
-    maxAttempts: 5,
+    maxAttempts: 2,
     /** Backoff schedule in milliseconds */
     backoffScheduleMs: [10000, 30000, 120000, 300000], // 10s, 30s, 2m, 5m, 10m
     /** Random jitter to add to backoff in milliseconds (default: 5000) */
@@ -90,6 +89,7 @@ const schedulerConfig = {
 const activitySummaryConfig = {
   generationIntervalMs: 1200000, // 20 minutes
   longEventThresholdMs: 25 * 60 * 1000, // 25 minutes threshold for long events
+  laneRecoveryAgeMs: 60 * 60 * 1000,
   eventDetailsEvidenceMaxNodes: 50,
   eventDetailsEvidenceMaxChars: 24000,
 };

@@ -34,7 +34,7 @@ process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
 // App icon path (for BrowserWindow and Dock)
 // Windows requires .ico format for proper icon display
 const appIconPath = path.join(
-  VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST,
+  app.isPackaged ? RENDERER_DIST : path.join(process.env.APP_ROOT, "public"),
   process.platform === "win32" ? "logo.ico" : "logo.png"
 );
 
@@ -141,7 +141,7 @@ class AppLifecycleController {
     });
 
     // Set dock icon on macOS (persistent)
-    if (process.platform === "darwin" && app.dock) {
+    if (process.platform === "darwin" && app.dock && !app.isPackaged) {
       app.dock.setIcon(appIcon);
     }
 

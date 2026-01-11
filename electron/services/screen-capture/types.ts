@@ -1,4 +1,5 @@
 import { POPULAR_APPS } from "@shared/popular-apps";
+import type { CapturePreferences } from "@shared/capture-source-types";
 
 // ============================================================================
 // Scheduler Types
@@ -100,7 +101,7 @@ export interface CaptureResult {
 /**
  * All possible scheduler events
  */
-export type SchedulerEvent =
+export type CaptureSchedulerEvent =
   | "capture:start"
   | "capture:complete"
   | "capture:error"
@@ -153,12 +154,13 @@ export interface CaptureSchedulerStateEvent {
 export interface PreferencesChangedEvent {
   type: "preferences:changed";
   timestamp: number;
+  preferences: CapturePreferences;
 }
 
 /**
  * Union type for all scheduler event payloads
  */
-export type SchedulerEventPayload =
+export type CaptureSchedulerEventPayload =
   | CaptureStartEvent
   | CaptureCompleteEvent
   | CaptureErrorEvent
@@ -168,9 +170,9 @@ export type SchedulerEventPayload =
 /**
  * Event handler type for scheduler events
  */
-export type SchedulerEventHandler<T extends SchedulerEventPayload = SchedulerEventPayload> = (
-  event: T
-) => void;
+export type CaptureSchedulerEventHandler<
+  T extends CaptureSchedulerEventPayload = CaptureSchedulerEventPayload,
+> = (event: T) => void | Promise<void>;
 
 // ============================================================================
 // AutoRefreshCache Types
@@ -214,7 +216,7 @@ export interface WindowFilterConfig {
  * Default scheduler configuration
  */
 export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfig = {
-  interval: 3000, // 6 seconds
+  interval: 3000, // 3 seconds
   minDelay: 100, // 100ms minimum
   autoStart: false,
 };

@@ -1,4 +1,4 @@
-import type { CaptureCompleteEvent } from "../screen-capture/types";
+import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
 import { getLogger } from "../logger";
 import { and, eq, isNotNull, lte } from "drizzle-orm";
@@ -16,6 +16,7 @@ import { activityTimelineScheduler } from "./activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 import { ScreenCaptureModuleType } from "../screen-capture";
+import { screenCaptureEventBus } from "../screen-capture";
 import { aiRuntimeService } from "../ai-runtime-service";
 
 export class ScreenshotProcessingModule {
@@ -25,25 +26,24 @@ export class ScreenshotProcessingModule {
   private cleanupInterval: NodeJS.Timeout | null = null;
   private cleanupInProgress = false;
 
-  private screenCapture: ScreenCaptureModuleType | null = null;
-
   initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
     if (this.initialized) {
       this.dispose();
     }
-    this.screenCapture = options.screenCapture;
+    const screenCapture = options.screenCapture;
     aiRuntimeService.registerCaptureControlCallbacks({
-      stop: () => this.screenCapture!.stop(),
-      start: () => this.screenCapture!.tryInitialize(),
-      getState: () => this.screenCapture!.getState(),
+      stop: async () => {
+        screenCapture.stop();
+      },
+      start: async () => {
+        await screenCapture.tryInitialize();
+      },
+      getState: () => screenCapture.getState(),
     });
-    sourceBufferRegistry.initialize(
-      this.screenCapture.getPreferencesService(),
-      this.onPersistAcceptedScreenshot
-    );
+    sourceBufferRegistry.initialize(this.onPersistAcceptedScreenshot);
 
-    this.screenCapture.on("preferences:changed", this.onPreferencesChanged);
-    this.screenCapture.on("capture:complete", this.onCaptureComplete);
+    screenCaptureEventBus.on("preferences:changed", this.onPreferencesChanged);
+    screenCaptureEventBus.on("capture:complete", this.onCaptureComplete);
     screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
 
@@ -60,8 +60,8 @@ export class ScreenshotProcessingModule {
       return;
     }
 
-    this.screenCapture?.off("preferences:changed", this.onPreferencesChanged);
-    this.screenCapture?.off("capture:complete", this.onCaptureComplete);
+    screenCaptureEventBus.off("preferences:changed", this.onPreferencesChanged);
+    screenCaptureEventBus.off("capture:complete", this.onCaptureComplete);
     screenshotProcessingEventBus.off("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.off("batch:persisted", this.onBatchPersisted);
 
@@ -72,14 +72,12 @@ export class ScreenshotProcessingModule {
     screenshotPipelineScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
-
-    this.screenCapture = null;
     this.initialized = false;
   }
 
-  private readonly onPreferencesChanged = async () => {
+  private readonly onPreferencesChanged = async (event: PreferencesChangedEvent) => {
     try {
-      await sourceBufferRegistry.refresh();
+      sourceBufferRegistry.setPreferences(event.preferences);
     } catch (error) {
       this.logger.error(
         { error },

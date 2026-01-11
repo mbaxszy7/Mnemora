@@ -1535,3 +1535,291 @@ i18n：在 `shared/locales/en.json` 与 `zh-CN.json` 增加 `usage.*` 文案。
 - snippet/节点检索结果去重（同一 thread/segment 的合并展示）
 - 质量指标：召回率、重复率、平均证据数、平均延迟
 - 对高价值节点做更强的 merge/summary（例如 activity summary）
+
+---
+
+# Electron Forge 可行性调研与迁移实施方案（Draft）
+
+## 目标与背景
+
+当前项目构建/打包链路（基线）：
+
+- **开发/构建**：Vite（renderer）+ `vite-plugin-electron/simple`（main/preload 的 Vite build + dev 启动）
+- **打包**：`electron-builder`（`electron-builder.json5`）
+- **原生模块**：`electron-rebuild -w better-sqlite3,hnswlib-node`，并在 `electron-builder` 侧使用 `asarUnpack`/`npmRebuild` 处理 native 依赖
+- **额外资源**：macOS DMG 里通过 `extraResources` 带入 `externals/python/window_inspector/dist/window_inspector`
+
+本调研目标：评估将项目迁移到 **Electron Forge** 的可行性（优点/难点/风险），并给出可落地的详细实施方案（含回滚策略）。
+
+## 结论（建议）
+
+### 可行性判断
+
+- **可行**：Forge 对 “Vite 作为 bundler + Electron 主进程/预加载打包 + native rebuild + maker/publisher” 有一套比较标准的流水线。
+- **需要谨慎**：你们当前在 Windows 侧使用 **NSIS**（`electron-builder`），Forge 官方推荐路径主要是 **Squirrel.Windows**（或其他 maker），与 NSIS 的能力/行为差异较大；若你们强依赖 NSIS 体验/能力，迁移的收益会被放大成本抵消。
+
+### 推荐方案（单一方案，满足：mac/linux/windows + mac/win arm64）
+
+统一目标：同时支持 **macOS + Windows + Linux** 三平台发布；其中 **macOS 与 Windows 必须同时支持 x64 与 arm64**。
+
+推荐采用“单一构建入口 + 分平台产物策略”的组合方案：
+
+- **统一构建入口（开发与产物编译）**：使用 Electron Forge + `@electron-forge/plugin-vite`
+  - 目的：收敛 main/preload/renderer 的 bundling、rebuild、ASAR 与 hooks。
+- **macOS / Linux 的分发产物（make）**：使用 Forge makers
+  - macOS：`maker-dmg`（可选补 `maker-zip`）
+  - Linux：优先 `AppImage`（如需 deb/rpm 再补）
+- **Windows 的分发产物（installer）**：继续使用 `electron-builder` 的 NSIS
+  - 目的：
+    - 保留你们当前 NSIS 安装体验与能力
+    - 避免 Squirrel.Windows 与 NSIS 在安装/升级行为上的差异风险
+    - 在 arm64 要求下更可控（尤其涉及 native 依赖 rebuild）
+
+说明：这个方案对外表现仍是“三平台一致可发布”，但内部对 Windows 采用 builder 生成 installer，是为了满足你们的明确要求与工程可控性。
+
+### Build Matrix（CI 构建矩阵，默认推荐）
+
+- **macOS x64**：GitHub Actions `macos-13`（Intel）
+- **macOS arm64**：GitHub Actions `macos-14`（Apple Silicon）
+- **Windows x64**：GitHub Actions `windows-2022`
+- **Windows arm64**：**自建 self-hosted Windows ARM64 runner**（推荐）
+  - 原因：native 依赖（`better-sqlite3/hnswlib-node/sharp/node-screenshots`）在 arm64 下需要可用的编译/工具链与 rebuild；仅靠 x64 runner “交叉”构建通常不可控。
+- **Linux x64**：GitHub Actions `ubuntu-22.04`
+
+产物建议：每个平台/架构都单独产出一份安装包，并在文件名中编码 `platform + arch + version`，避免用户与更新系统混淆。
+
+#### 默认产物清单（不需要额外选择）
+
+- **macOS x64 / arm64**：
+  - `dmg`（面向用户安装）
+  - `zip`（用于分发/可选用于后续自动更新方案）
+- **Windows x64 / arm64**：
+  - `nsis`（installer）
+- **Linux x64**：
+  - `AppImage`
+
+#### CI 执行策略（默认）
+
+- 每个 job 只构建一个 `platform + arch`，避免跨架构复用产物目录导致污染。
+- 每个 job 结束产出：
+  - 安装包/分发包
+  - 一个最小 smoke test 日志（验证 native 依赖可加载）
+
+#### Windows arm64 的前置条件（必须明确）
+
+由于本项目包含多个 native 依赖（`better-sqlite3/hnswlib-node/sharp/node-screenshots`），Windows arm64 的“可靠构建”需要满足至少一个条件：
+
+- **默认采用**：Windows ARM64 self-hosted runner（真实 arm64 环境）
+- **否则需要满足**：所有 native 依赖均提供可用的 Windows arm64 prebuild，并能在 CI 中禁用源码编译/重建路径
+
+以上条件不满足时，即使工具链支持 `--arch=arm64`，也会在 native rebuild 阶段高概率失败。
+
+#### 产物命名与发布组织（默认推荐）
+
+- Release 同一个版本号下上传所有平台/架构产物。
+- 文件名强制包含：`productName + platform + arch + version`。
+- 如需要强一致命名：
+  - Forge 侧使用 `postMake` hook 做 rename
+  - electron-builder 侧继续沿用 `artifactName`（你们当前已配置）
+
+## Electron Forge 的主要优点（针对本项目）
+
+- **统一的 build lifecycle**：`start -> package -> make -> publish` 的职责清晰；通过 hooks/插件插入自定义逻辑更有边界。
+- **Vite 一等公民**：`@electron-forge/plugin-vite` 原生支持 main/preload/renderer 多目标构建，并提供 dev/prod 路径全局变量用于 HMR。
+- **原生模块处理更“规范”**：Forge 在 `start/package` 阶段会自动执行 `@electron/rebuild`（可通过 `rebuildConfig` 细化），减少脚本层“自己 glue”的复杂度。
+- **ASAR + native 解包更省心**：可以配合 `@electron-forge/plugin-auto-unpack-natives` 自动从 ASAR 解包 native 模块，避免手写 `asarUnpack` 白名单不断扩张。
+- **发布链路更标准**：Forge 的 publisher（如 GitHub publisher）与 auto-update 生态（如 `update-electron-app`）组合更直接，CI 可按标准模板搭建。
+
+## 主要难点/风险清单（针对本项目）
+
+### 1) 入口与构建产物路径变化（需要改代码）
+
+Forge Vite 插件要求：
+
+- `package.json` 的 `main` 指向 `".vite/build/main"`（或对应的 `.js` 文件）。
+- main 进程加载 renderer 需要使用插件注入的全局变量：
+  - dev：`MAIN_WINDOW_VITE_DEV_SERVER_URL`
+  - prod：`MAIN_WINDOW_VITE_NAME`（用于拼出 `index.html` 的路径）
+
+你们当前是通过 `electron/env.ts` 的 `VITE_DEV_SERVER_URL` / `RENDERER_DIST` / `MAIN_DIST` 约定来加载；迁移后需要把这套约定替换/兼容。
+
+### 2) Windows 安装包形态差异（NSIS vs Squirrel）
+
+- 当前 `electron-builder`：Windows 目标是 `nsis`，支持较强的安装交互/目录选择等能力。
+- Forge 官方路径之一：`@electron-forge/maker-squirrel`（Squirrel.Windows）。
+- 风险点：
+  - 安装体验、升级/卸载行为、快捷方式/注册表等差异
+  - 你们可能已有（或将来需要的）NSIS 定制能力
+
+### 3) pnpm 兼容性（必须提前确认）
+
+Forge 官方提示：如果使用 pnpm，建议设置 `.npmrc` 的 `node-linker=hoisted`。
+
+- 你们当前 `.npmrc` 未设置该项。
+- 若不调整，可能出现：依赖解析、native rebuild、packager copy 阶段找不到依赖等问题。
+
+### 4) 原生模块与 ASAR
+
+你们当前涉及多个 native 模块/二进制：
+
+- `better-sqlite3`
+- `hnswlib-node`
+- `sharp`
+- `node-screenshots`
+
+风险点：
+
+- Forge + Vite bundling 下，需要确保这些依赖仍然以 “external + runtime require” 的方式加载。
+- ASAR 场景下是否需要额外 unpack（建议使用 auto-unpack-natives 插件，但仍需要 smoke test）。
+
+### 5) 额外资源打包（Python 二进制、migrations、monitoring static）
+
+当前你们用：
+
+- `electron-builder.extraResources` 携带 `window_inspector`
+- `vite.config.ts` 的 `copyMigrationsPlugin/copyMonitoringStaticPlugin` 把资源拷到 `dist-electron/*`
+
+迁移到 Forge 后：
+
+- main/preload 的产物目录变为 `.vite/build/*`；资源拷贝策略要同步调整
+- 建议通过 Forge hooks（如 `packageAfterCopy`）来做“打包前拷贝资源到 app 的 resources 目录”
+
+### 6) 签名/公证/发布
+
+- Forge 在 package 阶段处理 macOS code signing/notarization，但配置项与 electron-builder 不同。
+- 如果你们未来接入自动更新，还需要同步确定：
+  - 发布渠道（GitHub Releases / 私有更新服务器）
+  - 公私钥/证书在 CI 中的管理方式
+
+## Icon 配置与运行时策略（Best Practice，三平台 + ARM）
+
+### 资源文件与推荐格式（源文件在 public/）
+
+- **macOS（App icon）**：`public/logo.icns`
+- **Windows（App/Installer/Tray icon）**：`public/logo.ico`
+- **Linux（App/Tray icon）**：`public/logo.png`
+- **macOS（Tray template）**：
+  - `public/trayTemplate.png`
+  - `public/trayTemplate@2x.png`
+
+说明：tray 的 template 资源只解决“系统自动适配 dark/light + 菜单栏风格”，资源本身是否符合 template 规范由设计侧保证。
+
+### electron-builder（当前链路）icon 配置点
+
+- `electron-builder.json5`：
+  - **macOS**：`mac.icon = "public/logo.icns"`
+  - **Windows**：`win.icon = "public/logo.ico"`
+  - **Linux**：如需严格控制，可显式增加 `linux.icon`（默认会尝试从 buildResources 推断，建议后续补齐）
+
+### Electron Forge（迁移后）icon 配置点
+
+- **Packager**：`packagerConfig.icon`
+  - macOS 指向 `.icns`
+  - Windows 指向 `.ico`
+  - Linux 指向 `.png`
+- **Makers**：通常复用 packager 的 icon；若某 maker 需要额外 icon 参数，按 maker 文档覆盖即可。
+
+### 运行时 icon 策略（dev/prod 都适用）
+
+- **BrowserWindow icon**：
+  - Windows：传 `.ico`
+  - Linux：传 `.png`
+  - macOS：该字段对最终展示影响有限，可保留但不做“生产环境强覆盖”
+- **Dock icon（macOS）**：
+  - **生产环境不要在运行时 set dock icon**，以 `.app` bundle 的 `.icns` 为权威来源
+  - **开发环境可以 set**，便于调试时视觉一致
+- **Tray icon**：
+  - macOS：使用 template PNG，并对 `nativeImage` 调用 `setTemplateImage(true)`
+  - Windows：使用 `.ico`
+  - Linux：使用 `.png`
+
+### 三平台 + ARM 构建注意事项（与 icon 强相关的只有资源打包路径）
+
+- **macOS x64 + arm64**：
+  - 建议在 CI 使用矩阵构建（分别 x64/arm64 产物），或使用 universal（如采用 universal，需要额外注意 native 依赖的 universal 兼容性与 rebuild 策略）
+- **Windows x64 + arm64**：
+  - 建议 CI 矩阵构建（分别 x64/arm64），并确保 native 依赖可在 arm64 下成功 rebuild
+- icon 文件不随 arch 变化，但必须确保：
+  - 资源被正确带入最终产物（例如 Vite public 静态资源复制到 dist；或 Forge hooks copy 到 resources 目录）
+
+## 具体实施方案（分阶段，推荐路线 A）
+
+### Phase 0 — POC 前置准备（1-2 天）
+
+- **[确认 pnpm 配置]** 在分支上引入：`.npmrc` 增加 `node-linker=hoisted`（仅作为 Forge 试验分支配置；是否合并主分支另行决策）。
+- **[明确产物目标]** 先定义 POC 验收：
+  - `forge start` 能正常启动（renderer HMR + main reload/重启可接受）
+  - `forge make` 在 macOS 至少能产出可运行 `.app` 与 `.dmg`（或 `.zip`）
+  - `better-sqlite3`/`hnswlib-node` 在打包产物中可正常加载（最关键）
+
+### Phase 1 — 引入 Forge + Vite 插件（开发链路迁移，2-4 天）
+
+- **新增 Forge 配置文件**：建议使用 `forge.config.cjs`
+  - 原因：当前 `package.json` 为 `type: module`，CJS 配置更稳，避免工具链对 ESM 配置读取不一致。
+- **新增 Vite 配置拆分**（对齐 Forge 插件要求）：
+  - `vite.main.config.ts`：main 进程 build 配置（alias、external native modules、资源拷贝插件等）
+  - `vite.preload.config.ts`：preload build 配置
+  - `vite.renderer.config.ts`：renderer build 配置（基本可复用现有 `vite.config.ts` 的大部分 renderer 配置）
+- **修改 main 进程加载逻辑**：
+  - `main.ts` 里 `loadURL/loadFile` 改为使用 Forge Vite 插件注入的全局变量（例如 `MAIN_WINDOW_VITE_DEV_SERVER_URL`/`MAIN_WINDOW_VITE_NAME`）。
+  - 目标：尽量不再依赖当前 `electron/env.ts` 的 `VITE_DEV_SERVER_URL/RENDERER_DIST/MAIN_DIST` 约定（可暂时保留用于旧链路回滚）。
+
+### Phase 2 — native 模块与 ASAR 策略落地（2-5 天）
+
+- **Vite external**：在 main/preload 的 Vite build 中，把 native 模块加入 `rollupOptions.external`（你们当前已对 `better-sqlite3/node-screenshots/sharp/hnswlib-node` 这么做，迁移后要保持一致）。
+- **启用 ASAR + 自动解包**：
+  - Forge 默认 packager 不启用 ASAR，需要在 `packagerConfig.asar` 里显式开启。
+  - 加入 `@electron-forge/plugin-auto-unpack-natives`，减少维护 `asarUnpack` 白名单的成本。
+- **rebuildConfig**：将目前脚本层的 `electron-rebuild -w ...` 下沉到 Forge 的 `rebuildConfig`（只 rebuild 必要模块，降低构建时间）。
+- **Smoke Test（必须）**：
+  - 打包产物启动后，覆盖：DB 初始化、向量索引（`hnswlib-node`）、截图处理（`sharp/node-screenshots`）等关键路径。
+
+### Phase 3 — 资源文件打包迁移（1-3 天）
+
+目标：替代现有 `electron-builder.extraResources` 与 `dist-electron` 的拷贝策略。
+
+- **window_inspector（二进制）**：
+  - 用 Forge hooks（建议 `packageAfterCopy`）把 `externals/python/window_inspector/dist/window_inspector` 拷贝到 app 的 resources 目录（如 `Resources/bin/window_inspector`）。
+- **migrations / monitoring static**：
+  - 方案 1（推荐）：在 `vite.main.config.ts` 的 build 结束时把相关目录拷到 `.vite/build/*` 的可预测位置，然后 packager 会把它们带入。
+  - 方案 2：统一放到 Forge hook 中拷贝到 resources 目录，避免与 Vite 产物目录耦合。
+
+### Phase 4 — Makers 选型与产物对齐（3-7 天）
+
+建议先保证 macOS 可交付，再逐步扩平台。
+
+- **macOS**：
+  - `@electron-forge/maker-dmg` +（可选）`@electron-forge/maker-zip`
+  - 若未来要走 Squirrel.Mac / 静态文件 auto-update，通常需要 zip 产物配合更新方案（按你们发布渠道决定）。
+- **Linux**：
+  - 视目标发行版选择 AppImage/deb/rpm（Forge 有对应 makers；以最终发布策略决定）。
+- **Windows（关键决策点）**：
+  - 短期：继续使用 `electron-builder` 产 NSIS（保证能力不倒退）。
+  - 长期：评估切换到 Squirrel.Windows（maker-squirrel），或自研/引入 maker 达到 NSIS 要求。
+
+### Phase 5 — Publish / Auto Update / CI（可选但建议规划，3-7 天）
+
+- **发布到 GitHub Releases**：Forge 有 GitHub publisher；使用 `process.env.GITHUB_TOKEN`，CI 需要 `permissions: contents: write`。
+- **自动更新（公有仓库最省事路径）**：可在 main 进程引入 `update-electron-app`。
+  - 私有仓库/企业内部分发：需要改用其他更新方案（私有更新服务器/签名策略）。
+- **CI 建议（GitHub Actions）**：
+  - macOS runner 构建 dmg/zip，并处理签名/公证（如启用）
+  - Windows runner 构建（Forge 或 electron-builder）
+  - Linux runner 构建
+  - 缓存 pnpm store + node-gyp/编译缓存以降低构建时间
+
+## 回滚与并行策略（必须保留安全垫）
+
+- **短期并行**：保留现有 `vite + electron-builder` 的 `pnpm build` 不动；新增一组 Forge 脚本（如 `pnpm forge:start / pnpm forge:make`）用于试验。
+- **产物并行对比**：同版本同时产出两套安装包（Builder 与 Forge），做 smoke test + 小范围 dogfooding。
+- **切换开关**：只有在 “native 模块 + 资源文件 + 三平台产物 + 升级/卸载行为” 全部稳定后，才移除旧链路。
+
+## 需要你们在开工前确认的关键问题（决定方案走向）
+
+- **Windows 安装包必须 NSIS 吗？**
+  - 如果必须：建议路线 A（Windows 保留 electron-builder 更久）。
+- **是否近期要做自动更新？**
+  - 如果要：需要同时确定发布渠道（GitHub 公有/私有、S3、私有服务器）与签名/证书管理策略。
+- **是否要求产物输出目录/命名与当前完全一致？**
+  - Forge 默认输出在 `/out` 与 `/out/make`，若强制保持现有 `release/${version}` 结构，需要额外 hook/脚本搬运。
+

@@ -20,6 +20,7 @@ let insertCalls: Array<{ values: Record<string, unknown> }> = [];
 let updateCalls: Array<{ values: Record<string, unknown> }> = [];
 let selectResults: unknown[] = [];
 let insertReturnId = 1;
+let originKeyToId = new Map<string, number>();
 
 // Mock the database module
 vi.mock("../../database", () => ({
@@ -31,9 +32,32 @@ vi.mock("../../database", () => ({
         } else {
           insertCalls.push({ values });
         }
+
+        const nextIdForValues = (v: Record<string, unknown>): number => {
+          const originKey = v.originKey;
+          if (typeof originKey === "string" && originKey.length > 0) {
+            const existing = originKeyToId.get(originKey);
+            if (existing) return existing;
+            const id = insertReturnId++;
+            originKeyToId.set(originKey, id);
+            return id;
+          }
+          return insertReturnId++;
+        };
+
+        const returningId = Array.isArray(values)
+          ? nextIdForValues(values[0] ?? {})
+          : nextIdForValues(values);
+
         return {
           returning: vi.fn(() => ({
-            all: vi.fn(() => [{ id: insertReturnId++ }]),
+            all: vi.fn(() => [{ id: returningId }]),
+            get: vi.fn(() => ({ id: returningId })),
+          })),
+          onConflictDoUpdate: vi.fn(() => ({
+            returning: vi.fn(() => ({
+              get: vi.fn(() => ({ id: returningId })),
+            })),
           })),
           onConflictDoNothing: vi.fn(() => ({
             run: vi.fn(),
@@ -106,6 +130,7 @@ function resetMocks() {
   updateCalls = [];
   selectResults = [];
   insertReturnId = 1;
+  originKeyToId = new Map<string, number>();
 }
 
 // Helper to find insert call by checking values
@@ -129,6 +154,7 @@ function buildRecord(overrides: Partial<ContextNodeRecord> = {}): ContextNodeRec
     id: 1,
     kind: "event",
     threadId: null,
+    originKey: null,
     title: "Test Event",
     summary: "Test summary",
     keywords: null,
@@ -177,6 +203,24 @@ describe("ContextGraphService", () => {
       const nodeId = await service.createNode(input);
       expect(nodeId).toBe("1");
       expect(insertCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("should be idempotent for same originKey", async () => {
+      const input = createTestNodeInput({
+        originKey: "ctx_node:test:stable",
+        title: "First",
+        summary: "First summary",
+      });
+
+      const id1 = await service.createNode(input);
+      const id2 = await service.createNode({
+        ...input,
+        title: "Second",
+        summary: "Second summary",
+      });
+
+      expect(id1).toBe("1");
+      expect(id2).toBe("1");
     });
 
     it("should set correct fields on the node", async () => {

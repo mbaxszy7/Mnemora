@@ -7,12 +7,14 @@ import { metricsCollector } from "./metrics-collector";
 import { queueInspector } from "./queue-inspector";
 import { aiErrorStream } from "./ai-error-stream";
 import { aiRequestTraceBuffer } from "./ai-request-trace";
+import { activityAlertBuffer } from "./activity-alert-trace";
 import { mainI18n } from "../i18n-service";
 import type {
   SSEMessage,
   MetricsSnapshot,
   AIErrorEvent,
   AIRequestTrace,
+  ActivityAlertEvent,
   HealthSummary,
   InitPayload,
 } from "./monitoring-types";
@@ -66,6 +68,10 @@ export class MonitoringServer {
 
   private onAIRequestTrace = (trace: AIRequestTrace) => {
     this.broadcastMessage({ type: "ai_request", data: trace });
+  };
+
+  private onActivityAlert = (event: ActivityAlertEvent) => {
+    this.broadcastMessage({ type: "activity_alert", data: event });
   };
 
   private constructor() {}
@@ -369,6 +375,7 @@ export class MonitoringServer {
         recentMetrics: metricsCollector.getRecentMetrics(),
         recentQueue: queueStatus,
         recentErrors: await aiErrorStream.queryRecentErrors(50),
+        recentActivityAlerts: activityAlertBuffer.getRecent(50),
         health: healthSummary,
       };
 
@@ -469,6 +476,7 @@ export class MonitoringServer {
     metricsCollector.on("metrics", this.onMetrics);
     aiErrorStream.on("error", this.onAIError);
     aiRequestTraceBuffer.on("trace", this.onAIRequestTrace);
+    activityAlertBuffer.on("alert", this.onActivityAlert);
 
     this.startQueuePolling();
   }
@@ -485,6 +493,7 @@ export class MonitoringServer {
     metricsCollector.off("metrics", this.onMetrics);
     aiErrorStream.off("error", this.onAIError);
     aiRequestTraceBuffer.off("trace", this.onAIRequestTrace);
+    activityAlertBuffer.off("alert", this.onActivityAlert);
 
     metricsCollector.stop();
     aiErrorStream.stop();

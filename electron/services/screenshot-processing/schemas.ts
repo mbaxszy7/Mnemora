@@ -61,10 +61,9 @@ function truncateTo(maxLen: number) {
  * Schema for derived items (knowledge, state, procedure, plan)
  */
 const DerivedItemSchema = z.object({
-  /** Title of the derived item (≤200 chars) */
-  title: z.string().max(200),
+  title: z.string(),
   /** Summary of the derived item (≤500 chars) */
-  summary: z.string().max(500),
+  summary: z.string(),
   /** Steps for procedures (optional) */
   steps: z.array(z.string().max(80)).optional(),
   /** Object being tracked for state snapshots (optional) */
@@ -89,10 +88,9 @@ export type DerivedItem = z.infer<typeof DerivedItemSchema>;
  * Schema for VLM segment event
  */
 const VLMEventSchema = z.object({
-  /** Event title (≤200 chars) */
-  title: z.string().max(200),
+  title: z.string(),
   /** Event summary (≤500 chars) */
-  summary: z.string().max(500),
+  summary: z.string(),
   /** Confidence score (0-10) */
   confidence: z.number(),
   /** Importance score (0-10) */
@@ -195,22 +193,22 @@ export const VLMIndexResultSchema = z.object({
     .array(
       z.object({
         /** Screenshot database ID (must match screenshot_id in the input metadata) */
-        screenshot_id: z.number().int().positive(),
+        screenshot_id: z.coerce.number().int().positive(),
         app_guess: z
           .object({
-            name: z.enum(ALLOWED_APP_GUESSES as [string, ...string[]]),
+            name: z.string(),
             confidence: z.number(),
           })
           .optional(),
         /** Full OCR text (trimmed, ≤8000 chars) */
         ocr_text: z.string().optional(),
         /** High-value UI text snippets (≤20, each ≤200 chars) */
-        ui_text_snippets: z.array(z.string()).optional(),
+        ui_text_snippets: z.array(z.string().nullable()).optional(),
       })
     )
     .default([]),
   /** Optional notes from VLM */
-  notes: z.string().optional(),
+  notes: z.string().nullish(),
 });
 
 export const VLMIndexResultProcessedSchema = VLMIndexResultSchema.transform((val) => {
@@ -221,8 +219,17 @@ export const VLMIndexResultProcessedSchema = VLMIndexResultSchema.transform((val
     screenshots: val.screenshots.map((s) => {
       const ss: z.infer<typeof VLMIndexResultSchema>["screenshots"][number] = { ...s };
       if (s.app_guess) {
+        let normalizedName = s.app_guess.name;
+        // Try to match canonical name if possible
+        const lowerName = s.app_guess.name.toLowerCase();
+        for (const candidate of ALLOWED_APP_GUESSES) {
+          if (candidate.toLowerCase() === lowerName) {
+            normalizedName = candidate;
+            break;
+          }
+        }
         ss.app_guess = {
-          name: truncateTo(100)(s.app_guess.name),
+          name: truncateTo(100)(normalizedName),
           confidence: Math.max(0, Math.min(1, s.app_guess.confidence)),
         };
       }
@@ -230,7 +237,10 @@ export const VLMIndexResultProcessedSchema = VLMIndexResultSchema.transform((val
         ss.ocr_text = truncateTo(8000)(s.ocr_text);
       }
       if (s.ui_text_snippets) {
-        ss.ui_text_snippets = s.ui_text_snippets.slice(0, 20).map(truncateTo(200));
+        ss.ui_text_snippets = (Array.isArray(s.ui_text_snippets) ? s.ui_text_snippets : [])
+          .filter((v): v is string => typeof v === "string")
+          .slice(0, 20)
+          .map(truncateTo(200));
       }
       return ss;
     }),
@@ -370,14 +380,14 @@ export type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultProcessedSchem
  * Event candidate from LLM window analysis
  */
 const ActivityEventCandidateSchema = z.object({
-  title: z.string().max(100),
+  title: z.string(),
   kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding"]),
   // LLM-provided minute offsets relative to the current windowStart (0..windowDurationMinutes)
   start_offset_min: z.number().min(0).max(20),
   end_offset_min: z.number().min(0).max(20),
   confidence: z.number().min(0).max(10),
   importance: z.number().min(0).max(10),
-  description: z.string().max(200),
+  description: z.string(),
   node_ids: z.array(z.number().int().positive()),
 });
 

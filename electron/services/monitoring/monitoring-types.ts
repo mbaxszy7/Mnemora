@@ -91,15 +91,50 @@ export interface AIRequestTrace {
   images?: string[]; // Base64 data URLs
 }
 
+export type ActivityAlertKind =
+  | "activity_summary_overdue"
+  | "activity_summary_semaphore_wait"
+  | "activity_summary_stuck_running"
+  | "activity_summary_timeout"
+  | "activity_event_details_semaphore_wait"
+  | "activity_event_details_stuck_running"
+  | "activity_event_details_timeout";
+
+export interface ActivityAlertEvent {
+  ts: number;
+  kind: ActivityAlertKind;
+  message: string;
+  windowStart?: number;
+  windowEnd?: number;
+  eventId?: number;
+  waitMs?: number;
+  nextRunAt?: number | null;
+  updatedAt?: number;
+}
+
 // ============================================================================
 // SSE Streaming Types
 // ============================================================================
 
-export type SSEMessageType = "metrics" | "queue" | "ai_error" | "ai_request" | "health" | "init";
+export type SSEMessageType =
+  | "metrics"
+  | "queue"
+  | "ai_error"
+  | "ai_request"
+  | "health"
+  | "init"
+  | "activity_alert";
 
 export interface SSEMessage {
   type: SSEMessageType;
-  data: MetricsSnapshot | QueueStatus | AIErrorEvent | AIRequestTrace | HealthSummary | InitPayload;
+  data:
+    | MetricsSnapshot
+    | QueueStatus
+    | AIErrorEvent
+    | AIRequestTrace
+    | ActivityAlertEvent
+    | HealthSummary
+    | InitPayload;
 }
 
 export interface HealthSummary {
@@ -115,6 +150,7 @@ export interface InitPayload {
   recentMetrics: MetricsSnapshot[];
   recentQueue: QueueStatus | null;
   recentErrors: AIErrorEvent[];
+  recentActivityAlerts: ActivityAlertEvent[];
   health: HealthSummary;
 }
 

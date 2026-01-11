@@ -1,11 +1,16 @@
-import { BrowserWindow, Menu, Tray, nativeImage } from "electron";
+import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
-import { APP_ROOT, RENDERER_DIST, VITE_DEV_SERVER_URL } from "../env";
+import { APP_ROOT, RENDERER_DIST } from "../env";
 import { llmUsageService } from "./llm-usage-service";
 import { IPC_CHANNELS } from "@shared/ipc-types";
-import { screenCaptureModule } from "./screen-capture/screen-capture-module";
+import {
+  screenCaptureEventBus,
+  screenCaptureModule,
+  type CaptureSchedulerState,
+  type CaptureSchedulerStateEvent,
+} from "./screen-capture";
 
 export interface TrayServiceConfig {
   /**
@@ -30,8 +35,10 @@ export class TrayService {
   private config: TrayServiceConfig | null = null;
   private todayTokens: number = 0;
   private updateInterval: NodeJS.Timeout | null = null;
+  private schedulerStatus: CaptureSchedulerState["status"] = "idle";
 
-  private readonly handleSchedulerEventBound = () => {
+  private readonly handleSchedulerEventBound = (event: CaptureSchedulerStateEvent) => {
+    this.schedulerStatus = event.currentState;
     this.refreshMenu();
     this.refreshTooltip();
     this.updateUsageDisplay();
@@ -62,10 +69,10 @@ export class TrayService {
 
   private getIconPath(): string {
     const appRoot = process.env.APP_ROOT ?? APP_ROOT;
-    const base = VITE_DEV_SERVER_URL ? path.join(appRoot, "public") : RENDERER_DIST;
+    const base = app.isPackaged ? RENDERER_DIST : path.join(appRoot, "public");
     // macOS tray uses Template images (monochrome)
     if (process.platform === "darwin") {
-      return path.join(base, "logoTemplate@2x.png");
+      return path.join(base, "trayTemplate@2x.png");
     }
     // Windows requires .ico format for proper tray icon display
     if (process.platform === "win32") {
@@ -82,7 +89,13 @@ export class TrayService {
 
     const resolvedIconPath = path.resolve(this.getIconPath());
     const icon = nativeImage.createFromPath(resolvedIconPath);
+    if (process.platform === "darwin") {
+      icon.setTemplateImage(true);
+    }
     this.tray = new Tray(icon);
+
+    // Snapshot initial status in case tray subscribes after scheduler already started.
+    this.schedulerStatus = screenCaptureModule.getState().status;
 
     // Initial display
     this.refreshTooltip();
@@ -139,7 +152,7 @@ export class TrayService {
   private refreshMenu(): void {
     if (!this.tray) return;
 
-    const isRunning = screenCaptureModule.getState().status === "running";
+    const isRunning = this.schedulerStatus === "running";
 
     const menu = Menu.buildFromTemplate([
       {
@@ -174,13 +187,13 @@ export class TrayService {
 
   private refreshTooltip(): void {
     if (!this.tray) return;
-    const status = screenCaptureModule.getState().status;
+    const status = this.schedulerStatus;
     const statusText = mainI18n.t(`tray.status.${status}` as const);
     this.tray.setToolTip(`Mnemora - ${statusText}`);
   }
 
   private handleToggleRecording(): void {
-    const isRunning = screenCaptureModule.getState().status === "running";
+    const isRunning = this.schedulerStatus === "running";
     if (isRunning) {
       this.logger.info("Stopping screen capture from tray");
       screenCaptureModule.stop();
@@ -225,10 +238,10 @@ export class TrayService {
   };
 
   private subscribeScheduler(): void {
-    screenCaptureModule.on("capture-scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureEventBus.on("capture-scheduler:state", this.handleSchedulerEventBound);
   }
 
   private unsubscribeScheduler(): void {
-    screenCaptureModule.off("capture-scheduler:state", this.handleSchedulerEventBound);
+    screenCaptureEventBus.off("capture-scheduler:state", this.handleSchedulerEventBound);
   }
 }

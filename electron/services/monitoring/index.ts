@@ -14,6 +14,7 @@ export { RingBuffer } from "./ring-buffer";
 export { MetricsCollector, metricsCollector } from "./metrics-collector";
 export { QueueInspector, queueInspector } from "./queue-inspector";
 export { AIErrorStream, aiErrorStream } from "./ai-error-stream";
+export { activityAlertBuffer } from "./activity-alert-trace";
 
 // Server
 export { MonitoringServer, monitoringServer } from "./monitoring-server";

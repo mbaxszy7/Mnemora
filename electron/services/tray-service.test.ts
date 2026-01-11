@@ -17,12 +17,15 @@ class MockTray {
 }
 
 vi.mock("electron", () => ({
+  app: {
+    isPackaged: false,
+  },
   Menu: {
     buildFromTemplate: vi.fn(() => ({ items: [] })),
   },
   Tray: MockTray,
   nativeImage: {
-    createFromPath: vi.fn(() => ({ isEmpty: () => false })),
+    createFromPath: vi.fn(() => ({ isEmpty: () => false, setTemplateImage: vi.fn() })),
   },
   BrowserWindow: vi.fn(),
 }));
@@ -131,6 +134,11 @@ describe("TrayService", () => {
       service.init();
 
       expect(nativeImage.createFromPath).toHaveBeenCalled();
+      const firstCall = (nativeImage.createFromPath as unknown as Mock).mock.calls[0]?.[0] as
+        | string
+        | undefined;
+      expect(firstCall).toBeTruthy();
+      expect(firstCall).toContain("trayTemplate@2x.png");
       // Verify tray was created by checking that tray methods were called
       expect(mockTray.setToolTip).toHaveBeenCalled();
     });

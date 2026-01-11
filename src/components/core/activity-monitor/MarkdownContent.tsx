@@ -41,12 +41,18 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
             {children}
           </ul>
         ),
-        li: ({ children }) => (
-          <li className="text-sm text-muted-foreground flex items-start gap-2 last:mb-0">
-            <span className="text-primary leading-relaxed shrink-0 select-none mt-0.5">•</span>
-            <span className="flex-1 min-w-0">{children}</span>
-          </li>
-        ),
+        li: ({ children }) => {
+          // Use a fixed height for the bullet container that matches the text's line-height (1.25rem for text-sm)
+          // to ensure perfect vertical centering with the first line.
+          return (
+            <li className="text-sm text-muted-foreground flex items-start gap-1.5 last:mb-0">
+              <span className="text-primary shrink-0 select-none flex items-center justify-center w-1.5 h-5">
+                •
+              </span>
+              <span className="flex-1 min-w-0 leading-relaxed">{children}</span>
+            </li>
+          );
+        },
         p: ({ children }) => (
           <p className={`text-sm text-muted-foreground ${isCompact ? "my-1.5" : "my-2"} last:mb-0`}>
             {children}

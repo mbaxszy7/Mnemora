@@ -13,12 +13,14 @@ export class EmbeddingService {
    * Generate embedding for text using the configured embedding model
    */
   async embed(text: string, abortSignal?: AbortSignal): Promise<Float32Array> {
-    const startTime = Date.now();
     const embeddingClient = AISDKService.getInstance().getEmbeddingClient();
     const modelName = AISDKService.getInstance().getEmbeddingModelName();
 
     // Acquire global embedding semaphore
     const release = await aiRuntimeService.acquire("embedding");
+
+    // Start timing AFTER acquiring semaphore so durationMs reflects actual API call time
+    const startTime = Date.now();
 
     // Setup timeout with AbortController (combine with external signal if provided)
     const controller = new AbortController();
@@ -33,6 +35,11 @@ export class EmbeddingService {
         model: embeddingClient,
         value: text,
         abortSignal: controller.signal,
+        providerOptions: {
+          mnemora: {
+            dimensions: 1024,
+          },
+        },
       });
 
       clearTimeout(timeoutId);

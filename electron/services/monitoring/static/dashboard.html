@@ -169,6 +169,44 @@
     .queue-table .count-running { color: var(--accent-blue); }
     .queue-table .count-failed { color: var(--accent-red); }
 
+    .alerts-section {
+      margin-top: 16px;
+      background: var(--bg-secondary);
+      border-radius: 12px;
+      padding: 20px;
+    }
+
+    .alerts-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+
+    .alerts-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .alerts-table th,
+    .alerts-table td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border-color);
+      font-size: 13px;
+    }
+
+    .alerts-table th {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+      text-transform: uppercase;
+    }
+
+    .alerts-table td.time { color: var(--text-muted); white-space: nowrap; }
+    .alerts-table td.kind { font-family: monospace; color: var(--accent-yellow); }
+    .alerts-table td.target { font-family: monospace; color: var(--text-secondary); white-space: nowrap; }
+    .alerts-empty { text-align: center; padding: 20px 12px; color: var(--text-muted); }
+
     .footer {
       margin-top: 24px;
       display: flex;
@@ -284,6 +322,23 @@
     </table>
   </div>
 
+  <div class="alerts-section">
+    <div class="alerts-title" data-i18n="monitoring.activityAlerts.title">Activity Alerts</div>
+    <table class="alerts-table">
+      <thead>
+        <tr>
+          <th data-i18n="monitoring.activityAlerts.table.time">Time</th>
+          <th data-i18n="monitoring.activityAlerts.table.kind">Kind</th>
+          <th data-i18n="monitoring.activityAlerts.table.target">Target</th>
+          <th data-i18n="monitoring.activityAlerts.table.message">Message</th>
+        </tr>
+      </thead>
+      <tbody id="activity-alerts-body">
+        <tr><td colspan="4" class="alerts-empty">No activity alerts</td></tr>
+      </tbody>
+    </table>
+  </div>
+
   <div class="footer">
     <div>
       <span class="status-dot connected" id="connection-indicator"></span>
@@ -317,6 +372,10 @@
             table: { queue: "Queue", pending: "Pending", running: "Running", failed: "Failed" },
             batches: "Batches", vectorDocs: "Vector Documents", activitySummaries: "Activity Summaries"
           },
+          activityAlerts: {
+            title: "Activity Alerts",
+            table: { time: "Time", kind: "Kind", target: "Target", message: "Message" }
+          },
           footer: { lastUpdated: "Last updated", droppedFrames: "Dropped frames" },
           connection: { connected: "Connected", reconnecting: "Reconnecting..." }
         }
@@ -340,6 +399,10 @@
             title: "队列状态",
             table: { queue: "队列", pending: "待处理", running: "运行中", failed: "失败" },
             batches: "批次", vectorDocs: "向量文档", activitySummaries: "活动摘要"
+          },
+          activityAlerts: {
+            title: "活动告警",
+            table: { time: "时间", kind: "类型", target: "对象", message: "信息" }
           },
           footer: { lastUpdated: "最后更新", droppedFrames: "丢失帧数" },
           connection: { connected: "已连接", reconnecting: "重新连接中..." }
@@ -383,6 +446,9 @@
       activityRunning: document.getElementById("queue-activity-running"),
       activityFailed: document.getElementById("queue-activity-failed")
     };
+
+    const activityAlerts = [];
+    const activityAlertsBody = document.getElementById("activity-alerts-body");
 
     // Initialize i18n
     let currentTranslations = null;
@@ -472,6 +538,53 @@
       return (bytes / 1024 / 1024).toFixed(1);
     }
 
+    function formatTime(ts) {
+      return new Date(ts).toLocaleTimeString();
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatTarget(a) {
+      if (a.windowStart != null && a.windowEnd != null) {
+        return `win:${a.windowStart}-${a.windowEnd}`;
+      }
+      if (a.eventId != null) {
+        return `event:${a.eventId}`;
+      }
+      return '-';
+    }
+
+    function renderActivityAlerts() {
+      if (!activityAlertsBody) return;
+      if (activityAlerts.length === 0) {
+        activityAlertsBody.innerHTML = '<tr><td colspan="4" class="alerts-empty">No activity alerts</td></tr>';
+        return;
+      }
+
+      const rows = activityAlerts
+        .slice()
+        .reverse()
+        .slice(0, 60)
+        .map((a) => {
+          const msg = a.message || '';
+          return `
+            <tr>
+              <td class="time">${formatTime(a.ts)}</td>
+              <td class="kind">${a.kind}</td>
+              <td class="target">${formatTarget(a)}</td>
+              <td>${escapeHtml(msg)}</td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      activityAlertsBody.innerHTML = rows;
+    }
+
     // Handle metrics update
     function handleMetrics(metrics) {
       elements.lagValue.textContent = metrics.eventLoopLagP95Ms.toFixed(1) + ' ms (p95)';
@@ -539,6 +652,12 @@
       
       if (init.recentQueue) handleQueue(init.recentQueue);
       handleHealth(init.health);
+
+      if (init.recentActivityAlerts && Array.isArray(init.recentActivityAlerts)) {
+        activityAlerts.splice(0, activityAlerts.length);
+        activityAlerts.push(...init.recentActivityAlerts);
+        renderActivityAlerts();
+      }
       
       if (init.recentMetrics.length > 0) {
         handleMetrics(init.recentMetrics[init.recentMetrics.length - 1]);
@@ -569,6 +688,13 @@
             break;
           case 'health':
             handleHealth(message.data);
+            break;
+          case 'activity_alert':
+            activityAlerts.push(message.data);
+            if (activityAlerts.length > 120) {
+              activityAlerts.splice(0, activityAlerts.length - 120);
+            }
+            renderActivityAlerts();
             break;
         }
       };

@@ -15,7 +15,7 @@ class LoggerService {
   private logger: pino.Logger;
   private logsDir: string;
   private logFile: string;
-  private readonly maxEntries = 50;
+  private readonly maxEntries = 5000;
 
   private constructor() {
     this.logsDir = this.getLogsDir();

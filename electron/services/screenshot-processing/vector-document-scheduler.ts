@@ -1,4 +1,4 @@
-import { eq, and, or, lt, isNull, lte, asc } from "drizzle-orm";
+import { eq, and, or, lt, isNull, lte, asc, desc } from "drizzle-orm";
 import { getDb } from "../../database";
 import { vectorDocuments } from "../../database/schema";
 import { getLogger } from "../logger";
@@ -243,15 +243,36 @@ export class VectorDocumentScheduler extends BaseScheduler {
     const now = Date.now();
     const limit = 100; // 单轮扫描上限：避免一次性拉太多记录导致长事务/卡顿
 
+    // Fairness note:
+    // We scan both newest and oldest due tasks so that:
+    // - newest => freshly updated/created docs are embedded/indexed quickly (realtime responsiveness)
+    // - oldest => backlog tasks still make progress (recovery)
+    const sliceLimit = Math.max(1, Math.ceil(limit / 2));
+
+    // newest+oldest scans can overlap; merge by id to avoid duplicates.
+    const mergeUniqueById = <T extends { id: number }>(rows: T[]): T[] => {
+      const seen = new Set<number>();
+      const out: T[] = [];
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+
     const embeddingsPending: PendingRecord[] = [];
 
     // Embedding 子任务：pending/failed 且 nextRunAt 到期。
-    const embeddingTasks = db
+    // Carry createdAt/updatedAt so lane classification doesn't need extra DB queries.
+    const embeddingNewest = db
       .select({
         id: vectorDocuments.id,
         embeddingStatus: vectorDocuments.embeddingStatus,
         embeddingAttempts: vectorDocuments.embeddingAttempts,
         embeddingNextRunAt: vectorDocuments.embeddingNextRunAt,
+        createdAt: vectorDocuments.createdAt,
+        updatedAt: vectorDocuments.updatedAt,
       })
       .from(vectorDocuments)
       .where(
@@ -267,8 +288,38 @@ export class VectorDocumentScheduler extends BaseScheduler {
           lt(vectorDocuments.embeddingAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
-      .limit(limit)
+      .orderBy(desc(vectorDocuments.updatedAt))
+      .limit(sliceLimit)
       .all();
+
+    const embeddingOldest = db
+      .select({
+        id: vectorDocuments.id,
+        embeddingStatus: vectorDocuments.embeddingStatus,
+        embeddingAttempts: vectorDocuments.embeddingAttempts,
+        embeddingNextRunAt: vectorDocuments.embeddingNextRunAt,
+        createdAt: vectorDocuments.createdAt,
+        updatedAt: vectorDocuments.updatedAt,
+      })
+      .from(vectorDocuments)
+      .where(
+        and(
+          or(
+            eq(vectorDocuments.embeddingStatus, "pending"),
+            eq(vectorDocuments.embeddingStatus, "failed")
+          ),
+          or(
+            isNull(vectorDocuments.embeddingNextRunAt),
+            lte(vectorDocuments.embeddingNextRunAt, now)
+          ),
+          lt(vectorDocuments.embeddingAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(asc(vectorDocuments.updatedAt))
+      .limit(sliceLimit)
+      .all();
+
+    const embeddingTasks = mergeUniqueById([...embeddingNewest, ...embeddingOldest]);
 
     for (const r of embeddingTasks) {
       embeddingsPending.push({
@@ -278,16 +329,21 @@ export class VectorDocumentScheduler extends BaseScheduler {
         attempts: r.embeddingAttempts,
         nextRunAt: r.embeddingNextRunAt ?? undefined,
         subtask: "embedding",
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
       });
     }
 
     // Index 子任务：前置条件 embedding succeeded。
-    const indexTasks = db
+    // Same newest+oldest pattern for fairness.
+    const indexNewest = db
       .select({
         id: vectorDocuments.id,
         indexStatus: vectorDocuments.indexStatus,
         indexAttempts: vectorDocuments.indexAttempts,
         indexNextRunAt: vectorDocuments.indexNextRunAt,
+        createdAt: vectorDocuments.createdAt,
+        updatedAt: vectorDocuments.updatedAt,
       })
       .from(vectorDocuments)
       .where(
@@ -298,8 +354,33 @@ export class VectorDocumentScheduler extends BaseScheduler {
           lt(vectorDocuments.indexAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
-      .limit(limit)
+      .orderBy(desc(vectorDocuments.updatedAt))
+      .limit(sliceLimit)
       .all();
+
+    const indexOldest = db
+      .select({
+        id: vectorDocuments.id,
+        indexStatus: vectorDocuments.indexStatus,
+        indexAttempts: vectorDocuments.indexAttempts,
+        indexNextRunAt: vectorDocuments.indexNextRunAt,
+        createdAt: vectorDocuments.createdAt,
+        updatedAt: vectorDocuments.updatedAt,
+      })
+      .from(vectorDocuments)
+      .where(
+        and(
+          eq(vectorDocuments.embeddingStatus, "succeeded"),
+          or(eq(vectorDocuments.indexStatus, "pending"), eq(vectorDocuments.indexStatus, "failed")),
+          or(isNull(vectorDocuments.indexNextRunAt), lte(vectorDocuments.indexNextRunAt, now)),
+          lt(vectorDocuments.indexAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(asc(vectorDocuments.updatedAt))
+      .limit(sliceLimit)
+      .all();
+
+    const indexTasks = mergeUniqueById([...indexNewest, ...indexOldest]);
 
     for (const r of indexTasks) {
       embeddingsPending.push({
@@ -309,6 +390,8 @@ export class VectorDocumentScheduler extends BaseScheduler {
         attempts: r.indexAttempts,
         nextRunAt: r.indexNextRunAt ?? undefined,
         subtask: "index",
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
       });
     }
 
@@ -322,32 +405,54 @@ export class VectorDocumentScheduler extends BaseScheduler {
   ): Promise<void> {
     if (records.length === 0) return;
 
-    const workerCount = Math.min(concurrency, records.length);
-    let nextIndex = 0;
-
-    const workers = Array.from({ length: workerCount }, async () => {
-      while (true) {
-        const current = nextIndex;
-        nextIndex++;
-        if (current >= records.length) return;
-
-        const record = records[current];
-        try {
-          if (record.subtask === "index") {
-            await this.processVectorDocumentIndexRecord(record);
-          } else {
-            await this.processVectorDocumentEmbeddingRecord(record);
-          }
-        } catch (error) {
-          logger.error(
-            { group: groupName, recordId: record.id, error: String(error) },
-            "Failed to process vector document record"
-          );
+    const lanes = this.splitVectorDocumentsIntoLanes(records);
+    await this.processInLanes({
+      lanes,
+      concurrency: Math.max(1, Math.min(concurrency, records.length)),
+      laneWeights: { realtime: 3, recovery: 1 },
+      handler: async (record) => {
+        if (record.subtask === "index") {
+          await this.processVectorDocumentIndexRecord(record);
+        } else {
+          await this.processVectorDocumentEmbeddingRecord(record);
         }
-      }
+      },
+      onError: (error, record, lane) => {
+        logger.error(
+          { group: groupName, lane, recordId: record.id, error: String(error) },
+          "Failed to process vector document record"
+        );
+      },
     });
+  }
 
-    await Promise.all(workers);
+  private splitVectorDocumentsIntoLanes(
+    records: PendingRecord[]
+  ): Record<"realtime" | "recovery", PendingRecord[]> {
+    const now = Date.now();
+    const recoveryAgeMs = processingConfig.scheduler.laneRecoveryAgeMs;
+
+    const realtime: PendingRecord[] = [];
+    const recovery: PendingRecord[] = [];
+
+    for (const r of records) {
+      // Rule of thumb:
+      // - any retry (attempts > 0) is treated as recovery
+      // - otherwise, old records are treated as recovery to prevent backlog from dominating
+      if (r.attempts > 0) {
+        recovery.push(r);
+        continue;
+      }
+
+      const ts = r.updatedAt ?? r.createdAt ?? now;
+      if (now - ts >= recoveryAgeMs) {
+        recovery.push(r);
+      } else {
+        realtime.push(r);
+      }
+    }
+
+    return { realtime, recovery };
   }
 
   private async processVectorDocumentEmbeddingRecord(record: PendingRecord): Promise<void> {

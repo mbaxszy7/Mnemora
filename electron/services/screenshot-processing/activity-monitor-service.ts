@@ -45,6 +45,8 @@ import { promptTemplates } from "./prompt-templates";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { mainI18n } from "../i18n-service";
 import { screenshotProcessingEventBus } from "./event-bus";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { activityAlertBuffer } from "../monitoring/activity-alert-trace";
 
 const logger = getLogger("activity-monitor-service");
 
@@ -508,6 +510,18 @@ class ActivityMonitorService {
         const attempts = summaryRow?.attempts ?? 0;
         const pendingRatio = pendingVlmCount > 0 ? pendingVlmCount / screenshotCount : 0;
 
+        const now = Date.now();
+        const overdueMs = now - windowEnd;
+        if (pendingVlmCount > 0 && overdueMs > 30 * 60 * 1000) {
+          activityAlertBuffer.record({
+            ts: now,
+            kind: "activity_summary_overdue",
+            message: `Activity summary blocked by VLM progress: ${pendingVlmCount}/${screenshotCount} screenshots still pending`,
+            windowStart,
+            windowEnd,
+          });
+        }
+
         // 动态计算下一次重试时间（nextRunAt）：根据窗口内 VLM 仍未完成的占比来调整轮询频率。
         // - pendingRatio 越高：说明还剩很多截图在跑 VLM，此时频繁轮询意义不大，适当拉长间隔降低 DB 压力
         // - pendingRatio 越低：说明接近完成，为了更快从 "Processing" 切换到真实 summary，缩短间隔提升体验
@@ -704,7 +718,23 @@ class ActivityMonitorService {
       );
 
       // Use semaphore for concurrency control and AbortController for timeout
+      const semaphoreStart = Date.now();
       const releaseText = await aiRuntimeService.acquire("text");
+      const semaphoreWaitMs = Date.now() - semaphoreStart;
+      logger.debug(
+        { windowStart, windowEnd, waitMs: semaphoreWaitMs },
+        "Activity summary semaphore acquired"
+      );
+      if (semaphoreWaitMs > 5000) {
+        activityAlertBuffer.record({
+          ts: Date.now(),
+          kind: "activity_summary_semaphore_wait",
+          message: `Activity summary waited ${semaphoreWaitMs}ms for text semaphore`,
+          windowStart,
+          windowEnd,
+          waitMs: semaphoreWaitMs,
+        });
+      }
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
@@ -720,6 +750,13 @@ class ActivityMonitorService {
             windowEnd,
           }),
           abortSignal: controller.signal,
+          providerOptions: {
+            mnemora: {
+              thinking: {
+                type: "disabled",
+              },
+            },
+          },
         });
       } finally {
         clearTimeout(timeoutId);
@@ -741,6 +778,17 @@ class ActivityMonitorService {
         provider: "openai_compatible",
         totalTokens: usage?.totalTokens ?? 0,
         usageStatus: usage ? "present" : "missing",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_summary",
+        model: aiService.getTextModelName(),
+        durationMs: Date.now() - windowStart, // approximate
+        status: "succeeded",
+        responsePreview: JSON.stringify(data, null, 2),
       });
 
       if (!data) {
@@ -851,6 +899,16 @@ class ActivityMonitorService {
       logger.error({ error, windowStart }, "Failed to generate window summary");
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      if (error instanceof Error && error.name === "AbortError") {
+        activityAlertBuffer.record({
+          ts: Date.now(),
+          kind: "activity_summary_timeout",
+          message: `Activity summary timed out after ${processingConfig.ai.textTimeoutMs}ms`,
+          windowStart,
+          windowEnd,
+        });
+      }
+
       // Log failure
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -862,6 +920,17 @@ class ActivityMonitorService {
         totalTokens: 0,
         usageStatus: "missing",
         errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_summary",
+        model: aiService.getTextModelName(),
+        durationMs: 0, // unknown on failure
+        status: "failed",
+        errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
 
       // Record failure for circuit breaker
@@ -1016,6 +1085,16 @@ class ActivityMonitorService {
       const semaphoreWaitDuration = Date.now() - aiStart;
       logger.debug({ eventId, waitMs: semaphoreWaitDuration }, "Event details semaphore acquired");
 
+      if (semaphoreWaitDuration > 5000) {
+        activityAlertBuffer.record({
+          ts: Date.now(),
+          kind: "activity_event_details_semaphore_wait",
+          message: `Event details waited ${semaphoreWaitDuration}ms for text semaphore`,
+          eventId,
+          waitMs: semaphoreWaitDuration,
+        });
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
 
@@ -1029,6 +1108,13 @@ class ActivityMonitorService {
             userPromptJson: userPrompt,
           }),
           abortSignal: controller.signal,
+          providerOptions: {
+            mnemora: {
+              thinking: {
+                type: "disabled",
+              },
+            },
+          },
         });
       } finally {
         clearTimeout(timeoutId);
@@ -1053,6 +1139,17 @@ class ActivityMonitorService {
         provider: "openai_compatible",
         totalTokens: usage?.totalTokens ?? 0,
         usageStatus: usage ? "present" : "missing",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_event_details",
+        model: aiService.getTextModelName(),
+        durationMs: Date.now() - aiStart,
+        status: "succeeded",
+        responsePreview: JSON.stringify(data, null, 2),
       });
 
       if (!data) {
@@ -1081,6 +1178,15 @@ class ActivityMonitorService {
     } catch (error) {
       logger.error({ error, eventId }, "Failed to generate event details");
 
+      if (error instanceof Error && error.name === "AbortError") {
+        activityAlertBuffer.record({
+          ts: Date.now(),
+          kind: "activity_event_details_timeout",
+          message: `Event details timed out after ${processingConfig.ai.textTimeoutMs}ms`,
+          eventId,
+        });
+      }
+
       // Log failure
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -1092,6 +1198,17 @@ class ActivityMonitorService {
         totalTokens: 0,
         usageStatus: "missing",
         errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+      });
+
+      // Record trace for monitoring dashboard
+      aiRequestTraceBuffer.record({
+        ts: Date.now(),
+        capability: "text",
+        operation: "text_event_details",
+        model: aiService.getTextModelName(),
+        durationMs: 0,
+        status: "failed",
+        errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
 
       // Record failure for circuit breaker

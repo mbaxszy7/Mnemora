@@ -246,6 +246,7 @@ export const contextNodes = sqliteTable(
       enum: CONTEXT_KIND_VALUES,
     }).notNull(),
     threadId: text("thread_id"), // groups related events into threads
+    originKey: text("origin_key"),
 
     // Content
     title: text("title").notNull(),
@@ -295,6 +296,7 @@ export const contextNodes = sqliteTable(
     index("idx_context_nodes_thread_id").on(table.threadId),
     index("idx_context_nodes_merge_status").on(table.mergeStatus),
     index("idx_context_nodes_embedding_status").on(table.embeddingStatus),
+    uniqueIndex("idx_context_nodes_origin_key_unique").on(table.originKey),
   ]
 );
 

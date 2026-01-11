@@ -12,7 +12,7 @@
 
 import { screen } from "electron";
 
-import type { CapturePreferencesService } from "../capture-preferences-service";
+import type { CapturePreferences } from "@shared/capture-source-types";
 import { AutoRefreshCache } from "../screen-capture/auto-refresh-cache";
 import { processingConfig } from "./config";
 import { computeHash, isDuplicateByLast } from "./phash-dedup";
@@ -36,7 +36,6 @@ export interface SourceBuffer {
   screenshots: AcceptedScreenshot[];
   lastPHash: string | null;
   lastSeenAt: number;
-  sourceGeneration: number;
   batchStartTs: number | null;
 }
 
@@ -77,14 +76,13 @@ export interface ScreenshotInput {
  * - refresh(): Manually trigger source refresh
  *
  * Automatic behaviors:
- * - Periodic refresh via AutoRefreshCache
  * - Grace period cleanup for inactive sources
  * - pHash deduplication within same source
+ * - Batch timeout timer
  */
 export class SourceBufferRegistry {
-  private buffers = new Map<string, SourceBuffer>();
+  private buffers = new Map<SourceKey, SourceBuffer>();
   private activeSources = new Set<SourceKey>();
-  private generationCounter = 0;
   private disposed = false;
   private processingBatches = false;
   private persistAcceptedScreenshot:
@@ -92,15 +90,13 @@ export class SourceBufferRegistry {
     | null = null;
 
   // Services
-  private capturePreferencesService: CapturePreferencesService | null = null;
-  private refreshCache: AutoRefreshCache<Set<SourceKey>> | null = null;
+  private preferences: CapturePreferences | null = null;
   private batchTriggerCache: AutoRefreshCache<void> | null = null;
 
   // Config
   private readonly batchSize = processingConfig.batch.batchSize;
   private readonly batchTimeoutMs = processingConfig.batch.batchTimeoutMs;
   private readonly gracePeriodMs = processingConfig.captureSource.gracePeriodMs;
-  private readonly refreshIntervalMs = processingConfig.captureSource.refreshIntervalMs;
   private readonly computeHashFn: (imageBuffer: Buffer) => Promise<string>;
 
   constructor(computeHashFn: (imageBuffer: Buffer) => Promise<string> = computeHash) {
@@ -116,15 +112,12 @@ export class SourceBufferRegistry {
    * Starts automatic periodic refresh
    */
   initialize(
-    preferencesService: CapturePreferencesService,
     onPersistAcceptedScreenshot: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>
   ): void {
-    this.capturePreferencesService = preferencesService;
+    this.preferences = null;
     this.persistAcceptedScreenshot = onPersistAcceptedScreenshot;
 
     // Ensure idempotent initialization (e.g., dev hot reload)
-    this.refreshCache?.dispose();
-    this.refreshCache = null;
     this.batchTriggerCache?.dispose();
     this.batchTriggerCache = null;
     this.disposed = false;
@@ -134,16 +127,6 @@ export class SourceBufferRegistry {
     } catch (error) {
       logger.error({ error }, "Failed to perform initial source refresh");
     }
-
-    // Create AutoRefreshCache for periodic source refresh
-    this.refreshCache = new AutoRefreshCache<Set<SourceKey>>({
-      fetchFn: async () => this.doRefresh(),
-      interval: this.refreshIntervalMs,
-      immediate: false,
-      onError: (error) => {
-        logger.error({ error }, "Failed to refresh active sources");
-      },
-    });
 
     this.batchTriggerCache = new AutoRefreshCache<void>({
       fetchFn: async () => {
@@ -156,10 +139,7 @@ export class SourceBufferRegistry {
       },
     });
 
-    logger.info(
-      { refreshIntervalMs: this.refreshIntervalMs, gracePeriodMs: this.gracePeriodMs },
-      "SourceBufferRegistry initialized"
-    );
+    logger.info({ gracePeriodMs: this.gracePeriodMs }, "SourceBufferRegistry initialized");
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -259,6 +239,14 @@ export class SourceBufferRegistry {
     await this.doRefresh();
   }
 
+  setPreferences(preferences: CapturePreferences): void {
+    this.preferences = {
+      selectedScreens: [...preferences.selectedScreens],
+      selectedApps: [...preferences.selectedApps],
+    };
+    this.doRefresh();
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // Batch Operations
   // ──────────────────────────────────────────────────────────────────────────
@@ -301,8 +289,6 @@ export class SourceBufferRegistry {
     if (this.disposed) return;
 
     this.disposed = true;
-    this.refreshCache?.dispose();
-    this.refreshCache = null;
     this.batchTriggerCache?.dispose();
     this.batchTriggerCache = null;
     this.buffers.clear();
@@ -327,20 +313,18 @@ export class SourceBufferRegistry {
     for (const sourceKey of currentSources) {
       const buffer = this.getOrCreateBuffer(sourceKey);
       buffer.lastSeenAt = now;
-      this.generationCounter++;
-      buffer.sourceGeneration = this.generationCounter;
     }
 
     // Grace period cleanup: remove buffers not seen within grace period
-    const keysToRemove: string[] = [];
+    const keysToRemove: SourceKey[] = [];
     for (const [key, buffer] of this.buffers) {
-      if (!currentSources.has(key as SourceKey) && now - buffer.lastSeenAt >= this.gracePeriodMs) {
+      if (!currentSources.has(key) && now - buffer.lastSeenAt >= this.gracePeriodMs) {
         keysToRemove.push(key);
       }
     }
 
     for (const key of keysToRemove) {
-      const discarded = this.drainForBatch(key as SourceKey);
+      const discarded = this.drainForBatch(key);
       this.buffers.delete(key);
       logger.debug(
         { sourceKey: key, discardedCount: discarded.length },
@@ -367,21 +351,18 @@ export class SourceBufferRegistry {
    * Fetch active sources from CapturePreferencesService
    */
   private fetchActiveSources(): Set<SourceKey> {
-    if (!this.capturePreferencesService) {
+    if (!this.preferences) {
       return new Set();
     }
 
-    const prefs = this.capturePreferencesService.getEffectiveCaptureSources() as unknown as {
-      selectedScreens: Array<string | { displayId: string }>;
-      selectedApps: Array<string | { id: string }>;
-    };
+    const prefs = this.preferences;
     const sources = new Set<SourceKey>();
 
     if (prefs.selectedScreens.length === 0 && prefs.selectedApps.length === 0) {
       try {
         const displays = screen.getAllDisplays();
         for (const display of displays) {
-          const key = `screen:${display.id.toString()}` as SourceKey;
+          const key = `screen:${display.id.toString()}`;
           if (isValidSourceKey(key)) sources.add(key);
         }
       } catch (error) {
@@ -393,15 +374,15 @@ export class SourceBufferRegistry {
       return sources;
     }
 
-    for (const screen of prefs.selectedScreens) {
-      const displayId = typeof screen === "string" ? screen : screen.displayId;
-      const key = `screen:${displayId}` as SourceKey;
+    for (const selectedScreen of prefs.selectedScreens) {
+      const displayId = selectedScreen.displayId;
+      const key = `screen:${displayId}`;
       if (isValidSourceKey(key)) sources.add(key);
     }
 
-    for (const app of prefs.selectedApps) {
-      const id = typeof app === "string" ? app : app.id;
-      const key = `window:${id}` as SourceKey;
+    for (const selectedApp of prefs.selectedApps) {
+      const id = selectedApp.id;
+      const key = `window:${id}`;
       if (isValidSourceKey(key)) sources.add(key);
     }
 
@@ -415,17 +396,15 @@ export class SourceBufferRegistry {
     let buffer = this.buffers.get(sourceKey);
 
     if (!buffer) {
-      this.generationCounter++;
       buffer = {
         sourceKey,
         screenshots: [],
         lastPHash: null,
         lastSeenAt: Date.now(),
-        sourceGeneration: this.generationCounter,
         batchStartTs: null,
       };
       this.buffers.set(sourceKey, buffer);
-      logger.debug({ sourceKey, generation: this.generationCounter }, "Created new source buffer");
+      logger.debug({ sourceKey }, "Created new source buffer");
     }
 
     return buffer;

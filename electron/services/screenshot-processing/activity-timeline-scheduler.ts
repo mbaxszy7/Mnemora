@@ -18,6 +18,7 @@ import { getLogger } from "../logger";
 import { processingConfig } from "./config";
 import { activityMonitorService } from "./activity-monitor-service";
 import { BaseScheduler } from "./base-scheduler";
+import { activityAlertBuffer } from "../monitoring/activity-alert-trace";
 
 const logger = getLogger("activity-timeline-scheduler");
 
@@ -206,6 +207,12 @@ export class ActivityTimelineScheduler extends BaseScheduler {
 
     if (staleSummaries.changes > 0) {
       logger.info({ count: staleSummaries.changes }, "Recovered stale running activity summaries");
+      activityAlertBuffer.record({
+        ts: now,
+        kind: "activity_summary_stuck_running",
+        message: `Recovered ${staleSummaries.changes} stale running activity summary task(s) (stuck > ${processingConfig.scheduler.staleRunningThresholdMs}ms)`,
+        updatedAt: staleThreshold,
+      });
     }
 
     // Recover activity_events.detailsStatus
@@ -229,6 +236,12 @@ export class ActivityTimelineScheduler extends BaseScheduler {
         { count: staleEventDetails.changes },
         "Recovered stale running activity event details"
       );
+      activityAlertBuffer.record({
+        ts: now,
+        kind: "activity_event_details_stuck_running",
+        message: `Recovered ${staleEventDetails.changes} stale running event details task(s) (stuck > ${processingConfig.scheduler.staleRunningThresholdMs}ms)`,
+        updatedAt: staleThreshold,
+      });
     }
   }
 
@@ -448,7 +461,46 @@ export class ActivityTimelineScheduler extends BaseScheduler {
     const db = getDb();
     const now = Date.now();
 
-    const pendingRows = db
+    const limit = 5;
+
+    // Fairness note:
+    // - Newest windows should be summarized quickly (realtime responsiveness).
+    // - Old windows should still make progress (recovery), otherwise backlog can live forever.
+    // So we query both newest and oldest due windows and mix them.
+    const sliceLimit = Math.max(1, Math.ceil(limit / 2));
+
+    // newest+oldest scans may overlap; merge by id.
+    const mergeUniqueById = <T extends { id: number }>(rows: T[]): T[] => {
+      const seen = new Set<number>();
+      const out: T[] = [];
+      for (const r of rows) {
+        if (seen.has(r.id)) continue;
+        seen.add(r.id);
+        out.push(r);
+      }
+      return out;
+    };
+
+    const newestRows = db
+      .select({
+        id: activitySummaries.id,
+        windowStart: activitySummaries.windowStart,
+        windowEnd: activitySummaries.windowEnd,
+        attempts: activitySummaries.attempts,
+      })
+      .from(activitySummaries)
+      .where(
+        and(
+          or(eq(activitySummaries.status, "pending"), eq(activitySummaries.status, "failed")),
+          or(isNull(activitySummaries.nextRunAt), lte(activitySummaries.nextRunAt, now)),
+          lt(activitySummaries.attempts, processingConfig.scheduler.retryConfig.maxAttempts)
+        )
+      )
+      .orderBy(desc(activitySummaries.windowStart))
+      .limit(sliceLimit)
+      .all();
+
+    const oldestRows = db
       .select({
         id: activitySummaries.id,
         windowStart: activitySummaries.windowStart,
@@ -464,15 +516,49 @@ export class ActivityTimelineScheduler extends BaseScheduler {
         )
       )
       .orderBy(asc(activitySummaries.windowStart))
-      .limit(5) // Process up to 5 at a time
+      .limit(sliceLimit)
       .all();
 
-    await Promise.allSettled(pendingRows.map((row) => this.processSummaryRecord(row)));
-  }
+    const pendingRows = mergeUniqueById([...newestRows, ...oldestRows]).slice(0, limit);
+    if (pendingRows.length === 0) {
+      return;
+    }
 
-  /**
-   * Process a single summary record
-   */
+    // Lane classification:
+    // - any retry (attempts > 0) goes to recovery
+    // - otherwise, windows older than a threshold are treated as recovery
+    const recoveryAgeMs = processingConfig.activitySummary.laneRecoveryAgeMs;
+    const realtime: typeof pendingRows = [];
+    const recovery: typeof pendingRows = [];
+    for (const row of pendingRows) {
+      if (row.attempts > 0) {
+        recovery.push(row);
+        continue;
+      }
+
+      const ageMs = now - row.windowEnd;
+      if (ageMs >= recoveryAgeMs) {
+        recovery.push(row);
+      } else {
+        realtime.push(row);
+      }
+    }
+
+    await this.processInLanes({
+      lanes: { realtime, recovery },
+      concurrency: pendingRows.length,
+      laneWeights: { realtime: 3, recovery: 1 },
+      handler: async (row) => {
+        await this.processSummaryRecord(row);
+      },
+      onError: (error, row, lane) => {
+        logger.warn(
+          { lane, id: row.id, error: error instanceof Error ? error.message : String(error) },
+          "Failed to process activity summary record"
+        );
+      },
+    });
+  }
   private async processSummaryRecord(record: {
     id: number;
     windowStart: number;
@@ -556,7 +642,7 @@ export class ActivityTimelineScheduler extends BaseScheduler {
           lt(activityEvents.detailsAttempts, processingConfig.scheduler.retryConfig.maxAttempts)
         )
       )
-      .orderBy(asc(activityEvents.updatedAt))
+      .orderBy(desc(activityEvents.updatedAt))
       .limit(2) // Process up to 2 at a time
       .all();
 

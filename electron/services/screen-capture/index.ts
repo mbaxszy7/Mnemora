@@ -11,6 +11,19 @@ export { windowFilter } from "./window-filter";
 // Storage utilities used by main.ts
 export { cleanupDevCaptures } from "./capture-storage";
 
+export { screenCaptureEventBus } from "./event-bus";
+
+export type {
+  CaptureCompleteEvent,
+  CaptureErrorEvent,
+  CaptureSchedulerStateEvent,
+  CaptureStartEvent,
+  PreferencesChangedEvent,
+  CaptureSchedulerEvent,
+  CaptureSchedulerEventHandler,
+  CaptureSchedulerEventPayload,
+} from "./events";
+
 // Types needed by IPC handlers
 export type { SchedulerConfig, CaptureSchedulerState, CaptureSource } from "./types";
 

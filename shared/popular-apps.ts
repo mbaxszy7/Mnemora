@@ -154,4 +154,7 @@ export const POPULAR_APPS: Record<string, PopularAppConfig> = {
   DataGrip: {
     aliases: ["DataGrip", "datagrip"],
   },
+  Antigravity: {
+    aliases: ["Antigravity", "antigravity"],
+  },
 };

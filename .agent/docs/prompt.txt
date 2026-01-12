@@ -1,0 +1,27 @@
+我现在需要你帮我仔细分析和记录
+screenshot-processing
+ 下
+screenshot-pipeline-scheduler.ts
+ 
+vector-document-scheduler.ts
+ 
+activity-timeline-scheduler.ts
+ 这三大块的实现和架构。按照我的指令产出文档和很容易看懂的流程图解，图解不要那种很技术化的流程图，可以是以数据为例的漫画图解等，反正产出的文档和图解要通俗易懂，有项目中的代码支撑。
+
+首先帮我分析
+screenshot-pipeline-scheduler.ts
+ 
+source-buffer-registry.ts
+ 
+batch-builder.ts
+ 
+text-llm-processor.ts
+ 
+vlm-processor.ts
+ 这些service做了什么。具体的要求：从截图
+screenshot-processing-module.ts#L127-162
+ 完成，到batch，到batch分shard，到请求vlm，到text expend产出context node，到context node merge，每一步的输入和输出；输出后怎么数据落库。
+screenshot-pipeline-scheduler.ts
+ 怎么实现的调度（如何处理重试，pending数据，历史running和pending数据，并发等）。
+screenshot-pipeline-scheduler.ts
+ 的调度逻辑必须仔细分析到每个函数，以此来产出图解和markdown文档。你说的内容必须有代码为支持，不能猜测编造，不能偷懒。

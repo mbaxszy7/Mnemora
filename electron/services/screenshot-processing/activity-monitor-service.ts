@@ -688,8 +688,8 @@ class ActivityMonitorService {
           },
           contextNodes: nodesData,
           stats: {
-            topApps,
-            topEntities,
+            top_apps: topApps,
+            top_entities: topEntities,
             nodeCount: nodes.length,
             screenshotCount: totalScreenshotCount,
             threadCount: threadIds.size,
@@ -702,7 +702,7 @@ class ActivityMonitorService {
             events: [
               {
                 title: "string",
-                kind: "focus|work|meeting|break|browse|coding",
+                kind: "focus|work|meeting|break|browse|coding|debugging",
                 start_offset_min: "number",
                 end_offset_min: "number",
                 confidence: "0-10",
@@ -758,6 +758,39 @@ class ActivityMonitorService {
             },
           },
         });
+      } catch (error) {
+        // Detailed logging for schema mismatch errors
+        if (error instanceof Error && error.name === "AI_NoObjectGeneratedError") {
+          const aiError = error as unknown as {
+            response?: { text?: string };
+            text?: string;
+            partialObject?: unknown;
+          };
+          const rawResponse = aiError.response?.text || aiError.text;
+          const partialObject = aiError.partialObject;
+          logger.error(
+            {
+              windowStart,
+              windowEnd,
+              error: error.message,
+              rawResponse: rawResponse ? rawResponse.slice(0, 5000) : "N/A",
+              partialObject,
+              errorStack: error.stack,
+            },
+            "Activity summary LLM schema mismatch - detailed"
+          );
+        } else if (error instanceof Error && error.name === "ZodError") {
+          const zodError = error as unknown as { errors: unknown };
+          logger.error(
+            {
+              windowStart,
+              windowEnd,
+              error: zodError.errors,
+            },
+            "Activity summary Zod validation failed"
+          );
+        }
+        throw error;
       } finally {
         clearTimeout(timeoutId);
         releaseText();

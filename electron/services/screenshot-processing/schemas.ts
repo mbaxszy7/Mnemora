@@ -381,7 +381,7 @@ export type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultProcessedSchem
  */
 const ActivityEventCandidateSchema = z.object({
   title: z.string(),
-  kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding"]),
+  kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding", "debugging"]),
   // LLM-provided minute offsets relative to the current windowStart (0..windowDurationMinutes)
   start_offset_min: z.number().min(0).max(20),
   end_offset_min: z.number().min(0).max(20),

@@ -4,6 +4,44 @@
 
 ---
 
+## [2026-01-13] 添加自适应背压策略
+
+### 变更内容
+
+新增自适应背压策略（Adaptive Backpressure），根据 pending batch 数量动态调整截图采集行为，防止 Batch 积压失控。
+
+### 修改文件
+
+#### `docs/alpha-implementation-plan.md`
+
+**新增位置**: 配置参数 `ALPHA_CONFIG.backpressure`
+
+**策略层级**:
+
+| Level | pending 范围 | 间隔倍率 | 实际间隔 | pHash 阈值 (Hamming) |
+|-------|-------------|---------|---------|---------------------|
+| 0 | < 4 | 1x | 3 秒 | 8 (默认) |
+| 1 | 4 ~ 7 | 1x | 3 秒 | 12 (更宽松) |
+| 2 | 8 ~ 11 | 2x | 6 秒 | 12 |
+| 3 | ≥ 12 | 4x | 12 秒 | 12 |
+
+**恢复策略**: pending 降到阈值以下且保持 30 秒 → 恢复上一级
+
+### 设计决策
+
+- **复用现有常量**：基准值来自 `screen-capture/types.ts:DEFAULT_SCHEDULER_CONFIG.interval` (3000ms) 和 `phash-dedup.ts:SimilarityThreshold` (8)
+- **使用倍率而非绝对值**：`intervalMultiplier` 设计使配置与基准解耦，便于统一调整
+- 从源头（采集端）控制流量，Batch 大小保持恒定（2-5 张）
+- 恢复时加入 30 秒滞后期，防止频繁切换等级
+
+### 影响范围
+
+- `screen-capture-module.ts`：新增 `BackpressureMonitor`，调用 `scheduler.updateConfig({ interval })`
+- `source-buffer-registry.ts`：`isDuplicateByLast()` 调用需传入动态阈值
+- `screenshot-pipeline-scheduler.ts`：新增 `getPendingBatchCount()` 方法
+
+---
+
 ## [2026-01-13] 添加 FTS5 全文搜索虚拟表 Schema
 
 ### 变更内容

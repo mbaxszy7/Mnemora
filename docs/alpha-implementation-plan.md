@@ -163,14 +163,8 @@ CREATE TABLE context_nodes (
   -- 知识提取（JSON，可为 null，ocrText 存储在 screenshots 表）
   knowledge_json TEXT,  -- { contentType, sourceUrl, projectOrLibrary, keyInsights }
   
-  -- 状态快照（JSON，可为 null）
-  state_snapshot_json TEXT,  -- { subjectType, subject, currentState, metrics }
-  
-  -- 实体列表（JSON）
-  entities_json TEXT NOT NULL DEFAULT '[]',  -- [{ name, type, raw?, confidence? }]
-  
-  -- 行动项（JSON，可为 null）
-  action_items_json TEXT,  -- [{ action, priority?, source }]
+  -- 状态快照（JSON，可为 null，包含构建状态/指标/问题检测等）
+  state_snapshot_json TEXT,  -- { subjectType, subject, currentState, metrics?, issue?: { detected: boolean, type: "error"|"bug"|"blocker"|"question"|"warning", description: string, severity: 1-5 } }
   
   -- UI 文本片段（JSON）
   ui_text_snippets_json TEXT,  -- string[]
@@ -285,6 +279,74 @@ CREATE INDEX idx_vd_embedding_status ON vector_documents(embedding_status);
 CREATE INDEX idx_vd_index_status ON vector_documents(index_status);
 CREATE UNIQUE INDEX idx_vd_text_hash ON vector_documents(text_hash);
 ```
+
+---
+
+### 6.5. screenshots_fts 虚拟表 (FTS5 全文搜索)
+
+> [!NOTE]
+> FTS5 是 SQLite 内置的全文搜索引擎，用于对 OCR 文本进行高性能关键词检索，作为向量搜索的补充。
+> 向量搜索擅长语义匹配（如"昨天遇到的报错"），FTS5 擅长精确匹配（如搜索具体的错误码 `TS2339` 或项目代号 `PROJ-1234`）。
+
+```sql
+-- 创建 FTS5 虚拟表（External Content 模式，不额外存储文本副本）
+CREATE VIRTUAL TABLE screenshots_fts USING fts5(
+    content,                           -- OCR 文本（映射自 screenshots.ocr_text）
+    content='screenshots',             -- 指向物理表
+    content_rowid='id',                -- 使用 screenshots.id 作为 rowid
+    tokenize='unicode61'               -- Unicode 分词器，支持中英文混合
+);
+
+-- 触发器：INSERT 时同步到 FTS 表
+CREATE TRIGGER screenshots_fts_insert AFTER INSERT ON screenshots 
+WHEN new.ocr_text IS NOT NULL
+BEGIN
+  INSERT INTO screenshots_fts(rowid, content) VALUES (new.id, new.ocr_text);
+END;
+
+-- 触发器：UPDATE 时同步到 FTS 表
+CREATE TRIGGER screenshots_fts_update AFTER UPDATE OF ocr_text ON screenshots 
+WHEN new.ocr_text IS NOT NULL
+BEGIN
+  INSERT INTO screenshots_fts(screenshots_fts, rowid, content) VALUES ('delete', old.id, old.ocr_text);
+  INSERT INTO screenshots_fts(rowid, content) VALUES (new.id, new.ocr_text);
+END;
+
+-- 触发器：DELETE 时同步删除
+CREATE TRIGGER screenshots_fts_delete AFTER DELETE ON screenshots 
+WHEN old.ocr_text IS NOT NULL
+BEGIN
+  INSERT INTO screenshots_fts(screenshots_fts, rowid, content) VALUES ('delete', old.id, old.ocr_text);
+END;
+```
+
+**查询示例**：
+
+```sql
+-- 基础搜索：返回匹配的截图 ID 和 BM25 相关性评分
+SELECT rowid AS screenshot_id, bm25(screenshots_fts) AS rank
+FROM screenshots_fts
+WHERE content MATCH '你的搜索词'
+ORDER BY rank
+LIMIT 20;
+
+-- 高亮片段预览（用于 UI 展示）
+SELECT rowid AS screenshot_id, 
+       snippet(screenshots_fts, 0, '<mark>', '</mark>', '...', 32) AS preview
+FROM screenshots_fts
+WHERE content MATCH 'TypeScript error'
+LIMIT 10;
+```
+
+**设计要点**：
+
+| 要点 | 说明 |
+|-----|------|
+| **External Content** | 使用 `content='screenshots'` 模式，FTS 表不存储文本副本，仅存储索引。节省约 50% 存储空间。 |
+| **触发器同步** | 通过 `INSERT/UPDATE/DELETE` 触发器保持 FTS 索引与 `screenshots.ocr_text` 同步。 |
+| **分词器** | `unicode61` 是 SQLite 内置分词器，对英文按单词切分，对中文按字符切分。足以覆盖大多数搜索场景。 |
+| **性能影响** | 写入开销约增加 5-10ms/条（相比 VLM 的数分钟处理时间可忽略）。读取为毫秒级。 |
+| **搜索场景** | 适用于搜索错误码、项目代号、特殊术语等"精确匹配"场景，与向量搜索互补。 |
 
 ---
 

@@ -65,14 +65,30 @@ interface VLMContextNode {
     project_or_library?: string;  // 关联项目/库
     key_insights: string[];       // 关键洞察，max 5 项
     language: "en" | "zh" | "other"; // 内容主要语言，用于判断是否触发 OCR
+    text_region?: {               // 主文字区域边界框（用于精准本地 OCR）
+      box: {
+        top: number;              // 距顶部像素
+        left: number;             // 距左侧像素
+        width: number;            // 宽度像素
+        height: number;           // 高度像素
+      };
+      description?: string;       // 区域描述，如 "Main content area"
+      confidence: number;         // 0-1
+    };
   } | null;
   
-  // 状态快照（可选）
+  // 状态快照（可选，包含状态监控和问题检测）
   state_snapshot: {
-    subject_type: string;         // build|deploy|pipeline|metrics|task_board|...
+    subject_type: string;         // build|deploy|pipeline|metrics|task_board|error|...
     subject: string;              // 被追踪对象名称
     current_state: string;        // 当前状态描述
     metrics?: Record<string, string | number>;  // 关键指标
+    issue?: {                     // 问题/错误检测
+      detected: boolean;          // 是否检测到问题
+      type: "error" | "bug" | "blocker" | "question" | "warning";
+      description: string;        // 问题描述
+      severity: number;           // 1-5 严重程度
+    };
   } | null;
   
   // 实体引用
@@ -136,25 +152,37 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
 {
   "nodes": [
     {
-      "screenshot_index": 0,
-      "title": "current_user reviewing auth-service PR in GitHub",
-      "summary": "current_user examining code changes in pull request #456 for auth-service, checking the OAuth2 implementation updates",
+      "screenshot_index": 1,
+      "title": "current_user debugging TypeScript compilation error in auth-service",
+      "summary": "current_user viewing VS Code with TypeScript compilation error in auth-service project, the error indicates a missing property on AuthResponse type",
       "app_context": {
-        "app_hint": "Google Chrome",
-        "window_title": "Pull Request #456 - auth-service",
+        "app_hint": "Visual Studio Code",
+        "window_title": "auth.ts - auth-service",
         "source_key": "window:123"
       },
       "knowledge": null,
-      "state_snapshot": null,
+      "state_snapshot": {
+        "subject_type": "error",
+        "subject": "TypeScript Compilation",
+        "current_state": "failed with 1 error",
+        "issue": {
+          "detected": true,
+          "type": "error",
+          "description": "Property 'refreshToken' does not exist on type 'AuthResponse'",
+          "severity": 3
+        }
+      },
       "entities": [
         { "name": "auth-service", "type": "repo" },
-        { "name": "PR #456", "type": "pr_id" }
+        { "name": "AuthResponse", "type": "other" }
       ],
-      "action_items": null,
-      "ui_text_snippets": ["Error: OAuth2 token refresh failed", "PR #456: fix token refresh logic"],
+      "action_items": [
+        { "action": "Add refreshToken property to AuthResponse interface", "priority": "high", "source": "inferred" }
+      ],
+      "ui_text_snippets": ["Property 'refreshToken' does not exist on type 'AuthResponse'", "TS2339"],
       "importance": 7,
       "confidence": 9,
-      "keywords": ["PR review", "OAuth2", "auth-service"]
+      "keywords": ["TypeScript", "compilation error", "auth-service"]
     }
   ]
 }
@@ -190,13 +218,24 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
   - "other" for other languages (OCR will be skipped)
 - source_url: ONLY include if URL is clearly visible in screenshot
 - key_insights: Max 5 specific takeaways from the content
+- text_region (IMPORTANT for OCR optimization): 
+  - Identify the main text content area, EXCLUDING: navigation bars, sidebars, headers, footers, ads
+  - box: Pixel coordinates { top, left, width, height } of the main content region
+  - description: Brief description like "Main article content" or "Document body"
+  - confidence: 0-1 indicating certainty of the detected region
+  - This enables local OCR to focus on relevant text, improving accuracy and speed
 
 ### state_snapshot (optional)
-- Only populate if user is viewing dashboards, metrics, build status, task boards
-- subject_type: build, deploy, pipeline, metrics, task_board, server_status, etc.
-- subject: What is being monitored (e.g., "Jenkins Build #456")
-- current_state: Current status (e.g., "failed at test stage")
+- Populate if user is viewing dashboards, metrics, build status, task boards, OR if any error/bug/blocker is detected
+- subject_type: build, deploy, pipeline, metrics, task_board, server_status, error, etc.
+- subject: What is being monitored (e.g., "Jenkins Build #456", "TypeScript Compilation")
+- current_state: Current status (e.g., "failed at test stage", "3 errors found")
 - metrics: Key numerical values if visible
+- issue (IMPORTANT for search): If error, bug, blocker, or warning is detected:
+  - detected: true
+  - type: "error" | "bug" | "blocker" | "question" | "warning"
+  - description: What went wrong (e.g., "Property 'foo' does not exist on type 'Bar'")
+  - severity: 1-5 (1=minor, 5=critical)
 
 ### entities (max 10)
 - Named entities: person, project, team, org, jira_id, pr_id, commit, document_id, url, repo

@@ -64,7 +64,7 @@ interface VLMContextNode {
     source_url?: string;          // 仅当截图中明确可见时
     project_or_library?: string;  // 关联项目/库
     key_insights: string[];       // 关键洞察，max 5 项
-    language: "en" | "zh" | "other"; // 内容主要语言，用于判断是否触发 OCR
+    language: "en" | "zh" | "other"; // CRITICAL: 内容主要语言。en/zh 将触发本地 OCR，other 则跳过。
     text_region?: {               // 主文字区域边界框（用于精准本地 OCR）
       box: {
         top: number;              // 距顶部像素
@@ -212,10 +212,11 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
 ### knowledge (optional)
 - Only populate if user is reading documentation, blogs, tutorials
 - content_type: Must be one of: tech_doc, blog, product_doc, tutorial, api_doc, wiki, other
-- language: CRITICAL - Detect the primary language of the content
-  - "en" for English content
-  - "zh" for Chinese content  
-  - "other" for other languages (OCR will be skipped)
+- language: CRITICAL - Detect the primary language of the main text area.
+  - "en": For content that is primarily English (Triggers English OCR).
+  - "zh": For content that contains Chinese characters (Triggers Chinese+English OCR).  
+  - "other": For code-only blocks, or other languages (OCR will be SKIPPED to save resources).
+  - Decision Rule: If the text is purely symbolic or in a language other than English/Chinese, MUST use "other".
 - source_url: ONLY include if URL is clearly visible in screenshot
 - key_insights: Max 5 specific takeaways from the content
 - text_region (IMPORTANT for OCR optimization): 
@@ -516,6 +517,9 @@ interface ActivitySummaryUserPromptArgs {
   // 窗口内的 context nodes
   context_nodes: ContextNode[];
   
+  // 超过 25 分钟的长事件 thread 上下文（必须为这些生成 event）
+  long_threads: LongThreadContext[];
+  
   // 统计信息
   stats: {
     top_apps: string[];        // 使用最多的应用
@@ -531,6 +535,21 @@ interface ActivitySummaryUserPromptArgs {
   yesterdayStart: number;
   yesterdayEnd: number;
   weekAgo: number;
+}
+
+// 超过 25 分钟的 thread 上下文
+// 注意：此数据从 context_nodes.thread_snapshot_json 聚合而来，而非实时查询 threads 表
+// 这确保了 Activity Summary 延迟执行时不会读取到超前的 thread 信息
+interface LongThreadContext {
+  thread_id: string;
+  title: string;
+  summary: string;
+  duration_ms: number;           // 快照时刻的 duration
+  start_time: number;
+  last_active_at: number;        // 窗口内最后活跃时间（从 context_nodes.event_time 取最大值）
+  current_phase?: string;        // 可选
+  main_project?: string;         // 可选
+  node_count_in_window: number;  // 当前窗口内属于此 thread 的节点数
 }
 
 interface ContextNode {
@@ -552,7 +571,7 @@ interface ContextNode {
 
 ```typescript
 interface ActivitySummaryOutput {
-  title: string;               // ≤100 chars，窗口摘要标题
+  title: string;               // ≤80 chars，窗口摘要标题
   
   summary: string;             // Markdown 格式，包含固定 4 个部分
   
@@ -566,6 +585,7 @@ interface ActivitySummaryOutput {
   events: ActivityEventCandidate[];  // 1-3 个事件候选
 }
 
+// 注意：event 不包含 details，details 是按需生成的（用户点击时触发）
 interface ActivityEventCandidate {
   title: string;               // ≤100 chars
   kind: EventKind;             // 事件类型
@@ -573,8 +593,9 @@ interface ActivityEventCandidate {
   end_offset_min: number;      // 窗口内结束偏移（分钟，0-20）
   confidence: number;          // 0-10
   importance: number;          // 0-10
-  description: string;         // ≤200 chars
+  description: string;         // ≤200 chars，简要描述而非详细 details
   node_ids: number[];          // 关联的 context_node IDs
+  thread_id?: string;          // 如果关联长事件 thread，必须填写
 }
 
 type EventKind = 
@@ -621,7 +642,8 @@ You are a professional activity analysis assistant. Your job is to summarize use
       "confidence": 8,
       "importance": 7,
       "description": "Investigating and fixing OAuth2 token refresh issue in auth-service",
-      "node_ids": [123, 124, 125]
+      "node_ids": [123, 124, 125],
+      "thread_id": "uuid-of-long-thread-if-applicable"
     }
   ]
 }
@@ -669,6 +691,8 @@ MUST contain exactly these 4 sections in order:
 - kind: Match activity type
 - start_offset_min / end_offset_min: Minutes from window start (0-20)
 - node_ids: Context node IDs that belong to this event
+- **MANDATORY**: For each thread in `long_threads` input, you MUST generate an event with its `thread_id`. Use the thread's title, summary, and context to generate accurate event title and description.
+- For non-long-thread events, `thread_id` can be omitted
 
 ## Hard Rules
 
@@ -677,6 +701,7 @@ MUST contain exactly these 4 sections in order:
 3. summary MUST contain exactly 4 sections in specified order.
 4. stats MUST match input - do NOT invent apps/entities.
 5. NEVER invent URLs not visible in evidence.
+6. **CRITICAL**: For each thread in `long_threads` input, you MUST generate a corresponding event with that `thread_id`. This is non-negotiable.
 ```
 
 ### User Prompt Template (EN)
@@ -701,19 +726,25 @@ Current Unix timestamp (ms): {nowTs}
 ## Context Nodes in This Window
 {contextNodesJson}
 
+## Long Threads (MUST generate events for these)
+{longThreadsJson}
+
 ## Statistics
 {statsJson}
 
 ## Instructions
 1. Analyze all context nodes within this window.
 2. Generate a comprehensive summary with exactly 4 sections.
-3. Identify 1-3 distinct activity events.
-4. Return ONLY the JSON object.
+3. **MANDATORY**: For each thread in "Long Threads", generate an event with its thread_id.
+4. Identify additional distinct activity events (total 1-3 events including long thread events).
+5. Return ONLY the JSON object.
 ```
 
 ---
 
 ## Activity Event Details
+
+> **触发时机**：用户点击长事件（is_long=1）时按需生成
 
 ### 输入 Schema
 
@@ -724,13 +755,28 @@ interface EventDetailsUserPromptArgs {
     event_id: number;
     title: string;
     kind: EventKind;
-    start_ts: number;
-    end_ts: number;
-    thread_id: string | null;
+    start_ts: number;            // 事件开始时间
+    end_ts: number;              // 事件结束时间
+    is_long: boolean;            // 是否为长事件
   };
   
-  // 关联的 context nodes（详细信息）
-  context_nodes: DetailNode[];
+  // Thread 信息（长事件必有，来自 thread_snapshot_json 聚合）
+  thread: {
+    thread_id: string;
+    title: string;
+    summary: string;
+    duration_ms: number;         // 累计时长
+    start_time: number;
+    current_phase?: string;
+    main_project?: string;
+  } | null;
+  
+  // 当前窗口内的 context nodes（属于此 event）
+  window_nodes: DetailNode[];
+  
+  // Thread 最新进度：查询 thread 的最新 N 个 context nodes（可能超出当前窗口）
+  // 用于展示"最新进度"
+  thread_latest_nodes: DetailNode[];
   
   // 时间上下文
   nowTs: number;
@@ -749,9 +795,10 @@ interface DetailNode {
   knowledge_json: object | null;
   state_snapshot_json: object | null;
   entities_json: EntityRef[];
-  action_items_json: object[] | null;
+  action_items_json: object[] | null;  // 重要：用于提取后续 focus
   event_time: number;
   local_time: string;
+  is_in_current_window: boolean;       // 标记是否属于当前窗口
 }
 ```
 
@@ -759,97 +806,126 @@ interface DetailNode {
 
 ```typescript
 interface EventDetailsOutput {
-  details: string;             // Markdown 格式详细报告
+  details: string;             // 包含三个核心部分的 Markdown 格式报告
 }
 ```
 
 ### System Prompt (EN)
 
 ```
-You are a professional activity analysis assistant.
+You are a professional activity analysis assistant specializing in long-running task context synthesis.
 
-Your job: Generate a detailed, factual deep-dive report for ONE activity event.
+Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 25 minutes) encapsulated in a JSON object.
+
+## Markdown Structure Requirements
+
+The `details` field MUST contain exactly these three sections in order:
+
+### 1. Session Activity (本阶段工作)
+- **Scope**: Focus ONLY on the activities captured in `window_nodes` (THIS specific time window).
+- **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
+- **Style**: Bullet points preferred.
+
+### 2. Current Status & Progress (当前最新进度)
+- **Scope**: Use `thread_latest_nodes` and `thread` context to determine the absolute latest state.
+- **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
+- **Style**: Descriptive summary.
+
+### 3. Future Focus & Next Steps (后续关注)
+- **Scope**: Infer based on `action_items_json` and overall thread trajectory.
+- **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
+- **Style**: Actionable tasks list.
 
 ## Quality Requirements
 
-- **Faithful**: Do NOT invent facts (files, URLs, decisions, outcomes, numbers)
-- **Structured**: Use clear headings and bullet lists
-- **Comprehensive**: Cover all relevant aspects from the context nodes
+- **Faithful**: Do NOT invent facts. Only use provided context nodes.
+- **Concise**: Use high-information density language. Avoid generic phrases.
+- **Context-Aware**: Clearly distinguish between what happened *now* vs the *overall* progress.
 
-## Output JSON Schema
+## Hard Output Requirements
 
-{
-  "details": "<markdown content>"
-}
+1. Output MUST be a valid JSON object: { "details": "<markdown_content>" }.
+2. The markdown inside MUST follow the three-section outline above.
+3. Use Markdown headings (###) for sections.
+4. Output JSON only. No markdown fences for the JSON itself.
+```
 
-## Markdown Structure Guidelines
+### System Prompt (ZH)
 
-The details field should include relevant sections from:
+```
+你是一个专业的活动分析助手，擅长长任务上下文的综合分析。
 
-### Overview
-- What was the user doing?
-- Primary goal/objective
+你的任务：为长事件（持续时间 ≥ 25 分钟）生成一个结构化的 Markdown 报告，并封装在 JSON 对象中。
 
-### Timeline
-- Key moments in chronological order
-- Use local times from context nodes
+## Markdown 结构要求
 
-### Key Activities
-- Specific actions taken
-- Files/resources accessed
-- Decisions made
+`details` 字段必须按顺序包含以下三个部分：
 
-### Technical Details (if applicable)
-- Technologies/tools involved
-- Code changes or configurations
-- Error resolution steps
+### 1. 本阶段工作 (Session Activity)
+- **范围**：仅关注 `window_nodes`（当前时间窗口）中的活动。
+- **内容**：总结用户在此时段内完成的工作、修改的具体文件、做出的关键决策以及遇到的技术问题。
+- **形式**：建议使用要点列表。
 
-### Outcomes
-- What was accomplished?
-- Any pending items?
+### 2. 当前最新进度 (Current Status & Progress)
+- **范围**：利用 `thread_latest_nodes` 和 `thread` 上下文来确定绝对的最新状态。
+- **内容**：该任务/项目的最终当前状态是什么？总体达成了哪些里程碑？是否存在活跃的阻塞项或待处理的审查？
+- **形式**：描述性总结。
 
-### Related Entities
-- Projects, repos, tickets mentioned
-- People involved
+### 3. 后续关注 (Future Focus & Next Steps)
+- **范围**：基于 `action_items_json` 和整体 Thread 轨迹进行推断。
+- **内容**：明确列出用户下一步应该关注的内容。包括能帮助用户快速“接手之前进度”的关键上下文。
+- **形式**：行动建议列表。
 
-## Hard Rules
+## 质量要求
 
-1. Output MUST be valid JSON only: { "details": "<markdown>" }
-2. All facts MUST come from provided context nodes.
-3. NEVER invent URLs, file paths, or outcomes not in evidence.
-4. Use local times from the context nodes.
-5. Keep report focused on THIS specific event.
+- **忠实性**：严禁捏造事实。仅使用提供的上下文节点。
+- **简洁性**：使用高信息密度的语言，避免冗长。
+- **区分性**：清晰区分“刚刚做了什么”与“现在整体进度到哪了”。
+
+## 硬性输出要求
+
+1. 输出必须是有效的 JSON 对象：{ "details": "<markdown_内容>" }。
+2. 内部的 Markdown 必须遵循上述三段式大纲。
+3. 使用 Markdown 三级标题 (###) 分段。
+4. 仅输出 JSON。不要 JSON 围栏。
 ```
 
 ### User Prompt Template (EN)
 
 ```
-Generate a detailed report for this activity event.
+Generate a structured report for this long-running activity event.
 
 ## Current Time Context
 Current Unix timestamp (ms): {nowTs}
 
-## Time Reference Points (Unix milliseconds, use these for time calculations!)
-- Today start (00:00:00 local): {todayStart}
-- Today end (23:59:59 local): {todayEnd}
+## Time Reference Points
+- Today start: {todayStart}
+- Today end: {todayEnd}
 - Yesterday start: {yesterdayStart}
-- Yesterday end: {yesterdayEnd}
 - One week ago: {weekAgo}
 
 ## Event Information
 - Title: {event.title}
 - Kind: {event.kind}
-- Duration: {event.start_ts} to {event.end_ts}
-- Thread: {event.thread_id || "None"}
+- This Window: {event.start_ts} to {event.end_ts}
+- Is Long Event: {event.is_long}
 
-## Associated Context Nodes
-{contextNodesJson}
+## Thread Information
+{threadJson}
+
+## Context Nodes in THIS WINDOW (for current_window_activities)
+{windowNodesJson}
+
+## Latest Thread Context (for latest_progress and next_focus)
+{threadLatestNodesJson}
 
 ## Instructions
-1. Analyze all context nodes to understand the full picture.
-2. Generate a comprehensive markdown report.
-3. Include all relevant sections based on available evidence.
-4. Return ONLY the JSON object with "details" field.
+1. Analyze window_nodes to summarize what was done in THIS window.
+2. Analyze thread_latest_nodes to understand overall progress and next steps.
+3. Extract action_items and issues from the nodes.
+4. Generate the structured JSON response.
+5. Optionally include detailed_report if significant details warrant it.
+6. Return ONLY the JSON object.
 ```
 
 ---
@@ -862,5 +938,7 @@ Current Unix timestamp (ms): {nowTs}
 | **Grounded** | 所有信息必须基于截图可见证据，禁止编造 |
 | **Language Detection** | VLM 识别 knowledge 语言，用于 OCR 触发判断 |
 | **Thread Continuity** | Thread LLM 负责将节点组织到活动线索中 |
+| **Thread Snapshot** | 快照存入 context_node，保证 Activity Summary 数据一致性 |
 | **Structured Output** | 所有 prompt 要求严格 JSON 输出，无 markdown fences |
 | **Field Constraints** | 每个字段有明确的长度限制和格式要求 |
+| **Long Event Details** | 三段式结构：当前窗口/最新进度/后续 Focus |

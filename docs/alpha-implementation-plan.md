@@ -52,15 +52,36 @@
    - 窗口 2 中的节点 `e, f` 被 Thread LLM 识别为与 Thread 2 相关，因此归入 Thread 2。
    - Thread 2 现在跨越了两个窗口，时间跨度可能超过 25 分钟。
 
-2. **长事件判定**：
+2. **长事件判定与 Activity Event 生成**：
    - `Thread.duration_ms` 累计计算（排除超过 10 分钟的 gap）。
-   - 当 `Thread.duration_ms >= 25 分钟` 时，在 Activity Summary 中将其标记为"长事件"（`is_long = 1`）。
-   - 长事件会触发 `Activity Event Details` 的生成，提供更丰富的事件详情。
+   - 当 `Thread.duration_ms >= 25 分钟` 时，在 **Activity Event** 中将其标记为"长事件"（`is_long = 1`）。
+   - **强制生成规则**：如果窗口内有 context node 属于超过 25 分钟的 thread，**必须**生成对应的 activity event。
+   - Activity LLM 同时分析其余 context nodes，生成关键 activity events 的总结。
+   - Activity Event 落库后，对超 25 分钟 thread 对应的 event 设置 `is_long = 1`。
+   - 长事件的 `details` 是**按需生成**的（用户点击时触发），不在 Summary 阶段生成。
 
-3. **Activity Summary 不依赖 Thread 边界**：
+3. **Activity Summary 流程**：
    - Activity Summary 按固定 20 分钟窗口生成。
-   - 窗口内的 Context Node 可能属于多个 Thread。
-   - Thread 信息用于识别长事件和提供活动连续性上下文。
+   - 每 20 分钟获取该时间窗口内的 context nodes。
+   - 检查这些 context nodes 是否有属于超过 25 分钟的 thread 时间线。
+   - **数据一致性保证**：长事件 thread 信息从 **context_nodes.thread_snapshot_json** 读取，而非实时查询 threads 表。
+     - Thread 快照在 Thread LLM 分配节点时捕获，反映当时的 thread 状态。
+     - 避免 Activity Summary 延迟执行时读取到超前的 thread 信息。
+   - **LongThreadContext**（从 context_nodes.thread_snapshot_json 聚合）：
+     ```typescript
+     interface LongThreadContext {
+       thread_id: string;
+       title: string;
+       summary: string;
+       duration_ms: number;            // 快照时刻的 duration
+       start_time: number;
+       last_active_at: number;         // 窗口内最后活跃时间（从 context_nodes.event_time 取最大值）
+       current_phase?: string;         // 可选
+       main_project?: string;          // 可选
+       node_count_in_window: number;   // 当前窗口内属于此 thread 的节点数
+     }
+     ```
+   - LLM 返回后：Activity Summary 落库 → Activity Events 落库 → 对长事件设置 `is_long = 1`。
 
 ---
 
@@ -157,11 +178,17 @@ CREATE TABLE context_nodes (
   -- Thread 关联
   thread_id TEXT REFERENCES threads(id),
   
+  -- Thread 快照（JSON，Thread LLM 分配时捕获，用于 Activity Summary 数据一致性）
+  -- 在 Thread LLM 将节点分配到 thread 时，同时将 thread 的当前状态快照存入此字段
+  -- Activity Summary 读取此快照，而非实时查询 threads 表，避免时间差导致的数据错乱
+  thread_snapshot_json TEXT,  -- { title, summary, durationMs, startTime, currentPhase?, mainProject? }
+  
   -- 应用上下文（JSON）
   app_context_json TEXT NOT NULL,  -- { appHint, windowTitle, sourceKey }
   
   -- 知识提取（JSON，可为 null，ocrText 存储在 screenshots 表）
-  knowledge_json TEXT,  -- { contentType, sourceUrl, projectOrLibrary, keyInsights }
+  -- textRegion: VLM 返回的主文字区域坐标，用于精准本地 OCR
+  knowledge_json TEXT,  -- { contentType, sourceUrl, projectOrLibrary, keyInsights, language, textRegion?: { box: { top, left, width, height }, confidence } }
   
   -- 状态快照（JSON，可为 null，包含构建状态/指标/问题检测等）
   state_snapshot_json TEXT,  -- { subjectType, subject, currentState, metrics?, issue?: { detected: boolean, type: "error"|"bug"|"blocker"|"question"|"warning", description: string, severity: 1-5 } }
@@ -436,24 +463,29 @@ CREATE INDEX idx_ae_time ON activity_events(start_ts, end_ts);
 │                                          ▼                                   │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │                           VLM Processor                               │  │
-│  │  Input: screenshots (base64) + history_pack (当前活跃 threads)        │  │
-│  │  Output: ContextNode[] + app_guess (屏幕截图时)                       │  │
+│  │  Input: screenshots (base64)                                          │  │
+│  │  Output: ContextNode[] (含 title, summary, knowledge, state, etc.)    │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                          │                                   │
 │                                          │ VLM 成功                          │
 │                                          ▼                                   │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                  Local OCR (Tesseract.js)                             │  │
-│  │  条件: knowledge_json 不为 null 的 context_node 关联的 screenshot     │  │
-│  │  Output: ocr_text 存入 screenshots 表                                 │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
 │                                          │                                   │
 │                                          ▼                                   │
-│  ┌───────────────────────────────────────────────────────────────────────┐  │
-│  │                         Thread LLM Processor                          │  │
-│  │  Input: new ContextNodes + active Threads (top 3) + recent nodes     │  │
-│  │  Output: Thread assignments + Thread updates                          │  │
-│  └───────────────────────────────────────────────────────────────────────┘  │
+│                  ┌───────────────────────────────────────────────┐           │
+│                  │           Parallel Processing Stage           │           │
+│                  └──────────────────────┬────────────────────────┘           │
+│                                         │                                    │
+│                    ┌────────────────────┴────────────────────┐               │
+│                    ▼                                         ▼               │
+│  ┌───────────────────────────────────┐     ┌───────────────────────────────────┐  │
+│  │      Local OCR (Tesseract.js)     │     │       Thread LLM Processor        │  │
+│  │  条件: language ∈ {en, zh}        │     │  Input: new ContextNodes          │  │
+│  │  Output: ocr_text → 存库 + FTS    │     │  Output: Thread assignments       │  │
+│  └───────────────────────────────────┘     └───────────────────────────────────┘  │
+│                    │                                         │               │
+│                    └────────────────────┬────────────────────┘               │
+│                                         ▼                                    │
+│                                 [Batch Completed]                            │
 │                                          │                                   │
 │                            ┌─────────────┴─────────────┐                    │
 │                            │                           │                    │
@@ -561,10 +593,26 @@ CREATE INDEX idx_ae_time ON activity_events(start_ts, end_ts);
 
 **状态转换规则**：
 
-| 阶段 | 触发条件 | 最大尝试次数 | 重试间隔 |
-|-----|---------|-------------|---------|
 | VLM | `vlm_status=pending` 且 `vlm_next_run_at <= now` | 2 | 1 分钟 |
 | Thread LLM | `vlm_status=succeeded` 且 `thread_llm_status=pending` 且 `thread_llm_next_run_at <= now` | 2 | 1 分钟 |
+
+---
+
+### OCR 精准处理流水线 (Selective OCR)
+
+为平衡性能与精度，系统在 VLM 成功后，**并行于 Thread LLM** 启动按需 OCR 识别：
+
+1. **VLM 判别**：VLM 在分析 `batches` 时，对符合 `knowledge` 类的内容识别其主要语言 `language` 及核心区域 `text_region`。
+2. **语言过滤 (Skip Logic)**：
+   - **触发条件**：仅当 `language` 为 `"en"` 或 `"zh"` 时触发本地 OCR。
+   - **跳过条件**：若为 `"other"`（如仅包含代码块、艺术文字或非中英语言），**强制跳过**本地 OCR 步骤以节省 CPU 资源。
+3. **区域裁剪**：利用 `sharp` 提取 `text_region.box` 像素区域，消除 UI 噪音。
+4. **分类识别**：
+   - 为 `"en"` 或 `"zh"` -> 启动 `chi_sim + eng` 混合识别。
+5. **结果落库与 FTS 同步**：
+   - 将全文存入 `screenshots.ocr_text`。
+   - **FTS 联动**：触发 `screenshots_fts_update` 触发器（见 [6.5 节](#65-screenshots_fts-虚拟表-fts5-全文搜索)），自动更新全文搜索索引。这意味着 OCR 完成的瞬间，该截图即可通过关键词进行毫秒级检索。
+   - **向量化补充**：OCR 文本还将参与后续 `VectorDocumentScheduler` 的 embedding 生成，增强语义搜索的精准度。
 
 ---
 
@@ -647,7 +695,7 @@ async recoverStaleStates(): Promise<void> {
 时间线 ──────────────────────────────────────────────────────────────────────▶
 
 [截图采集]
-    │ pHash去重 + Local OCR
+    │ pHash去重
     ▼
 [Buffer]──2张/60秒──▶[Batch创建]
                          │
@@ -847,114 +895,8 @@ export const ALPHA_CONFIG = {
 
 ---
 
-## VLM Prompt 设计
-
-### System Prompt
-
-```
-You are a screenshot analysis assistant. For each screenshot, extract structured information.
-
-Output JSON array with one object per screenshot, matching the screenshot order (1-indexed).
-
-Each object must have:
-- title: Brief title (≤100 chars)
-- summary: Detailed description of what user is doing, in which app, which project, current progress (200-500 chars)
-- appContext: { appHint, windowTitle, sourceKey }
-- knowledge: If reading docs/blog/tutorial, extract { contentType, sourceUrl?, projectOrLibrary?, keyInsights[], language: "en"|"zh"|"other" }. Otherwise null.
-- stateSnapshot: If viewing build status/metrics/task board, extract { subjectType, subject, currentState, metrics? }. Otherwise null.
-- entities: Array of { name, type, raw?, confidence? }. Types: person|project|team|org|jira_id|pr_id|commit|document_id|url|repo|other
-- actionItems: If explicit or inferred TODOs, extract [{ action, priority?, source }]. Otherwise null.
-- uiTextSnippets: Important UI text (buttons, messages, titles). Max 10 items.
-- importance: 0-10
-- confidence: 0-10
-- keywords: Max 5 keywords
-```
-
-### User Prompt
-
-```
-Analyze {count} screenshots.
-
-Screenshot metadata:
-{screenshotMeta}
-
-Recent history (for continuity):
-{historyPack}
-
----
-
-Output format:
-{
-  "nodes": [
-    { /* screenshot 1 result */ },
-    { /* screenshot 2 result */ },
-    ...
-  ]
-}
-```
-
----
-
-## Thread LLM Prompt 设计
-
-### System Prompt
-
-```
-You analyze user activity continuity. Given new context nodes and active threads, determine:
-1. Which thread each new node belongs to (or create new thread)
-2. How to update thread status (title, summary, phase, focus, milestones)
-
-Rules:
-- Match nodes to threads based on: same project, same app, related topic, time proximity
-- Create new thread if activity is clearly different
-- Update thread summary to reflect current progress
-- Add milestone if significant progress detected
-```
-
-### User Prompt
-
-```
-Active threads (most recent first):
-{activeThreads}
-
-Each thread's recent nodes:
-{threadRecentNodes}
-
-New nodes from this batch:
-{batchNodes}
-
----
-
-Output:
-{
-  "assignments": [
-    { "nodeIndex": 0, "threadId": "existing-uuid" | "NEW", "reason": "..." },
-    ...
-  ],
-  "threadUpdates": [
-    {
-      "threadId": "...",
-      "title": "...",
-      "summary": "...",
-      "currentPhase": "...",
-      "currentFocus": "...",
-      "newMilestone": { "description": "..." } | null
-    },
-    ...
-  ],
-  "newThreads": [
-    {
-      "title": "...",
-      "summary": "...",
-      "currentPhase": "...",
-      "nodeIndices": [...]
-    },
-    ...
-  ]
-}
-```
-
----
+## Prompt 设计
+  参考 docs\alpha-prompt-templates.md
 
 ## 本地 OCR 集成
 

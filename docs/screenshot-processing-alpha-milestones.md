@@ -1,0 +1,1582 @@
+# Screenshot Processing Alpha — Milestone Implementation Plan
+
+> 基于：
+> - `docs/alpha-implementation-plan.md`
+> - `docs/alpha-prompt-templates.md`
+>
+> 格式参考：
+> - `Screenshot Processing & Context Graph v2 后续实现 Plan.md`
+
+---
+
+## Alpha 决策（已确认）
+
+- `context_edges` 表物理删除/停用（不再写入/不再读取）
+- 历史数据不迁移，Alpha 重新开始
+- 本地 OCR 为准（VLM 不再产出 `ocr_text`）
+
+---
+
+## 目标与 DoD（Definition of Done）
+
+- Capture → screenshots 入库
+- Batch：每个 source buffer 触发（2 张或 60 秒）
+- VLM：每张截图产出 1 个 Context Node
+- Thread：跨窗口延续；长事件：≥25min（排除 gap>10min）
+- OCR：仅对 knowledge 且语言 en/zh 做本地 OCR
+- Search/Activity：不依赖 context_edges
+- 鲁棒性：stale recovery + retry/backoff + 幂等
+- 可观测：LLMUsage + trace
+
+---
+
+## 现有代码基线（强复用清单）
+
+- `electron/services/screenshot-processing/base-scheduler.ts`
+- `electron/services/llm-usage-service.ts`
+- `electron/services/monitoring/ai-request-trace.ts`
+- `electron/services/ai-runtime-service.ts`
+- `electron/services/screenshot-processing/vector-document-scheduler.ts`
+- `electron/services/screenshot-processing/activity-timeline-scheduler.ts`
+
+---
+
+# Milestones（按实现顺序）
+
+- M0 — DB Schema/Migrations + shared types/IPC 适配（移除 edges，引入 threads，补 OCR 状态）
+- M1 — Alpha pipeline 落地方式与入口切换（只启动 alpha schedulers）
+- M2 — BatchScheduler(VLM)：batch → VLM → 单图单 node 入库
+- M3 — OCRScheduler：knowledge(en/zh) → 本地 OCR → 写回 screenshots
+- M4 — ThreadScheduler：thread assignment + cross-window tracking + long event stats
+- M5 — Vector/Search：vector_documents + embedding + index + evidence 回溯（无 edges）
+- M6 — ActivityTimeline：20min summary + long events + details 触发
+- M7 — Monitoring/Queue Inspector：dashboard 适配 alpha 状态机
+- M8 — Hardening：幂等/崩溃恢复/清理策略与回归 checklist
+
+---
+
+## M0 — DB Schema/Migrations + shared types/IPC 适配
+
+### 目的
+
+Alpha 的数据与 API 基座改造，目标是：
+
+- **[删除]** 彻底移除 `context_edges`（表 + schema export + 所有读写路径）
+- **[新增]** 引入 `threads` 作为连续性的一等公民（替代边关系）
+- **[新增]** 为 OCR/Thread LLM/Batch 推进补齐状态机字段（pending/running/failed/failed_permanent + attempts + nextRunAt）
+- **[兼容]** 让主进程、IPC、renderer 的类型与 API 在“无 edges”情况下仍能编译与运行
+
+> 说明：用户已确认 Alpha **不迁移历史数据**。因此本 Milestone 需要明确“数据重置策略”，避免旧数据混入 Alpha 结果。
+
+### 需要改动的文件
+
+- `electron/database/schema.ts`
+- `electron/database/migrations/0014_*.sql`（新建 migration，文件名按 drizzle 生成规则）
+- `electron/database/index.ts`（仅当选择“独立 Alpha DB 文件”策略时需要）
+- `shared/context-types.ts`
+- `electron/ipc/context-graph-handlers.ts`
+- `electron/preload.ts`
+
+> 以及：任何直接引用 `contextEdges` / `EdgeType` / traverse 的 renderer 代码（按 TS 报错点逐个修正）。
+
+### 数据库 Schema 改动清单（以 drizzle schema 为准）
+
+#### 1) 删除 `context_edges`
+
+- **[DB]** migration 执行 `DROP TABLE context_edges;`
+- **[schema.ts]** 删除 `export const contextEdges = ...` 及其相关 `EDGE_TYPE_VALUES` 依赖（如存在）
+- **[代码]** 删除/改写所有 `contextEdges` 的 insert/select（主要集中在 `ContextGraphService`、IPC traverse、以及可能的 merge/derived node 写入路径）
+
+验收要点：`rg "contextEdges"` / `rg "context_edges"` 结果应为 0（除 migration SQL 外）。
+
+#### 2) 新增 `threads` 表
+
+在 `electron/database/schema.ts` 新增 `threads` 表（字段与 alpha plan 对齐，且满足现有 UI/Activity 聚合需求）：
+
+- `id`（TEXT PK，uuid）
+- `title`（TEXT NOT NULL）
+- `summary`（TEXT NOT NULL）
+- `currentPhase`（TEXT，可空）
+- `currentFocus`（TEXT，可空）
+- `status`（TEXT NOT NULL，enum: `active|inactive|closed`，默认 `active`）
+- `startTime`（INTEGER NOT NULL）
+- `lastActiveAt`（INTEGER NOT NULL）
+- `durationMs`（INTEGER NOT NULL DEFAULT 0）
+- `nodeCount`（INTEGER NOT NULL DEFAULT 0）
+- `appsJson`（TEXT NOT NULL DEFAULT '[]'）
+- `mainProject`（TEXT，可空）
+- `keyEntitiesJson`（TEXT NOT NULL DEFAULT '[]'）
+- `milestonesJson`（TEXT，可空）
+- `createdAt/updatedAt`（INTEGER NOT NULL）
+
+推荐索引：
+
+- `idx_threads_last_active_at(last_active_at)`（用于“最近活跃 threads”）
+- `idx_threads_status(status)`（用于活跃过滤）
+
+#### 3) `batches`：增加 Thread LLM 状态机字段
+
+现有 `batches` 已有一套通用 `status/attempts/nextRunAt/error*`，当前主要用于 batch 的 VLM/Text 处理。
+
+Alpha 推荐改造方式（最小化迁移成本）：
+
+- **[保持]** `batches.status/attempts/nextRunAt/error*` 作为 **VLM 子任务**状态机（语义上等价 `vlm_status/...`）
+- **[新增]** `threadLlmStatus/threadLlmAttempts/threadLlmNextRunAt/threadLlmErrorCode/threadLlmErrorMessage`
+  - enum 复用 `pending|running|succeeded|failed|failed_permanent`
+  - attempts/maxAttempts/指数退避策略复用现有 scheduler 配置
+
+说明：这样可以避免 SQLite rename/drop column 的复杂迁移，并允许逐步把旧 pipeline 的 batch.status 语义收敛到 Alpha。
+
+#### 4) `screenshots`：增加 OCR 状态机字段
+
+现有 `screenshots` 已有 `ocr_text` 字段，但缺少“是否在跑/是否失败/何时重试”。Alpha 需要 OCR scheduler 可靠推进：
+
+- **[新增]** `ocrStatus`（TEXT，enum: `pending|running|succeeded|failed|failed_permanent`，允许为 null/空表示“不需要 OCR”）
+- **[新增]** `ocrAttempts`（INTEGER NOT NULL DEFAULT 0）
+- **[新增]** `ocrNextRunAt`（INTEGER，可空）
+- **[新增]** `ocrErrorCode/ocrErrorMessage`（TEXT，可空）
+
+约束：
+
+- `ocr_text` 仍限制长度（≤8000 字符），写入时强制 truncate。
+
+#### 5) `context_nodes`：增加 `batchId`（推荐）并明确幂等键
+
+Alpha 的“单截图单 node”要做到幂等，推荐把 `origin_key` 固化为 `screenshot:<screenshotId>`：
+
+- **[约定]** `context_nodes.origin_key = screenshot:<id>`（利用现有 unique index `idx_context_nodes_origin_key_unique`）
+
+另外，为了让 Thread scheduler 能“按 batch 拉取 nodes”，推荐新增：
+
+- **[新增]** `context_nodes.batch_id`（INTEGER references `batches.id`，并加索引 `idx_context_nodes_batch_id`）
+
+备注：如果不加 `batch_id`，也能通过 `context_screenshot_links -> screenshots.enqueued_batch_id` 反查，但会显著增加调度器扫描复杂度与查询开销。
+
+### Alpha 数据重置策略（必须明确）
+
+由于不迁移历史数据，本 Milestone 必须选一个策略，避免旧数据污染 Alpha。
+
+推荐策略（优先级从高到低）：
+
+- **[推荐：独立 DB 文件]** Alpha 使用独立 DB 文件（例如 `mnemora-alpha.db`）
+  - 改动点：`electron/database/index.ts` 的 `getPath()` 支持按开关选择 DB 名
+  - 开关来源：`processingConfig.alpha.enabled` 或环境变量 `MNEMORA_DB_VARIANT=alpha`
+  - 优点：不破坏旧数据；Alpha 可随时删库重跑
+
+- **[备选：启动时清库]** 启动检测到 alpha enabled 时，对 screenshot-processing 相关表做 drop/recreate 或 delete
+  - 风险：容易误删用户数据；需要额外确认机制
+
+在后续 milestone 的所有调度器/查询都默认“Alpha DB 为干净数据集”。
+
+### IPC / shared types 适配（无 edges）
+
+#### 1) shared types
+
+- `shared/context-types.ts`
+  - **[删除或降级]** `EdgeType` 与 `GraphTraversalResult.edges`
+  - **[保留]** `ExpandedContextNode/SearchQuery/SearchResult`（search 仍然需要）
+  - **[新增]** Thread DTO（建议新增 `Thread`/`ThreadSummary` 类型，供 UI 与 IPC 使用）
+
+#### 2) IPC handlers
+
+- `electron/ipc/context-graph-handlers.ts`
+  - **[保留]** `search` / `getEvidence` / `getThread`（若已有）
+  - **[移除/禁用]** `traverse`：
+    - 方案 A：直接移除 IPC channel 与 preload API
+    - 方案 B：保留但返回“空 edges + nodes=按 thread/时间邻居扩展”的近似结果（用于 UI 兼容期）
+
+- `electron/preload.ts`
+  - 同步删除/调整 renderer 暴露的 `contextGraph.traverse()` 等方法
+
+### 可直接复用的代码（copy 指引）
+
+- **[Migration/DB]** 复用现有 drizzle migrations 流程（`electron/database/index.ts` 的 `migrate()` 调用无需改动）
+- **[状态机字段模式]** 参考 `vector_documents` 与 `activity_summaries/activity_events` 的字段命名与 retry 结构
+- **[后续调度器复用]** `BaseScheduler.scheduleNext()` 的 earliest-next-run 计算模式，将在 M2/M3/M4 直接复用
+
+### 验收标准（DoD）
+
+- migrations 在空 DB 上可完整执行，应用可启动
+- `context_edges` 不存在（表已 drop，schema 无 export，代码无引用）
+- `threads` 表存在且可写入/查询
+- TS 编译通过：IPC/preload/shared types 不再依赖 edges
+
+### Review Checklist
+
+- **[Schema]** `context_nodes.origin_key` 是否能稳定表达“单截图单 node”的幂等性
+- **[索引]** `threads.last_active_at` 与 `context_nodes.batch_id/thread_id` 是否有索引
+- **[兼容]** traverse API 的移除是否会影响现有 UI 路径（需要在 PR 内标注受影响功能）
+- **[重置策略]** Alpha DB 隔离/清库策略是否明确且不会误伤用户数据
+
+---
+
+## M1 — Alpha pipeline 落地方式与入口切换
+
+### 目的
+
+建立 Alpha pipeline 的工程落地方式（模块边界、开关、启动/停止路径），确保：
+
+- Alpha 与现有 pipeline **不会并行运行**（避免重复调度、重复写入、竞态）
+- Alpha 的 scheduler 体系可以逐步落地（M2/M3/M4 逐个接入），而不要求一次性完成所有功能
+- 入口切换对外部依赖（`screen-capture`、IPC、UI）影响可控
+
+### 方案选择（推荐）
+
+**推荐：在现有 `electron/services/screenshot-processing/` 下新增 `alpha/` 子目录**，并用 feature flag 选择启动哪套调度器。
+
+- 优点：
+  - 可以直接复用现有的 `SourceBufferRegistry/BatchBuilder/BaseScheduler/aiRuntimeService/llmUsageService`
+  - 保持 imports 与运行时集成点（`ScreenshotProcessingModule`）稳定
+  - 便于逐步删除旧 pipeline（后续 milestone 可以“删旧模块”而非“改到一半”）
+
+- 目录建议：
+  - `electron/services/screenshot-processing/alpha/alpha-schedulers/`
+  - `electron/services/screenshot-processing/alpha/alpha-services/`
+  - `electron/services/screenshot-processing/alpha/alpha-types.ts`（仅放 alpha 专用 DTO/状态枚举；shared 类型仍放 `shared/`）
+
+### Feature Flag & DB Variant（与 M0 对齐）
+
+- `processingConfig.alpha.enabled: boolean`
+- （可选）`MNEMORA_DB_VARIANT=alpha`：启用“独立 Alpha DB 文件”（M0 推荐策略）
+
+约束：
+
+- **alpha enabled 时**：旧 `screenshotPipelineScheduler` 不启动
+- **alpha disabled 时**：保持现有行为（便于回滚）
+
+### 需要改动的文件
+
+- `electron/services/screenshot-processing/config.ts`
+  - 增加 `alpha.enabled`（读取 env/配置）
+
+- `electron/services/screenshot-processing/screenshot-processing-module.ts`
+  - `initialize()` 中按开关启动对应 schedulers
+  - `dispose()` 中按开关 stop 对应 schedulers
+
+- （若采用独立 DB 文件）`electron/database/index.ts`
+  - `getPath()` 支持 variant（`mnemora.db` vs `mnemora-alpha.db`）
+
+- 新增（仅骨架，M2/M3/M4 再填充细节）：
+  - `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-batch-vlm-scheduler.ts`
+  - `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-ocr-scheduler.ts`
+  - `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-thread-scheduler.ts`
+
+### 具体实现清单
+
+#### 1) ScreenshotProcessingModule：只负责“落库 + 唤醒”与“启动正确的 schedulers”
+
+复用现有逻辑：
+
+- `onPersistAcceptedScreenshot()`：截图入库（仍写 `screenshots`）
+- `onCaptureComplete()`：将 capture result 送入 `SourceBufferRegistry`
+- `onBatchReady()`：仍调用 `BatchBuilder.createAndPersistBatch(...)`
+
+切换逻辑：
+
+- 当 `processingConfig.alpha.enabled === true`：
+  - 启动：`alphaBatchVlmScheduler.start()` / `alphaOcrScheduler.start()` / `alphaThreadScheduler.start()`
+  - 保留：`activityTimelineScheduler.start()` 与 `vectorDocumentScheduler.start()`（后续在 M6/M5 逐步适配）
+  - 禁用：`screenshotPipelineScheduler.start()`
+
+- 当 `processingConfig.alpha.enabled === false`：
+  - 保持现状
+
+唤醒机制（复用现有事件总线语义）：
+
+- 在 `onBatchPersisted()`：
+  - alpha enabled：wake `alphaBatchVlmScheduler.wake()`
+  - alpha disabled：wake `screenshotPipelineScheduler.wake()`
+
+#### 2) Alpha schedulers：先建骨架（BaseScheduler + start/stop/wake），再在后续 milestone 补齐状态机
+
+骨架要求：
+
+- class extends `BaseScheduler`
+- `start()/stop()/wake()` 语义与现有 `VectorDocumentScheduler` 对齐
+- `computeEarliestNextRun()`：先返回 `null` 或扫描对应表的 nextRunAt（M2/M3/M4 逐步补齐）
+- `runCycle()`：空实现/仅 recoverStaleStates
+
+#### 3) 运行时保护：避免“双 pipeline 同时跑”
+
+在 alpha enabled 分支，增加启动日志与自检：
+
+- log 当前 enabled flag、db variant
+- 确保旧 scheduler `stop()` 被调用（即使旧路径残留）
+
+### 可直接复用的代码（copy 指引）
+
+- **[scheduler 模板]** 直接参考并复制：
+  - `vector-document-scheduler.ts` 的 start/stop/wake 结构
+  - `BaseScheduler.scheduleNext()` + `computeEarliestNextRun()` 的实现方式
+
+- **[唤醒事件]** 复用 `screenshotProcessingEventBus`：
+  - `batch:persisted` 作为 Alpha batch 推进入口
+
+### 验收标准（DoD）
+
+- alpha enabled 时，应用启动后：
+  - 旧 `screenshotPipelineScheduler` 不会启动
+  - 新 alpha schedulers 会启动且可被 `wake()`
+  - capture → screenshot 入库 → batch 入库链路不变
+
+- alpha disabled 时，行为与当前版本一致
+
+### Review Checklist
+
+- **[单一执行引擎]** 是否存在任何旧 pipeline 的“隐式 start()”（例如在别处 import 即启动）
+- **[事件路由]** `batch:persisted` wake 的目标是否与 enabled flag 一致
+- **[回滚]** 关闭 alpha 后是否可无损回到旧 pipeline
+
+---
+
+## M2 — BatchScheduler(VLM)
+
+### 目的
+
+把“截图 → batch → VLM → 单图单 Context Node”跑通，作为 Alpha 主链路的第一阶段产物。
+
+该 Milestone 完成后：
+
+- `batches` 能稳定推进 VLM 状态机（pending/running/succeeded/failed/failed_permanent）
+- VLM 输出会落到：
+  - `screenshots`：证据字段与 `vlm_status`
+  - `context_nodes`：**每张截图 1 条**，`origin_key = screenshot:<id>`，`thread_id` 暂为空
+  - `context_screenshot_links`：建立可回溯证据链
+- 为后续 M3/M4 提供输入：
+  - OCR scheduler 读取“是否需要 OCR + language”
+  - Thread scheduler 读取 batch 的 nodes
+
+### 依赖
+
+- M0：DB schema 已具备（至少包含：删除 edges、OCR 状态字段、batches.threadLlmStatus、threads 表等）
+- M1：alpha enabled 开关与 alpha schedulers 骨架已就位
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/config.ts`
+  - 将 alpha 目标对齐：
+    - `processingConfig.batch.batchSize = 2`
+    - `processingConfig.batch.batchTimeoutMs = 60_000`
+
+- `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-batch-vlm-scheduler.ts`（新增）
+- `electron/services/screenshot-processing/alpha/alpha-services/alpha-vlm-service.ts`（新增，可选；也可以直接复用现有 `vlm-processor.ts`）
+- `electron/services/screenshot-processing/prompt-templates.ts`
+  - 增加 Alpha VLM prompt（严格遵循 `docs/alpha-prompt-templates.md`：**不产出 ocr_text**）
+
+- `electron/services/screenshot-processing/schemas.ts`
+  - 增加 Alpha VLM 输出 schema（每张截图 1 个对象）
+
+- `electron/services/screenshot-processing/context-graph-service.ts`
+  - 新增/调整：`upsertAlphaNodeForScreenshot(...)`（仅写 node + link，不写 edges，不做 merge/derived nodes）
+
+### Batch VLM 状态机（建议）
+
+复用现有 `batches.status/attempts/nextRunAt/error*` 作为 VLM 子任务状态机：
+
+- `pending` → `running` → `succeeded`
+- 失败：`failed`（可重试）→ 超过阈值 `failed_permanent`
+
+线程子任务状态机由 M4 接管：
+
+- 当 VLM 成功落库后：将 `batches.threadLlmStatus` 置为 `pending`（并 wake thread scheduler）
+
+### 调度器实现（alphaBatchVlmScheduler）
+
+#### 1) 启动与 wake
+
+参考 `vector-document-scheduler.ts`，实现：
+
+- `start()`：注册 event listener（或仅 scheduleSoon）
+- `wake(reason?)`：尽快跑一轮
+- `stop()`：清 timer
+
+触发来源：
+
+- `ScreenshotProcessingModule.onBatchPersisted()`：alpha enabled 时 `alphaBatchVlmScheduler.wake("batch:persisted")`
+
+#### 2) computeEarliestNextRun()
+
+查询 `batches` 中 VLM due 的最早 `nextRunAt`：
+
+- `status in (pending, failed)`
+- `attempts < maxAttempts`
+- `nextRunAt is null OR nextRunAt <= now`
+
+返回 `min(nextRunAt ?? now)`。
+
+#### 3) runCycle()（核心流程）
+
+参考 `vector-document-scheduler.ts` 的结构：
+
+1. **recoverStaleStates**：
+   - `batches.status == running` 且 `updatedAt < now - staleRunningThresholdMs` → 回滚 `pending`（nextRunAt=null）
+
+2. **scanPendingRecords**：
+   - 扫描 due batches（建议同样采用 newest+oldest 双向扫描，避免 backlog 饥饿）
+   - 按 `updatedAt` 或 `createdAt` 与 `laneRecoveryAgeMs` 分成 `realtime/recovery`
+
+3. **processInLanes**（复用 `BaseScheduler.processInLanes`）：
+   - `laneWeights`: `{ realtime: 3, recovery: 1 }`
+   - `concurrency`: 建议 1~min(vlmLimit, N)（首版保守，避免 OCR/Thread 还没接入时产生堆积）
+
+4. **processOneBatch(batchId)**：
+   - claim（`UPDATE ... WHERE status in (pending, failed)`）置 `running` 并 bump attempts
+   - 读取 batch 的 screenshotIds，加载对应 screenshot 行
+   - 读取图片文件并 base64（复用现有 `vlm-processor.ts` 的读取策略）
+   - 调用 VLM（见下一节）
+   - 落库（见“持久化映射”）
+   - 更新 batch `status=succeeded`（或失败写 `failed/nextRunAt/error*`）
+
+### Alpha VLM 调用与输出 Schema
+
+#### 1) 输入（request）
+
+建议保持与现有 `VLMProcessor.buildVLMRequest()` 结构一致，便于复用错误处理与 degraded 重试：
+
+- system prompt：Alpha VLM system prompt（来自 `alpha-prompt-templates.md`）
+- user content：
+  - 结构化元信息（每张截图的 `screenshotId/ts/sourceKey/appHint?/windowTitle?`）
+  - 近邻上下文（可选）：来自 `BatchBuilder` 的 HistoryPack（最近 threads 摘要、recent entities 等）
+  - images：按截图顺序附带
+
+硬规则（与用户决策对齐）：
+
+- **VLM 不产出 `ocr_text`**
+- VLM 只负责“结构化提取 + 判断是否需要 OCR + language”
+
+#### 2) 输出（response）
+
+每张截图对应 1 个对象（禁止 1 screenshot 产多节点）：
+
+- `screenshotId: number`
+- `title: string`
+- `summary: string`
+- `keywords: string[]`
+- `entities: Array<{ name: string; entityType?: string; confidence?: number }>`
+- `importance: number (0-10)`
+- `confidence: number (0-10)`
+- `appContext: { sourceKey: string; appHint?: string; windowTitle?: string }`
+- `uiTextSnippets?: string[]`（高价值片段，数量限制）
+- `knowledge?: { language?: "en"|"zh"|"other"; contentType?: string; sourceUrl?: string; keyInsights?: string[]; ... }`
+- `stateSnapshot?: { subjectType?: string; subject?: string; currentState?: string; metrics?: object; issue?: { detected: boolean; type: string; description: string; severity: number } }`
+
+落库时仍建议保留 raw JSON（写到 `screenshots.vlm_index_fragment` 或 batch.indexJson），便于 debug 与回归。
+
+### 持久化映射（DB 写入点）
+
+#### 1) 写 `screenshots`
+
+对 batch 内每张截图：
+
+- `vlmStatus = succeeded`
+- `appHint/windowTitle`：
+  - window capture：优先使用 capture 元数据
+  - screen capture：使用 VLM 识别出的 app/window 信息
+  - 落库时合并（避免把已有非空字段覆盖为 null）
+
+- `uiTextSnippets = JSON.stringify(uiTextSnippets ?? [])`
+- `detectedEntities = JSON.stringify(entities ?? [])`
+- `vlmIndexFragment = JSON.stringify(perScreenshotObject)`（或截断存储）
+
+- **设置 OCR 队列字段（为 M3 准备）**：
+  - 若 `knowledge` 存在且 `language in (en, zh)`：`ocrStatus = pending`；否则 `ocrStatus = null`
+  - 需要 OCR 的截图应延长 `retentionExpiresAt`（至少覆盖 OCR 最坏重试窗口），避免文件提前被 cleanup loop 删除
+
+#### 2) 写 `context_nodes`（单图单 node）
+
+建议新增 ContextGraphService API（或直接在 alpha scheduler 内写 DB）：
+
+- 幂等键：`originKey = screenshot:<screenshotId>`（复用现有 unique index）
+- `kind = "event"`（alpha 统一用 event；knowledge/stateSnapshot 作为 payload 字段）
+- `threadId = null`（由 M4 写入）
+- `eventTime = screenshots.ts`
+- `title/summary/keywords/entities/importance/confidence`：来自 VLM
+- `payloadJson`：建议写入：
+  - `appContext`
+  - `knowledge`（不含 OCR 文本）
+  - `stateSnapshot`
+  - `uiTextSnippets`
+  - `vlm`（可选：raw 片段或 version）
+
+若实现了 M0 中推荐的 `context_nodes.batch_id`：同时写入 `batchId`，便于后续按 batch 拉取 nodes。
+
+#### 3) 写 `context_screenshot_links`
+
+- upsert `(nodeId, screenshotId)`（复用唯一索引 `idx_csl_unique`）
+
+#### 4) 更新 `batches`
+
+- `status = succeeded`
+- `indexJson = JSON.stringify(vlmOutput)`（可选，便于 debug；若体积过大可只存摘要或禁用）
+- `threadLlmStatus = pending`（为 M4 链路做准备）
+
+并在成功后触发：
+
+- wake `alphaOcrScheduler`（如果存在任何 `ocrStatus=pending`）
+- wake `alphaThreadScheduler`（batch.threadLlmStatus=pending）
+
+### 可直接复用的代码（copy 指引）
+
+- **[调度器骨架]** `vector-document-scheduler.ts` 的：
+  - stale recovery
+  - newest+oldest scan
+  - claim 模式
+
+- **[VLM 调用与容错]** `vlm-processor.ts` 的：
+  - `aiRuntimeService.acquire("vlm")`
+  - Abort/timeout
+  - `NoObjectGeneratedError`/degraded prompt 重试
+  - `llmUsageService.logEvent` + `aiRequestTraceBuffer.record`
+
+- **[Batch 构建]** `batch-builder.ts`：截图聚合 + history pack（可先复用原逻辑，后续再裁剪）
+
+### 验收标准（DoD）
+
+- alpha enabled 下：连续截图能触发 batch（2 张或 60s），并由 alphaBatchVlmScheduler 推进为 succeeded
+- 每张截图在 `context_nodes` 中最多 1 条（以 `origin_key` 保证幂等）
+- `context_edges` 没有任何读写
+- `screenshots.vlm_status` 与证据字段被正确写入
+- 对需要 OCR 的截图能正确置 `ocrStatus=pending`（但 OCR 逻辑由 M3 完成）
+- VLM 请求有 llmUsage 与 trace 记录
+
+### Review Checklist
+
+- **[幂等]** 重复运行同一个 batch（或崩溃恢复后重跑）不会产生重复 node/link
+- **[字段覆盖策略]** 不会把 capture 提供的 app/window 信息覆盖成 null
+- **[文件生命周期]** 需要 OCR 的截图不会被 cleanup loop 提前删除
+- **[输出约束]** VLM prompt 与 schema 确保“不产出 ocr_text”且“单图单对象”
+
+---
+
+## M3 — OCRScheduler
+
+### 目的
+
+实现 Alpha 的混合 OCR：
+
+- 由 M2/VLM 决定“是否需要 OCR”与语言（en/zh）
+- OCR 调度器只对满足条件的截图执行本地 OCR（Tesseract.js），写入 `screenshots.ocr_text`
+- OCR 的执行必须具备：可恢复、可重试、可观测、不会与图片清理产生竞态
+
+> 与用户决策对齐：VLM **不再产出** `ocr_text`，OCR 文本只由本地 OCR 生成。
+
+### 依赖
+
+- M2 已在截图行上设置 `ocrStatus=pending`（或 null 表示不需要 OCR）
+- DB 已包含 OCR 状态机字段（M0）
+- `tesseract.js` 与 `sharp` 已在 `package.json` 依赖中存在（可复用 demo）
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/config.ts`
+  - 增加 `processingConfig.ocr`：
+    - `maxChars: 8000`
+    - `languages: "eng+chi_sim"`（初版可固定；后续可按 VLM language 选择）
+    - `supportedLanguages: ["en","zh"]`
+    - `initOnSplash: boolean`（可选：app 启动时预热 worker）
+    - `concurrency: number`（建议 1~2）
+
+- `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-ocr-scheduler.ts`（新增）
+- `electron/services/screenshot-processing/alpha/alpha-services/alpha-ocr-service.ts`（新增）
+  - 封装 worker lifecycle、图像预处理、识别与截断
+
+- （可选）`electron/services/screenshot-processing/alpha/alpha-services/alpha-ocr-worker-pool.ts`（新增）
+  - 如需并发 >1，维护多 worker；否则可单 worker
+
+### OCR Worker 实现（alphaOcrService）
+
+优先复用 `demo/ocr-demo.ts` 的关键逻辑：
+
+- **图像预处理**：`sharp(...).greyscale().normalize().sharpen().linear(...).toBuffer()`
+- **识别**：`createWorker(lang, 1, { logger })` + `worker.recognize(processedBuffer)`
+
+生产化必要补充：
+
+- **worker 复用**：避免每张图 `createWorker/terminate`（成本极高）。
+  - 推荐：按语言维护单例 worker（`eng` / `chi_sim` / `eng+chi_sim`）
+  - 或固定使用 `eng+chi_sim` 单 worker（实现最简单）
+
+- **路径配置**（Electron 打包注意点）：
+  - 明确 `tesseract.js` 的 `workerPath/corePath/langPath` 策略
+  - 初版可接受“首次运行下载 traineddata 到 userData”（需要网络）；
+    若要求离线，则需要把 `eng.traineddata/chi_sim.traineddata` 作为资源打包并在运行时指向本地路径
+  - 本 Milestone 的 DoD 要求：至少在 dev 环境可稳定运行；打包离线策略可放到 M8 加固项
+
+- **输出截断**：统一 `text.slice(0, processingConfig.ocr.maxChars)`，并 `trim()`
+
+### OCR 状态机（screenshots 表）
+
+使用 M0 增加的字段：
+
+- `ocrStatus`: `pending|running|succeeded|failed|failed_permanent`（或 null = 不需要 OCR）
+- `ocrAttempts/ocrNextRunAt/ocrErrorCode/ocrErrorMessage`
+
+推进规则：
+
+- due 条件：`ocrStatus in (pending, failed)` 且 attempts < maxAttempts 且（nextRunAt is null 或 <= now）且 `filePath is not null` 且 `storageState != deleted`
+- 成功：`ocrStatus=succeeded`, `ocrText=...`, `ocrNextRunAt=null`, 清 error
+- 失败：写 `failed` + `ocrNextRunAt`（指数退避 + jitter）；达到上限后 `failed_permanent`
+
+### OCR 调度器实现（alphaOcrScheduler）
+
+实现方式与现有 `vector-document-scheduler.ts` 对齐：
+
+1. **recoverStaleStates**：
+   - `ocrStatus=running` 且 `updatedAt < now - staleRunningThresholdMs` → 回滚 `pending`
+
+2. **scanPendingRecords**：
+   - newest+oldest 双向扫描（realtime/recovery）
+
+3. **processInLanes**：
+   - `concurrency = processingConfig.ocr.concurrency`（初版建议 1）
+
+4. **claim + processOneScreenshot**：
+   - claim：`UPDATE screenshots SET ocrStatus='running', ocrAttempts=ocrAttempts+1 ... WHERE ...`
+   - 调用 `alphaOcrService.recognize(filePath, lang)`
+   - 更新 DB：`ocrText/ocrStatus/...`
+
+### 与图片清理（cleanup loop）的竞态处理
+
+当前 cleanup loop 的删除条件为：`vlmStatus=succeeded` 且 `storageState=ephemeral` 且 `retentionExpiresAt <= now`。
+
+为避免 OCR 还未执行图片就被删除：
+
+- 在 M2 将 `ocrStatus=pending` 的截图，必须设置更长的 `retentionExpiresAt`（至少覆盖 OCR 重试窗口）
+- OCR 成功后：
+  - 可选择把 `retentionExpiresAt` 缩短为常规 TTL（例如 1h），让 cleanup 更快释放空间
+  - 或保持原 TTL，依赖周期性清理
+
+### 联动点
+
+- **输入来源**：M2 写入 `ocrStatus=pending`
+- **输出消费**：
+  - `ContextSearchService.getEvidence`（通过 `screenshots.ocrText` 提供证据回溯）
+  - UI/Deep Search（可选）显示 OCR 文本
+
+### 可直接复用的代码（copy 指引）
+
+- `demo/ocr-demo.ts`：
+  - `preprocessImage()` 与 `performOCR()` 的核心实现可以直接迁移到 `alpha-ocr-service.ts`
+- `vector-document-scheduler.ts`：
+  - stale recovery / due scan / claim / retry/backoff 结构
+
+### 验收标准（DoD）
+
+- 对 `ocrStatus=pending` 且有 filePath 的截图：OCR scheduler 能推进到 `succeeded` 并写入 `ocrText`
+- OCR 文本长度被限制在 8000 字符以内
+- OCR 失败会进入 `failed` 并按 nextRunAt 重试；达到阈值进入 `failed_permanent`
+- OCR 过程中图片不会被 cleanup loop 提前删除
+
+### Review Checklist
+
+- **[性能]** worker 是否复用；首次 OCR 延迟是否可接受（是否需要 initOnSplash）
+- **[资源]** sharp 预处理是否导致内存峰值过高（必要时降级预处理流程）
+- **[打包]** traineddata 路径策略是否明确（离线/在线）
+- **[一致性]** OCR 文本是否只来源于本地 OCR（无任何 VLM ocr_text 写入路径）
+
+---
+
+## M4 — ThreadScheduler
+
+### 目的
+
+实现 Alpha 的 Thread 机制（替代 `context_edges/event_next`）：
+
+- **[分配]** 对每个 VLM 成功的 batch 执行 Thread LLM，给 batch 内新节点分配 `threadId`
+- **[维护]** 写入/更新 `threads` 表（title/summary/current_phase/current_focus/milestones 等）
+- **[统计]** 跨窗口累计 `threads.durationMs`（**排除 gap > 10min**），并维护 `lastActiveAt/nodeCount/apps/keyEntities`
+- **[生命周期]** `active → inactive`（超过 `inactiveThresholdMs` 未活跃）
+
+> 约束：本 Milestone 完成后，Thread 连续性只能通过 `context_nodes.threadId + eventTime` 表达，任何 `context_edges` 读写都应被移除/禁用。
+
+### 依赖
+
+- M0：`threads` 表 + `batches.threadLlmStatus/threadLlmAttempts/threadLlmNextRunAt/...` 字段已就位
+- M2：每张截图已落为 1 条 `context_nodes`（`origin_key = screenshot:<id>`），且 batch 的 VLM 子任务可推进到 `succeeded`
+- （推荐）`context_nodes.batch_id` 已存在，便于 ThreadScheduler 直接按 batch 拉取 nodes
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/config.ts`
+  - 增加 `processingConfig.thread`（inactive/gap/longEvent/maxActiveThreads/recentNodesPerThread 等）
+- `electron/services/screenshot-processing/prompt-templates.ts`
+  - 增加 Thread LLM 的 system/user prompts（对齐 `docs/alpha-prompt-templates.md`）
+- `electron/services/screenshot-processing/schemas.ts`
+  - 增加 Thread LLM output zod schema（`assignments/thread_updates/new_threads`）
+- `electron/services/screenshot-processing/alpha/alpha-schedulers/alpha-thread-scheduler.ts`（新增）
+- `electron/services/screenshot-processing/alpha/alpha-services/alpha-thread-llm-service.ts`（新增）
+- `electron/services/screenshot-processing/alpha/alpha-services/alpha-thread-repository.ts`（新增，可选：把 threads 的 upsert/统计/里程碑 append 封装起来）
+
+### 配置项（`processingConfig.thread`）
+
+在 `electron/services/screenshot-processing/config.ts` 增加（值对齐 alpha plan，可先 hardcode，后续再暴露到 UI 配置）：
+
+- **[inactiveThresholdMs]** `4 * 60 * 60 * 1000`（4 小时无活动 → `inactive`）
+- **[gapThresholdMs]** `10 * 60 * 1000`（超过该间隔不计入 `durationMs`）
+- **[longEventThresholdMs]** `25 * 60 * 1000`（后续给 ActivityTimeline 做 long event 判定用）
+- **[maxActiveThreads]** `3`（Thread LLM prompt 中最多带 3 个活跃 thread）
+- **[fallbackRecentThreads]** `1`（无活跃 thread 时，带最近 1 个）
+- **[recentNodesPerThread]** `3`（每个 thread 仅带最近 3 个节点）
+
+### `batches.threadLlmStatus` 状态机（Thread LLM 子任务）
+
+ThreadScheduler 只推进 `batches.threadLlm*` 字段，不触碰 VLM 的 `batches.status`：
+
+- `pending` → `running` → `succeeded`
+- 失败：`failed`（指数退避后重试）→ 达到 `maxAttempts` → `failed_permanent`
+
+触发点（与 M2 联动）：
+
+- AlphaBatchVlmScheduler 在 batch VLM 成功、nodes 落库后：
+  - `UPDATE batches SET threadLlmStatus='pending', threadLlmNextRunAt=NULL ... WHERE id=?`
+  - 调用 `alphaThreadScheduler.wake("batch:vlm:succeeded")`
+
+### 调度器实现（`AlphaThreadScheduler`）
+
+调度器模板与 error/backoff/stale recovery 结构直接复制：
+
+- `electron/services/screenshot-processing/vector-document-scheduler.ts`
+- `electron/services/screenshot-processing/activity-timeline-scheduler.ts`
+
+建议实现要点：
+
+#### 1) due 任务扫描条件
+
+ThreadScheduler 处理条件（以 `batches` 为中心）：
+
+- `batches.status == 'succeeded'`（VLM 已成功落库）
+- `threadLlmStatus in ('pending','failed')`
+- `threadLlmAttempts < maxAttempts`
+- `threadLlmNextRunAt is null OR threadLlmNextRunAt <= now`
+
+#### 2) claim（避免并发重复处理）
+
+参考 `vector-document-scheduler.ts` 的“claim then process”模式：
+
+- `UPDATE batches SET threadLlmStatus='running', threadLlmAttempts=threadLlmAttempts+1, updatedAt=now WHERE id=? AND threadLlmStatus IN ('pending','failed')`
+- 仅当 `changes == 1` 才继续执行（否则跳过）
+
+#### 3) stale recovery
+
+回收卡死的 `running`（逻辑与 `vector_documents` 一致）：
+
+- `threadLlmStatus == 'running'` 且 `updatedAt < now - staleRunningThresholdMs`
+  - 回滚到 `pending`（或 `failed`），并清掉 `threadLlmNextRunAt` 以尽快重跑
+
+#### 4) 并发与 lane
+
+首版建议保守：
+
+- `concurrency = 1`
+- `laneWeights = { realtime: 3, recovery: 1 }`
+
+原因：Thread LLM prompt 需要聚合 threads + nodes，且一次处理一个 batch 更易保证幂等与可解释日志。
+
+### Thread LLM（Prompt / Schema / Usage Trace）
+
+#### 1) IO schema（对齐 `docs/alpha-prompt-templates.md`）
+
+输入（user prompt args）必须包含：
+
+- `activeThreads: ThreadSummary[]`
+- `threadRecentNodes: Map<string, ContextNode[]>`
+- `batchNodes: ContextNode[]`
+- 时间上下文：`localTime/timeZone/nowTs/todayStart/todayEnd/yesterdayStart/yesterdayEnd/weekAgo`
+
+输出（Thread LLM output）必须包含：
+
+- `assignments: Array<{ node_index; thread_id; reason }>`
+- `thread_updates: Array<{ thread_id; title?; summary?; current_phase?; current_focus?; new_milestone? }>`
+- `new_threads: Array<{ title; summary; current_phase?; node_indices; milestones }>`
+
+实现上建议复用当前代码库已有的“schema + processedSchema”模式：
+
+- `deep-search-service.ts`（`generateObject` + `...ProcessedSchema.parse` + `llmUsageService.logEvent` + `aiRequestTraceBuffer.record`）
+- `activity-monitor-service.ts`（`parseJsonSafe` 的容错模式可复制）
+
+#### 2) Prompt 模板
+
+在 `prompt-templates.ts` 增加：
+
+- `getThreadLlmSystemPrompt()`
+- `getThreadLlmUserPrompt(args: ThreadLLMUserPromptArgs)`
+
+Hard rules（在 system prompt 中明确）：
+
+- 必须输出 JSON（不能夹带 markdown）
+- `assignments.node_index` 必须覆盖 batchNodes 中所有节点（不允许遗漏）
+- 只允许返回 `thread_id` 为现有 UUID 或 "NEW"
+
+#### 3) 输入数据准备（由 `AlphaThreadLLMService` 完成）
+
+1) **拉取 batchNodes**
+
+- `SELECT * FROM context_nodes WHERE kind='event' AND batch_id=? ORDER BY event_time ASC`
+- 若暂未落 `batch_id`：fallback 方案（仅作为过渡）：
+  - `batches.screenshotIds -> context_screenshot_links -> context_nodes`（按 `event_time` 排序后去重）
+
+2) **选择 activeThreads**
+
+- `SELECT * FROM threads WHERE status='active' ORDER BY last_active_at DESC LIMIT maxActiveThreads`
+- 如果结果为空：取 `fallbackRecentThreads` 个最近线程（`status != 'closed'`）
+
+3) **为每个 thread 拉取 recent nodes**
+
+- `SELECT * FROM context_nodes WHERE kind='event' AND thread_id=? ORDER BY event_time DESC LIMIT recentNodesPerThread`
+
+ 4) **时间上下文**
+
+ 时间字段计算方式直接复制 `activity-monitor-service.ts` 的 window 计算逻辑：
+
+ - `nowTs = Date.now()`
+ - `todayStart/todayEnd/yesterdayStart/yesterdayEnd/weekAgo` 用本地时区算边界（避免 UTC 造成错判）
+
+ #### 4) LLM usage & trace
+
+ Thread LLM 调用必须进入现有监控体系：
+
+ - `llmUsageService.logEvent({ capability: 'text', operation: 'alpha_thread_assign', ... })`
+ - `aiRequestTraceBuffer.record({ capability: 'text', operation: 'alpha_thread_assign', ... })`
+
+ （可选）把 threadLlm 的 `batchDbId/batchId` 作为 `operationMetadata` 或日志字段写入，便于 dashboard 关联。
+
+ ### 落库与幂等（`AlphaThreadRepository`）
+
+ Thread LLM 输出应用到 DB 时要做到“可重试 + 不产生重复 threads + 不反复改写已分配节点”。建议约束如下：
+
+ - **[只补不改]** 对 batchNodes：仅对 `threadId IS NULL` 的节点写入 `threadId`；已存在 `threadId` 时保持不变
+ - **[事务]** “创建新 thread + 写入节点 threadId + 更新 thread 统计 + 更新 batch.threadLlmStatus”必须在一个事务内完成
+ - **[强校验]** LLM 输出缺失/越界/重复/不一致时直接 fail（进入 `failed` 并 retry），禁止 partial apply
+
+ 推荐的事务步骤（伪流程）：
+
+ 1) `BEGIN`
+ 2) **校验输出**：
+    - `assignments.length == batchNodes.length`
+    - `node_index` 覆盖 `[0..batchNodes.length-1]` 且无重复
+    - `new_threads[].node_indices` 必须是有效索引，且不允许同一 node 同时属于多个 new thread
+ 3) **创建新 threads**：
+    - 为每个 `new_threads[i]` 生成 `threadId = uuid()`
+    - 插入 `threads`：`title/summary/currentPhase/currentFocus/status/startTime/lastActiveAt` 等
+    - `milestonesJson`：把 `new_threads[i].milestones` 以 JSON array 字符串写入（为空则 `[]`）
+ 4) **构造 node_index → finalThreadId 映射**：
+    - `assignment.thread_id != "NEW"`：直接使用现有 threadId
+    - `assignment.thread_id == "NEW"`：必须能通过 `new_threads[].node_indices` 唯一定位到某个新 threadId
+ 5) **写入 context_nodes.thread_id（只补不改）**：
+    - `UPDATE context_nodes SET thread_id=?, updated_at=now WHERE id=? AND thread_id IS NULL`
+ 6) **应用 thread_updates**：
+    - `title/summary/currentPhase/currentFocus`：有值则覆盖
+    - `new_milestone.description`：append 到 `milestonesJson` 数组尾部
+ 7) **更新 threads 统计**（见下一节）
+ 8) `UPDATE batches SET threadLlmStatus='succeeded', threadLlmError*=NULL, updatedAt=now WHERE id=?`
+ 9) `COMMIT`
+
+ ### Thread 统计计算（durationMs / nodeCount / lastActiveAt）
+
+ 该 Milestone 的关键产物是 `threads.durationMs`：它必须按 gap 规则计算，供后续 M6 长事件判定与跨窗口聚合使用。
+
+ #### 1) gap 排除规则（必须写到单测里）
+
+ 对同一 thread 内按 `eventTime` 升序的事件序列：
+
+ - 若 `delta = t[i] - t[i-1]` 且 `delta <= gapThresholdMs`：累计 `durationMs += delta`
+ - 若 `delta > gapThresholdMs`：该段不计入 duration（视为新的 session）
+
+ 同时：
+
+ - `startTime = min(eventTime)`
+ - `lastActiveAt = max(eventTime)`
+ - `nodeCount = count(events)`
+
+ #### 2) 首版推荐实现：受影响 threads 做全量重算
+
+ Alpha 阶段优先正确性：每次 thread 写入新节点后，对该 thread 全量重算一次即可：
+
+ - `SELECT event_time FROM context_nodes WHERE kind='event' AND thread_id=? ORDER BY event_time ASC`
+ - 计算并写回 `startTime/lastActiveAt/durationMs/nodeCount/updatedAt`
+
+ 受影响 threads 集合：
+
+ - 所有 `assignments` 涉及的 threadId（包含 newly created threads）
+ - 所有 `thread_updates.thread_id`
+
+ #### 3) appsJson / keyEntitiesJson（首版可弱化）
+
+ 首版只要求“可用”，允许后续 milestone 再优化：
+
+ - `appsJson`：从 thread nodes 的 `payloadJson.appContext.appHint` 去重聚合（必要时限制最近 N=50 条节点）
+ - `keyEntitiesJson`：从 nodes 的 `entities` 聚合 Top-K（按出现次数或 importance 权重）
+
+ ### 生命周期：active → inactive
+
+ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
+
+ - `UPDATE threads SET status='inactive', updated_at=now WHERE status='active' AND last_active_at < now - inactiveThresholdMs`
+
+ （可选）若未来需要 `inactive → active`：当 thread 被再次分配新节点时，把 status 拉回 `active`。
+
+ ### 联动点
+
+ - **输入来源**：M2 在 batch VLM 成功并落库后把 `batches.threadLlmStatus` 置为 `pending`
+ - **输出消费**：
+   - M6 ActivityTimeline：用 `context_nodes.threadId` 做跨窗口聚合；用 `threads.durationMs` 做 long event 判定（排除 gap）
+   - M5 Vector/Search：`vector_documents.metaPayload.thread_id` 需要包含 threadId（threadId 从 null → 有值时要触发 doc dirty）
+
+ 推荐在 thread assignment 成功后：
+
+ - 对 batchNodes 逐个调用 `VectorDocumentService.upsertForContextNode(nodeId)`，或 emit `vector-documents:dirty`
+
+ ### 可直接复用的代码（copy 指引）
+
+ - **[scheduler 模板]** `vector-document-scheduler.ts`（claim / stale recovery / backoff / lane）
+ - **[usage/trace]** `deep-search-service.ts`（`llmUsageService.logEvent` + `aiRequestTraceBuffer.record`）
+ - **[时间计算]** `activity-monitor-service.ts`（本地时间窗口边界计算）
+
+ ### 验收标准（DoD）
+
+ - ThreadScheduler 能把 due batch 从 `threadLlmStatus=pending/failed` 推进到 `succeeded`
+ - batch 内所有新 `context_nodes` 都获得 `threadId`
+ - 创建新 thread 时：`threads` 表有新行，且写入 `title/summary/currentPhase/currentFocus/milestonesJson`
+ - `threads.durationMs` 按 gapThresholdMs 规则计算（构造 gap>10min 的数据验证）
+ - `threads` 能按 `inactiveThresholdMs` 自动从 active → inactive
+ - `llm_usage_events` 中可看到 `operation=alpha_thread_assign` 的成功/失败事件
+
+ ### Review Checklist
+
+ - **[幂等]** 同一 batch 重跑是否会创建重复 threads（应避免）
+ - **[一致性]** `NEW` 映射是否严格依赖 `new_threads[].node_indices`（避免歧义）
+ - **[统计]** durationMs 的 gap 排除规则是否与 config 一致（10min）
+ - **[联动]** threadId 写入后是否触发 vector docs dirty（避免 search 过滤不生效）
+
+---
+
+## M5 — Vector/Search
+
+### 目的
+
+让 Vector/Search 在 **不依赖 `context_edges`** 的前提下可用，并把“上下文展开”从 graph traversal 改为基于 **`threadId + eventTime`** 的邻域扩展：
+
+- **[无 edges]** 不再读写 `context_edges`，也不再依赖 `event_next`
+- **[搜索可用]** keyword/entity SQL fallback + vector semantic search + screenshot evidence 回溯保持可用
+- **[替代 traverse]** `CONTEXT_TRAVERSE` 语义改为 *thread/time neighborhood*（兼容返回结构，`edges=[]`）
+- **[thread 过滤]** `SearchFilters.threadId` 在 keyword 与 semantic 两条路径都生效
+
+### 依赖
+
+- M0：`context_edges` 已删除/停用（schema + migration + 代码读写路径）
+- M2：`context_nodes`（单图单 node）与 `context_screenshot_links` 已可回溯证据
+- M4：`context_nodes.threadId` 已可用（连续性来源成立）
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/context-search-service.ts`
+  - 删除对 `contextGraphService.traverse()` 的依赖
+  - 把 search 的 temporal expansion 与 IPC traverse 都改为 thread/time 邻域扩展
+- `electron/services/screenshot-processing/context-graph-service.ts`
+  - M5 目标是“Search/Vector 无 edges”，因此这里的 `traverse()` 在 alpha 分支应被移除或不再被调用
+- `electron/ipc/context-graph-handlers.ts`
+  - `handleTraverse()` 保留 channel，但返回的 `edges` 恒为空数组（或改成 alpha 专用返回类型）
+- `electron/services/screenshot-processing/vector-document-service.ts`
+  - 调整 `metaPayload` 更新策略：threadId 变化时仍能刷新（见下文）
+
+（建议同 Milestone 一起修掉的残留引用）
+
+- `electron/services/screenshot-processing/batch-builder.ts`
+  - `queryOpenSegments()` 当前通过 `event_next` edge 判断 open segment（会残留 `context_edges` 依赖），需要改为 thread/time 判断
+
+### 设计：thread/time 邻域扩展（替代 edges）
+
+#### 1) 邻域扩展规则
+
+对 pivot node（必须是 `kind='event'`）：
+
+- 若 pivot 有 `threadId + eventTime`：
+  - **[thread 邻近]** 取同 thread 前后 N 条事件（按 `eventTime` 排序）
+- 若 pivot 缺失 `threadId`（过渡期）或 `eventTime` 缺失：
+  - **[全局时间窗 fallback]** 取 `eventTime±temporalWindowMs` 的事件
+
+建议参数（首版可 hardcode，后续再入 `processingConfig.search`）：
+
+- `threadNeighborBefore = 3`
+- `threadNeighborAfter = 3`
+- `temporalWindowMs = 2 * 60 * 1000`
+
+#### 2) `ContextSearchService.search()`：替换 temporal expansion
+
+现状：对 top pivots 做全局 `eventTime±120s` 扩展。
+
+改为：
+
+1) pivots：取最终 `nodes` 的前 3-5 条（或 `combinedNodeMap` 前 3-5 条）
+2) 对每个 pivot：
+   - 若 pivot 有 `threadId`：用 **thread 邻近** 扩展
+     - SQL 方案 A（窗口）：
+       - `WHERE thread_id=? AND event_time BETWEEN a AND b ORDER BY event_time LIMIT ...`
+     - SQL 方案 B（推荐，前后 N）：
+       - `<= pivotTs`：`ORDER BY event_time DESC LIMIT threadNeighborBefore`
+       - `>= pivotTs`：`ORDER BY event_time ASC LIMIT threadNeighborAfter`
+   - 若 pivot 无 `threadId`：fallback 到全局时间窗
+3) 扩展 nodes 合并回集合，并继续走 `applyFilters()`
+
+关键约束：
+
+- **[filters.threadId]** 用户指定 threadId 时，扩展必须强制限定在该 thread 内
+- **[去重]** 仍用 nodeId map 去重
+
+#### 3) `CONTEXT_TRAVERSE`（IPC）语义改造
+
+现状链路：`handleTraverse()` → `contextSearchService.traverse()` → `contextGraphService.traverse()`（依赖 edges）。
+
+兼容优先的 Alpha 方案：
+
+- IPC 入参仍为 `{ nodeId, edgeTypes?, depth }`（减少 renderer 改动面）
+- 后端忽略 `edgeTypes/depth`，改为：
+  - 查 pivot node（`SELECT * FROM context_nodes WHERE id=?`）
+  - 做 thread/time 邻域扩展
+  - 回填 `screenshotIds`（复用现有 `getScreenshotIdsByNodeIds()`）
+- 返回 `GraphTraversalResult`：
+  - `nodes`: ExpandedContextNode[]
+  - `edges`: `[]`（恒空）
+  - `screenshotIds`: number[]
+
+后续 milestone（M7/M8）再清理：把 API rename 为 neighborhood，并移除 `edgeTypes/depth`。
+
+### Vector 文档与 threadId 变化的刷新策略
+
+ThreadScheduler（M4）会在 batch 后写入 `context_nodes.threadId`。为了让 Search/Debug 能及时看到 threadId：
+
+- **[推荐]** M4 在事务提交后，对 batchNodes 调用 `vectorDocumentService.upsertForContextNode(nodeId)`（或 emit `vector-documents:dirty`）
+
+同时注意现状：`VectorDocumentService.upsertForContextNode()` 若 `textHash` 不变会直接 return，导致：
+
+- `vector_documents.metaPayload.threadId` 可能长期停留在旧值（或 null）
+
+因此建议在 `textHash` 命中时也更新 meta（不重置 embedding/index 状态机）：
+
+- `UPDATE vector_documents SET metaPayload=?, updatedAt=? WHERE id=?`
+
+### 可直接复用的代码（copy 指引）
+
+- **[search 主流程]** `ContextSearchService.search()` 的 keyword + semantic + ranking + evidence 回填结构
+- **[evidence 回填]** `getScreenshotIdsByNodeIds()` + `getEvidenceForScreenshotIds()`
+- **[vector 入队幂等]** `vector-document-service.ts` 的 `vectorId=node:<id>` + `textHash` 模式
+
+### 验收标准（DoD）
+
+- `electron/services/screenshot-processing` 内不再引用 `contextEdges/context_edges`
+- Search：
+  - keyword/entity fallback 正常
+  - vector semantic search 正常（HNSW → vector_documents → context_nodes）
+  - thread 邻域扩展能补全同 thread 前后事件，并 respects `filters.threadId`
+- IPC traverse：`CONTEXT_TRAVERSE` 可用，且 `edges=[]` 时 renderer 可降级展示
+- threadId 更新后，vector metaPayload 能及时刷新（或至少触发 dirty 让后续链路可观测）
+
+### Review Checklist
+
+- **[彻底移除]** 是否仍存在任何 `context_edges` 读写路径（含 `batch-builder.ts` / entity 相关逻辑）
+- **[过滤正确性]** thread filter 存在时，邻域扩展是否引入其它 thread 噪声
+- **[性能]** thread 邻域 SQL 是否需要索引（至少评估 `context_nodes(thread_id,event_time)`）
+- **[兼容性]** renderer 若仍依赖 edges，`edges=[]` 是否能正常展示
+
+---
+
+## M6 — ActivityTimeline
+
+
+### 目的
+
+把 ActivityTimeline 做成 Alpha 可用形态：
+
+- **[20min 窗口]** 周期性产出 `activity_summaries`（windowStart/windowEnd = 20min）
+- **[窗口事件]** 从窗口内 `context_nodes` 生成 1-3 个“窗口内事件候选”（用于 UI 展示，不承担跨窗口连续性）
+- **[长事件]** **Thread 维度**判定 long event：当 `threads.durationMs >= 25min`（排除 gap>10min）时，在 ActivityTimeline 中标记为长事件，并触发 details
+- **[解耦]** Activity Summary **不依赖 Thread 边界**：窗口内 nodes 可属于多个 thread；thread 仅用于长事件识别与连续性上下文
+- **[可观测]** 复用现有 `llmUsageService` + `aiRequestTraceBuffer` + `activityAlertBuffer`
+
+### 依赖
+
+- M2：窗口内 screenshots 与 `context_nodes` 可回溯（至少 `context_screenshot_links` 已写）
+- M4：大部分 event nodes 已有 `threadId`（用于 long thread 标记与 details 证据聚合）
+- M5：Search 无 edges（ActivityTimeline 也不得依赖 edges）
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/activity-timeline-scheduler.ts`
+  - 保留为独立 scheduler（与 pipeline 解耦），但改造“窗口触发条件/等待 VLM 完成”的逻辑以适配 alpha
+- `electron/services/screenshot-processing/activity-monitor-service.ts`
+  - summary/event/details 的 LLM 输入数据结构改为对齐 `docs/alpha-prompt-templates.md`
+  - long event 判定规则从“纯 end-start”改为使用 thread 的 gap 排除时长（见下文）
+- `electron/services/screenshot-processing/prompt-templates.ts`
+  - 对齐新增/调整：`getActivitySummarySystemPrompt/getActivitySummaryUserPrompt`
+  - 对齐新增/调整：`getActivityEventDetailsSystemPrompt/getActivityEventDetailsUserPrompt`
+- `electron/services/screenshot-processing/schemas.ts`
+  - 确保 `ActivityWindowSummaryLLMProcessedSchema` / `ActivityEventDetailsLLMProcessedSchema` 与 alpha prompt schema 一致
+
+### 设计要点
+
+#### 1) Window seeding（20min）
+
+复用 `ActivityTimelineScheduler.seedPendingWindows()` 的整体机制，但明确 alpha 的窗口生成策略：
+
+- **[窗口边界]** `generationIntervalMs = 20 * 60 * 1000`
+- **[seed 范围]**
+  - `from = floorToWindow(appStartedAt - backfillMs)`（例如回填 2h）
+  - `to = floorToWindow(now - safetyDelayMs)`（例如延迟 2min，避免截断当前窗口）
+- **[幂等]** `activity_summaries.idempotencyKey = win_<windowStart>`（已是 unique）
+
+建议配置（首版可复用/微调现有 `processingConfig.activitySummary`）：
+
+- `generationIntervalMs = 20min`
+- `seedBackfillMs = 2h`
+- `seedSafetyDelayMs = 2min`
+
+#### 2) 生成 summary 的输入数据：以“窗口内截图”为准
+
+沿用当前实现的关键原则（强烈建议保留）：
+
+- **先按 window 选 screenshots**（`screenshots.ts in [windowStart, windowEnd)`）
+- 再通过 `context_screenshot_links` join 回 `context_nodes`
+
+原因：即使未来发生 node merge / link 扩散，summary 仍应严格以“窗口内发生的截图证据”为准，避免跨窗口污染。
+
+对齐 `alpha-prompt-templates.md`（Activity Summary 输入 schema）：
+
+- `window_start/window_end`
+- `context_nodes: ContextNode[]`
+  - 映射建议：
+    - `node_id` = node.id
+    - `title/summary/event_time/thread_id/importance` = 来自 `context_nodes`
+    - `app_hint`：来自窗口内 screenshots 去重后的主 app（或取 node 对应 screenshots 的 top app）
+    - `entities/keywords`：从 JSON 字段 parse 并做小上限截断
+    - `knowledge_json/state_snapshot_json`：从 `payloadJson` 内提取对应字段
+- `stats: { top_apps; top_entities; thread_count; node_count }`
+- `nowTs/todayStart/todayEnd/yesterdayStart/yesterdayEnd/weekAgo`：本地时区计算（复用现有 time window helpers）
+
+输入裁剪（避免 prompt 过大）：
+
+- `context_nodes` 限制 maxN（例如 50）；按 `importance DESC, event_time ASC` 取样
+- 每个节点的 `summary/title` 截断（例如 300/120 chars）
+
+#### 3) Summary 输出落库
+
+LLM 输出对齐 alpha schema：
+
+- `title`（≤100 chars）
+- `summary`（markdown，固定 4 sections）
+- `highlights`（max 5）
+- `stats`（必须与输入一致，不可引入新 app/entity）
+- `events`（1-3 candidates）
+
+落库：
+
+- `activity_summaries.title/summary/highlights/stats/status`
+
+并触发：
+
+- `emitActivityTimelineChanged(windowStart, windowEnd)`（现有逻辑）
+
+#### 4) 窗口事件（Window Events，不跨窗口）
+
+对齐你的动机第 3 点：**Activity Summary 不依赖 Thread 边界**。因此这里的 events 只用于“窗口内可视化”，不承担跨窗口连续性（跨窗口连续性由 Thread 提供）。
+
+实现建议：
+
+- 仍使用 Activity Summary LLM 输出的 `events: ActivityEventCandidate[]` 作为窗口内事件候选（1-3 个）
+- 事件的 `start/end` 仅在窗口内（offset 0-20min），不尝试与其它窗口 merge
+- 可把这些窗口事件写入 `activity_events` 表，但需要明确它们是 window-scoped：
+  - `eventKey = win_<windowStart>_evt_<idx>_<hash>`（稳定幂等）
+  - `threadId` 可写可不写：
+    - 如果该事件的 `node_ids` 的 primary node 有 threadId，则写入，便于 UI 做“属于哪个 thread”的展示
+  - `isLong = 0`（窗口事件不触发 details）
+
+> 说明：如果不希望 `activity_events` 混入窗口事件，也可以只把 events 存进 `activity_summaries`（新增 json 字段）。但这会涉及 schema 变更；alpha 首版可先沿用现有表。
+
+#### 5) 长事件（Long Event = Long Thread）
+
+对齐你的动机第 2 点：**长事件判定来自 Thread.duration_ms（排除 gap>10min）**。
+
+因此长事件不应该由“窗口事件跨窗口 merge”推导，而应该从 `threads` 派生：
+
+- 当 `threads.durationMs >= processingConfig.thread.longEventThresholdMs`（25min）时：
+  - upsert 一条 long event 记录（建议仍落在 `activity_events`，用于 timeline marker 与 details 入口）
+
+建议 eventKey 与字段：
+
+- `eventKey = thr_<threadId>`（1 thread 对应 1 条 long event 记录；thread inactive 后仍保留）
+- `threadId = <threadId>`
+- `startTs = threads.startTime`
+- `endTs = threads.lastActiveAt`
+- `durationMs = threads.durationMs`（注意：这里的语义是 gap 排除后的累计时长，优先满足你的动机）
+- `isLong = 1`
+- `title/kind/confidence/importance`：
+  - `title` 可直接用 `threads.title`
+  - `kind` 初版可默认 `work`（后续再从窗口事件/统计中学习更精确的 kind）
+  - `confidence/importance` 可设为常量（例如 6/6）或从 thread 的最近 nodes 聚合
+- `nodeIds`：可写入该 thread 的 nodes（建议 cap，例如最近 200 条；用于 details 证据）
+
+触发时机：
+
+- 在 `ActivityTimelineScheduler.runCycle()` 中：每轮在处理完 pending summaries 后执行一次 `syncLongEventsFromThreads()`
+  - 扫描 `threads.status='active'` 且 `durationMs >= threshold`
+  - upsert long event rows
+  - 仅负责 upsert `isLong=true` 的 long event 记录；`details` 由用户点击触发生成（沿用当前 on-demand 实现）
+
+#### 6) details 按需触发（长事件）
+
+现状：
+
+- `getEventDetails(eventId)` 对 `isLong && details==null` 会直接调用 `generateEventDetails(eventId)`（即时生成）
+- details 仅在用户点击/请求时生成（不在调度中自动生成）
+
+Alpha 建议：
+
+- **[只对 long event]** 只有 `isLong==true` 才允许进入 details LLM（即只对 `eventKey=thr_<threadId>` 这类长事件）
+- **[输入证据]** details 的 `context_nodes` 应以 thread 为中心聚合：
+  - `SELECT * FROM context_nodes WHERE kind='event' AND thread_id=? ORDER BY event_time ASC`
+  - 结合 `context_screenshot_links -> screenshots` 补齐 `appHint/ocrText/sourceUrl` 等证据字段
+  - 对 nodes 做 cap（例如最近 60-120 条，或按 importance 采样），避免 prompt 过大
+- **[Prompt 对齐]** 对齐 `alpha-prompt-templates.md` 的 Activity Event Details 输入/输出 schema
+
+details 输入裁剪：
+
+- nodeIds 取 Top-K（例如 60）：按 `eventTime` 或 importance 采样
+- 对每个 node 只携带必要字段（title/summary/knowledge/stateSnapshot/entities/appHint/eventTime）
+
+details 输出落库：
+
+- `activity_events.details`（markdown）
+- `detailsStatus/detailsAttempts` 仅用于记录 on-demand 生成结果（succeeded/failed/failed_permanent）；不由 scheduler 驱动
+
+#### 7) 阻塞条件：等待 VLM/Thread 基本就绪
+
+现有实现对窗口内“VLM 仍在跑”会把 summary 置为 `Processing` 并自适应 nextRunAt。
+
+Alpha 保留该机制，但判定条件需更贴合 alpha：
+
+- 只要窗口内 `screenshots.vlmStatus in (pending,running)` 或 `failed but retryable`，就保持 Processing
+- **不等待 thread assignment**：threadId 缺失不阻塞窗口 summary（符合“summary 不依赖 thread 边界”）；长事件会在 threadId 补齐后由 `syncLongEventsFromThreads()` 追补
+
+### 可直接复用的代码（copy 指引）
+
+- **[scheduler 模板]** `activity-timeline-scheduler.ts`（seed + stale recovery + due 扫描 + nextRunAt）
+- **[LLM 调用结构]** `activity-monitor-service.ts` 已完整具备：
+  - `generateObject` + zod processed schema
+  - `llmUsageService.logEvent` + `aiRequestTraceBuffer.record`
+  - semaphore + timeout + circuit breaker
+- **[窗口事件落库]** 当前 `generateWindowSummary()` 内的 `upsertEvent()` 写入路径可继续复用（但事件不跨窗口 merge）
+- **[长事件派生]** 新增 `syncLongEventsFromThreads()`：从 `threads.durationMs/startTime/lastActiveAt` upsert `eventKey=thr_<threadId>` 的 long event
+
+### 验收标准（DoD）
+
+- Scheduler 能周期性 seed 窗口并推进 `activity_summaries` 到 `succeeded`
+- summary 的 prompt/schema 与 `alpha-prompt-templates.md` 对齐（字段名与硬规则一致）
+- 窗口事件能写入 `activity_events`（window-scoped，不跨窗口 merge；`eventKey=win_<windowStart>_...` 幂等）
+- long event 能从 `threads` 派生并 upsert 到 `activity_events`（`eventKey=thr_<threadId>`，`durationMs=threads.durationMs`）
+- long event 判定与 alpha 规则一致（25min，gap 排除；以 `threads.durationMs` 为准；并写入 `activity_events.durationMs`）
+- long event 的 details：
+  - UI 请求时可即时生成
+  - 不在 scheduler 中自动生成
+- 生成过程有 llmUsage + trace + activityAlert（timeout/overdue 等）记录
+
+### Review Checklist
+
+- **[边界一致性]** window 内 evidence 是否严格来自 window 内 screenshots（避免跨窗口污染）
+- **[长事件规则]** isLong / durationMs 是否严格以 gap 排除后的 `threads.durationMs` 为准
+- **[幂等]** 同一 window 重跑不会生成重复窗口事件（`eventKey=win_<windowStart>_...` 稳定）
+- **[幂等]** 同一 thread 重跑不会生成重复 long event（`eventKey=thr_<threadId>` 稳定）
+- **[裁剪]** prompt size 是否可控（nodes cap / 字段截断是否合理）
+- **[等待策略]** Processing 分支是否会把窗口卡死（attempts 回滚/nextRunAt 自适应是否合理）
+
+---
+
+## M7 — Monitoring/Queue Inspector
+
+### 目的
+
+把监控面板（Performance Monitor / AI Monitor）与 `QueueInspector` 适配到 Alpha 的新状态机与队列结构，做到“出了问题能一眼看出卡在哪一段”。
+
+- **[队列可见性]** 展示 Alpha pipeline 的关键 backlog：
+  - `screenshots.vlmStatus`（VLM 队列）
+  - `screenshots.ocrStatus`（OCR 队列，M0 增加）
+  - `batches.threadLlmStatus`（Thread LLM 队列，M4 增加）
+  - `vector_documents.embeddingStatus/indexStatus`（已存在）
+  - `activity_summaries.status`（已存在）
+  - （可选）`activity_events.detailsStatus`（用户点击生成 long event details 后的状态）
+- **[健康指标准确]** `Queue Backlog` 的 pending 统计覆盖 Alpha 新队列
+- **[兼容演进]** 保持本地只读、低开销（每 5s groupBy），但字段可持续扩展
+
+### 依赖
+
+- M0：`screenshots.ocrStatus` / OCR retry 字段已落 schema（否则无法统计 OCR queue）
+- M4：`batches.threadLlmStatus` 已落 schema
+- M6：long event 以 `threads.durationMs` 派生 `activity_events.isLong=true`（可选统计 detailsStatus）
+
+### 需要改动/新增的文件
+
+- `electron/services/monitoring/monitoring-types.ts`
+  - 扩展 `QueueStatus` 类型，加入 Alpha 新队列字段
+- `electron/services/monitoring/queue-inspector.ts`
+  - 新增对 `screenshots`/`batches.threadLlmStatus`/（可选）`activity_events.detailsStatus` 的统计
+  - 更新 `getTotalPendingCount()` 的累计逻辑
+- `electron/services/monitoring/static/dashboard.html`
+  - Queue Status 表格新增行 + i18n 文案 + JS 显示绑定
+
+（通常无需改动）
+
+- `electron/services/monitoring/monitoring-server.ts`
+  - `GET /api/queue` 与 SSE 已通用；只要 `QueueStatus` 扩展即可自动生效
+
+### 设计与实现细节
+
+#### 1) 扩展 `QueueStatus`（类型层）
+
+在 `monitoring-types.ts` 把 `QueueStatus` 扩展为（示意）：
+
+- `screenshotsVlm: { pending; running; failed }`
+- `screenshotsOcr: { pending; running; failed }`
+- `batchThreadLlm: { pending; running; failed }`
+- （可选）`activityEventDetails: { pending; running; failed }`
+
+失败口径沿用现有约定：`failed + failed_permanent`。
+
+#### 2) `QueueInspector.getQueueStatus()`：新增统计项
+
+复用 `countByStatus(db, table, statusColumn)`（已有 try/catch，不会让监控直接崩）。
+
+- **Screenshots VLM**：`countByStatus(db, screenshots, "vlmStatus")`
+- **Screenshots OCR**：`countByStatus(db, screenshots, "ocrStatus")`
+- **Batch Thread LLM**：`countByStatus(db, batches, "threadLlmStatus")`
+- （可选）**Activity Event Details**：`countByStatus(db, activityEvents, "detailsStatus")`
+  - 注意：这不是后台队列，只是“用户触发 details 后是否卡住/失败”的诊断指标
+
+然后映射成 `pending/running/failed`。
+
+#### 3) `getTotalPendingCount()`：纳入 Alpha 新队列
+
+为了让 Health 卡片 `Queue Backlog` 能反映真实积压，把以下项加入总和：
+
+- `screenshotsVlm.pending + screenshotsVlm.running`
+- `screenshotsOcr.pending + screenshotsOcr.running`
+- `batchThreadLlm.pending + batchThreadLlm.running`
+- （可选）`activityEventDetails.pending + activityEventDetails.running`
+
+#### 4) Dashboard（UI）队列表格与文案
+
+在 `monitoring/static/dashboard.html`：
+
+- Queue table 增加行与 DOM id：
+  - `queue-screenshot-vlm-pending/running/failed`
+  - `queue-screenshot-ocr-pending/running/failed`
+  - `queue-thread-llm-pending/running/failed`
+  - （可选）`queue-event-details-pending/running/failed`
+- i18n translations 增加 key：
+  - `monitoring.queue.screenshotVlm`
+  - `monitoring.queue.screenshotOcr`
+  - `monitoring.queue.threadLlm`
+  - （可选）`monitoring.queue.eventDetails`
+- JS 更新逻辑：从 `/api/queue` 与 SSE `queue` 消息写入对应 DOM。
+
+#### 5) AI Monitor（可选增强）
+
+AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `operation` 命名。Alpha 下建议确保以下 operation 命名一致，方便过滤排查：
+
+- `alpha_thread_assign`
+- `vlm_index`
+- `ocr_extract`
+- `text_expand`
+- `text_summary`
+- `activity_event_details`
+
+### 可直接复用的代码（copy 指引）
+
+- **[统计模板]** `QueueInspector.countByStatus()`
+- **[SSE 推送]** `MonitoringServer.broadcastMessage({type:"queue"})`（无需重写）
+- **[i18n 结构]** `dashboard.html` 内 `translations.en` / `translations["zh-CN"]`
+
+### 验收标准（DoD）
+
+- Dashboard 的 Queue Status 表格展示新增 3 条 Alpha 队列：VLM / OCR / Thread LLM
+- `GET /api/queue` 与 SSE 的 `queue` payload 包含新增字段，且 UI 正常更新
+- `Queue Backlog`（健康卡片）数值包含新增队列的 pending/running
+- 当人为制造积压（例如大量 pending screenshots）时，监控能准确显示“卡在 VLM / OCR / Thread LLM 哪一段”
+
+### Review Checklist
+
+- **[类型一致]** `monitoring-types.QueueStatus` 与 `queue-inspector` 返回结构一致，避免前端读 undefined
+- **[失败口径]** failed 是否合并 `failed_permanent`
+- **[开销]** 监控查询仍保持轻量（每 5s 多几条 groupBy，不引入高频全表扫描）
+- **[i18n]** 新增行在 en/zh-CN 文案齐全
+
+---
+
+## M8 — Hardening
+
+### 目的
+
+把 Alpha pipeline 从“能跑”提升到“可长期稳定运行、可恢复、可诊断”，重点解决：
+
+- **[幂等]** 任何 scheduler / LLM 调用 / upsert 在 crash 或重跑后不会制造重复数据
+- **[崩溃恢复]** `running` 卡死可自动回收、重试窗口清晰、不会吞任务
+- **[资源清理]** 临时截图文件、trace buffer、无用记录按策略清理
+- **[回归清单]** 明确 alpha 的“必须不坏”的核心链路
+
+### 依赖
+
+- M0-M7：各队列/状态机已接入
+
+### 需要改动/新增的文件
+
+- `electron/services/screenshot-processing/*-scheduler.ts`
+  - 对齐统一的 stale recovery / claim / retry/backoff 口径
+- `electron/services/screenshot-processing/*-repository.ts`（若已有/新增）
+  - 抽出关键写入的“单事务 + 幂等”封装
+- `electron/services/screenshot-processing/config.ts`
+  - 增加 hardening 相关配置（cleanup、stale 阈值、cap 上限等）
+- `electron/services/monitoring/*`
+  - 确保错误/告警能覆盖所有 alpha 新状态机
+
+### 设计与实现细节
+
+#### 1) 幂等契约（按表/写入点列清楚）
+
+1) **`batches`**
+   - `idempotencyKey` 必须稳定（sourceKey + tsStart/tsEnd + screenshotIds hash）
+   - 重跑同一 batch：
+     - 不重复创建 batch
+     - shardStatus/indexJson 可以覆盖更新
+   - Thread LLM：写入 `threadLlmStatus`/attempts/nextRunAt 必须遵循“claim 后才能变 running”
+
+2) **`screenshots`**
+   - VLM/OCR 相关字段更新必须只由对应状态机推进
+   - 对于 OCR：只要 `ocrText` 已存在且 `ocrStatus=succeeded`，不得重复跑 OCR
+
+3) **`context_nodes`**
+   - `originKey`（若启用）保持唯一：避免重复插入同一截图对应 node
+   - `mergeStatus/embeddingStatus` 的推进必须幂等：重复执行只会重复写相同结果，不会产生新 node
+   - `threadId` 写入：ThreadScheduler 允许覆盖 null→id，但禁止 id→另一个 id（除非明确的 reassign policy）
+
+4) **`vector_documents`**
+   - `vectorId=node:<nodeId>` 唯一
+   - `textHash` 命中时允许刷新 `metaPayload`（尤其 threadId），但不重置 embedding/index 状态
+
+5) **`activity_summaries`**
+   - `idempotencyKey=win_<windowStart>` 唯一
+   - 重跑同一 window：summary 可覆盖更新；不得制造重复窗口记录
+
+6) **`activity_events`**（alpha 语义）
+   - window event：`eventKey=win_<windowStart>_evt_<idx>_<hash>` 唯一
+   - long event：`eventKey=thr_<threadId>` 唯一；`activity_events.durationMs` **语义固定为** gap 排除的 `threads.durationMs`
+   - details：**严格 on-demand** 生成（用户点击/请求时生成），重复点击复用同一条 event row，仅更新 details/status/attempts
+
+#### 2) Crash/Stale Recovery（统一口径）
+
+目标：任意 scheduler crash 后重启，最多在 `staleRunningThresholdMs` 后恢复。
+
+统一规则：
+
+- 任何任务进入 `running` 必须写 `updatedAt=now`（或同等字段）
+- scheduler 每轮优先执行 `recoverStaleStates()`：
+  - `status='running' AND updatedAt < now - staleRunningThresholdMs` → 回滚到 `pending`（或 `failed`）
+  - 清空 `nextRunAt`（让其尽快被再次 claim）
+
+需要覆盖的状态机：
+
+- **Batch VLM**：`batches.status` + shards 状态（如果 shard 局部 running，需要整体回滚策略）
+- **OCR**：`screenshots.ocrStatus`（M0 引入）
+- **Thread LLM**：`batches.threadLlmStatus`（M4 引入）
+- **Vector Docs**：`vector_documents.embeddingStatus/indexStatus`（已有 pattern）
+- **Activity Summaries**：`activity_summaries.status`（已有 pattern）
+- **Activity Event Details（on-demand）**：`activity_events.detailsStatus`
+  - 不由 scheduler 推进生成
+  - 但需要“卡死自愈”：若 `detailsStatus='running'` 且 `updatedAt` 超过 `staleRunningThresholdMs`，在下一次用户请求 details 时先重置为 `failed`/`pending`（只做状态修复，不做生成）
+
+#### 3) Retry / Backoff / Permanent Failure 的统一策略
+
+复用 `processingConfig.scheduler.retryConfig`：
+
+- `maxAttempts`
+- `baseDelayMs` / `maxDelayMs`
+- `jitterMs`
+
+约定：
+
+- `failed`：可重试（attempts++，nextRunAt=backoff）
+- `failed_permanent`：不再重试（同时在 monitoring 中计入 failed）
+
+补充（on-demand details 特例）：
+
+- `activity_events.detailsStatus` 不走 scheduler 的 `nextRunAt`/backoff；仅在用户触发时尝试生成
+- 达到 `maxAttempts` 后将 details 标记为 `failed_permanent`（避免无限点击触发重试）
+
+#### 4) Cleanup（资源与数据的生命周期）
+
+1) **临时截图文件**
+   - 复用现有 retention/cleanup loop（模块内已有 cleanup 机制）
+   - 核心不变量：
+     - 只在 `storageState` 允许时删除
+     - 删除后更新 `storageState=deleted` 并记录 `retentionExpiresAt`
+
+2) **队列膨胀保护**
+   - 为每类队列增加 cap：
+     - 例如单次扫描最多 claim N 个（避免大表扫描 + 长事务）
+   - 为 `aiRequestTraceBuffer` / `activityAlertBuffer` 已是 ring buffer，无需额外清理
+
+3) **老数据清理（alpha 可选）**
+   - `llm_usage_events` 可按天聚合/裁剪（若增长过快）
+   - `vector_documents` 可提供“重建索引”路径（不在 M8 强制做，但要写出操作手册）
+
+#### 5) 观测与诊断（最少但够用）
+
+- 所有 LLM 调用必须：
+  - `llmUsageService.logEvent()`（成功/失败）
+  - `aiRequestTraceBuffer.record()`（响应预览/错误预览）
+- 所有队列卡住/超时/长等待必须：
+  - `activityAlertBuffer.record()` 或等价告警
+- Monitoring（M7）必须能看到：
+  - VLM/OCR/Thread LLM/Vector/ActivitySummary 的 pending/running/failed
+
+### 回归清单（Regression Checklist，执行顺序）
+
+1) **Capture → Batch → VLM**
+   - 连续截图进入 batch
+   - VLM 成功后 screenshots.vlmStatus 进入 succeeded
+
+2) **Batch → Context Node**
+   - 每张截图只产生 1 个 context node（alpha 目标）
+   - node 与 screenshot link 可回溯
+
+3) **OCR（只在需要时）**
+   - 只对满足条件的截图 OCR
+   - 失败可重试，超过 maxAttempts 进入 failed_permanent
+
+4) **ThreadScheduler**
+   - threadId 正确写回 nodes
+   - threads.durationMs 规则正确（gap 排除）
+
+5) **Vector Docs**
+   - metaPayload.threadId 在 thread 变更后能刷新
+   - embedding/index 状态机可恢复
+
+6) **ActivityTimeline**
+   - window summary 按 20min 生成
+   - long event（thr_<threadId>）能派生，且 durationMs=threads.durationMs
+   - details 用户点击可生成（重复点击幂等）
+
+7) **Monitoring**
+   - Queue Status 反映真实积压
+   - AI Monitor 能看到关键 operation
+
+### 验收标准（DoD）
+
+- 任意时刻强制退出 app 并重启：
+  - 所有 stuck `running` 状态在 `staleRunningThresholdMs` 后自动恢复
+  - 不会制造重复 batch / event / long event
+- 大量数据下（>10k screenshots 级别）监控与队列扫描仍可接受（不出现明显卡顿）
+- 所有 alpha 新路径的失败都能在 `llm_usage_events` 与 monitoring 中定位
+
+### Review Checklist
+
+- **[幂等]** 每个表的 unique key 与 upsert 行为是否与实现一致
+- **[事务]** 关键写入是否在单事务内完成（特别是 thread assign + node 更新 + long event upsert）
+- **[恢复]** stale recovery 是否覆盖所有新增状态机（OCR / threadLlmStatus）
+- **[清理]** 任何 cleanup 都不应影响证据可回溯（links 仍可用/或降级明确）

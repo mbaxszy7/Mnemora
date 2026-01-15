@@ -2,12 +2,8 @@
 
 > 基于：
 >
-> - Implementation plan
-> - Prompt templates
->
-> 格式参考：
->
-> - `Screenshot Processing & Context Graph v2 后续实现 Plan.md`
+> - [Implementation plan](alpha-implementation-plan.md)
+> - [Prompt templates](alpha-prompt-templates.md)
 
 ---
 
@@ -44,7 +40,7 @@
 - Thread：跨窗口延续；长事件：≥25min（排除 gap>10min）
 - OCR：仅对 knowledge 且语言 en/zh 做本地 OCR
 - Search/Activity：不依赖 context_edges
-- 鲁棒性：stale recovery + retry/backoff + 幂等
+- 鲁棒性：stale recovery + retry（全局配置：maxAttempts=2，delayMs=60s） + 幂等
 - 可观测：LLMUsage + trace
 
 ---
@@ -82,7 +78,7 @@
 
 - **[删除]** 彻底移除 `context_edges`（表 + schema export + 所有读写路径）
 - **[新增]** 引入 `threads` 作为连续性的一等公民（替代边关系）
-- **[新增]** 为 OCR/Thread LLM/Batch 推进补齐状态机字段（pending/running/failed/failed_permanent + attempts + nextRunAt）
+- **[新增]** 为 OCR/Thread LLM/Batch 推进补齐状态机字段（pending/running/failed/failed_permanent + attempts + next_run_at）
 - **[兼容]** 让主进程、IPC、renderer 的类型与 API 在“无 edges”情况下仍能编译与运行
 
 > 说明：用户已确认 **不迁移历史数据**。新 pipeline 从当前 schema 演进后开始写入新字段/新表。
@@ -133,16 +129,12 @@
 
 #### 3) `batches`：增加 Thread LLM 状态机字段
 
-现有 `batches` 已有一套通用 `status/attempts/nextRunAt/error*`，当前主要用于 batch 的 VLM/Text 处理。
+按 implementation plan 执行（彻底重构替换）：
 
-推荐改造方式（最小化迁移成本）：
-
-- **[保持]** `batches.status/attempts/nextRunAt/error*` 作为 **VLM 子任务**状态机（语义上等价 `pending|running|succeeded|failed|failed_permanent`）
-- **[新增]** `threadLlmStatus/threadLlmAttempts/threadLlmNextRunAt/threadLlmErrorCode/threadLlmErrorMessage`
-  - enum 复用 `pending|running|succeeded|failed|failed_permanent`
-  - attempts/maxAttempts/指数退避策略复用现有 scheduler 配置
-
-说明：这样可以避免 SQLite rename/drop column 的复杂迁移，并允许逐步把旧 pipeline 的 batch.status 语义收敛到新 pipeline。
+- **[VLM 状态字段]** `vlm_status/vlm_attempts/vlm_next_run_at/vlm_error_message`
+  - enum: `pending|running|succeeded|failed|failed_permanent`
+- **[Thread LLM 状态字段]** `thread_llm_status/thread_llm_attempts/thread_llm_next_run_at/thread_llm_error_message`
+  - enum: `pending|running|succeeded|failed|failed_permanent`
 
 #### 4) `screenshots`：增加 OCR 状态机字段
 
@@ -193,7 +185,7 @@
 #### 1) shared types
 
 - `shared/context-types.ts`
-  - **[删除或降级]** `EdgeType` 与 `GraphTraversalResult.edges`
+  - **[删除]** `EdgeType` 与 `GraphTraversalResult.edges`
   - **[保留]** `ExpandedContextNode/SearchQuery/SearchResult`（search 仍然需要）
   - **[新增]** Thread DTO（建议新增 `Thread`/`ThreadSummary` 类型，供 UI 与 IPC 使用）
 
@@ -202,8 +194,7 @@
 - `electron/ipc/context-graph-handlers.ts`
   - **[保留]** `search` / `getEvidence` / `getThread`（若已有）
   - **[移除/禁用]** `traverse`：
-    - 方案 A：直接移除 IPC channel 与 preload API
-    - 方案 B：保留但返回“空 edges + nodes=按 thread/时间邻居扩展”的近似结果（用于 UI 兼容期）
+    - 直接移除 IPC channel 与 preload API
 
 - `electron/preload.ts`
   - 同步删除/调整 renderer 暴露的 `contextGraph.traverse()` 等方法
@@ -240,7 +231,7 @@
 **推荐：直接在 `electron/services/screenshot-processing/` 内实现新 pipeline**（目录可重组，但不引入并行 pipeline 的选择逻辑）。
 
 - 优点：
-  - 可以直接复用现有的 `SourceBufferRegistry/BatchBuilder/BaseScheduler/aiRuntimeService/llmUsageService`
+  - 可以直接复用copy现有的 `SourceBufferRegistry/BatchBuilder/BaseScheduler/aiRuntimeService/llmUsageService`
   - `ScreenCaptureModule -> ScreenshotProcessingModule` 的集成点保持稳定
   - 避免“双 pipeline/双 schema/双开关”带来的长期维护成本
 
@@ -248,6 +239,7 @@
   - `electron/services/screenshot-processing/schedulers/`
   - `electron/services/screenshot-processing/services/`
   - `electron/services/screenshot-processing/types.ts`
+  - `electron/services/screenshot-processing/config.ts`
 
 ### 需要改动的文件
 
@@ -264,9 +256,9 @@
   - 引入 BackpressureMonitor：基于 pending batch 数量动态调整采集间隔
   - **[策略]**：
     - Level 0 (pending < 4): 1x interval (3s), Hamming 8
-    - Level 1 (pending 4-7): 1x interval (3s), Hamming 12
-    - Level 2 (pending 8-11): 2x interval (6s), Hamming 12
-    - Level 3 (pending >= 12): 4x interval (12s), Hamming 12
+    - Level 1 (pending 4-7): 1x interval (3s), Hamming 9
+    - Level 2 (pending 8-11): 2x interval (6s), Hamming 10
+    - Level 3 (pending >= 12): 4x interval (12s), Hamming 11
     - **[恢复策略]** pending 降到阈值以下且保持 30 秒 → 恢复上一级
 
 ### 具体实现清单
@@ -282,7 +274,7 @@
 同时必须**保留 active source 管理与 preference 联动**（来自 `SourceBufferRegistry`）：
 
 - `onPreferencesChanged()` 必须继续调用 `sourceBufferRegistry.setPreferences(preferences)`，使 active sources 与 `selectedScreens/selectedApps` 同步
-- `SourceBufferRegistry` 的 `activeSources/gracePeriod` 语义保持不变：不对非 active source 接收截图；inactive 超过 grace period 丢弃 buffer
+- `SourceBufferRegistry` 的 `activeSources/gracePeriod` 语义保持不变：不对非 active source 接收截图；inactive 超过 grace period 丢弃 buffer。没大问题的话SourceBufferRegistry应该是整体copy的。
 
 启动逻辑（无开关）：
 
@@ -351,7 +343,7 @@
 
 ### 依赖
 
-- M0：DB schema 已具备（至少包含：删除 edges、OCR 状态字段、batches.threadLlmStatus、threads 表等）
+- M0：DB schema 已具备（至少包含：删除 edges、OCR 状态字段、`batches.thread_llm_*` 字段、threads 表等）
 - M1：batch/vlm/ocr/thread schedulers 骨架已就位
 
 ### 需要改动/新增的文件
@@ -373,19 +365,19 @@
 - `electron/services/screenshot-processing/schemas.ts`
   - 增加 VLM 输出 schema（每张截图 1 个对象）
 
-- `electron/services/screenshot-processing/context-graph-service.ts`
+- 新增 `electron/services/screenshot-processing/context-node-service.ts`
   - 新增/调整：`upsertNodeForScreenshot(...)`（仅写 node + link，不写 edges，不做 merge/derived nodes）
 
-### Batch VLM 状态机（建议）
+### Batch VLM 状态机
 
-复用现有 `batches.status/attempts/nextRunAt/error*` 作为 VLM 子任务状态机：
+使用 `batches.vlm_*` 字段作为 VLM 子任务状态机：
 
 - `pending` → `running` → `succeeded`
 - 失败：`failed`（可重试）→ 超过阈值 `failed_permanent`
 
 线程子任务状态机由 M4 接管：
 
-- 当 VLM 成功落库后：将 `batches.threadLlmStatus` 置为 `pending`（并 wake thread scheduler）
+- 当 VLM 成功落库后：将 `batches.thread_llm_status` 置为 `pending`（并 wake thread scheduler）
 
 ### 调度器实现（BatchVlmScheduler）
 
@@ -403,20 +395,20 @@
 
 #### 2) computeEarliestNextRun()
 
-查询 `batches` 中 VLM due 的最早 `nextRunAt`：
+查询 `batches` 中 VLM due 的最早 `vlm_next_run_at`：
 
-- `status in (pending, failed)`
-- `attempts < maxAttempts`
-- `nextRunAt is null OR nextRunAt <= now`
+- `vlm_status in (pending, failed)`
+- `vlm_attempts < maxAttempts`
+- `vlm_next_run_at is null OR vlm_next_run_at <= now`
 
-返回 `min(nextRunAt ?? now)`。
+返回 `min(vlm_next_run_at ?? now)`。
 
 #### 3) runCycle()（核心流程）
 
 参考 `vector-document-scheduler.ts` 的结构：
 
 1. **recoverStaleStates**：
-   - `batches.status == running` 且 `updatedAt < now - staleRunningThresholdMs` → 回滚 `pending`（nextRunAt=null）
+   - `batches.vlm_status == running` 且 `updated_at < now - staleRunningThresholdMs` → 回滚 `pending`（vlm_next_run_at=null）
 
 2. **scanPendingRecords**：
    - newest+oldest 双向扫描（realtime/recovery）
@@ -426,12 +418,12 @@
    - `concurrency`: 建议 1~min(vlmLimit, N)（首版保守，避免 OCR/Thread 还没接入时产生堆积）
 
 4. **processOneBatch(batchId)**：
-   - claim（`UPDATE ... WHERE status in (pending, failed)`）置 `running` 并 bump attempts
+   - claim（`UPDATE ... WHERE vlm_status in (pending, failed)`）置 `running` 并 bump `vlm_attempts`
    - 读取 batch 的 screenshotIds，加载对应 screenshot 行
    - 读取图片文件并 base64（复用现有 `vlm-processor.ts` 的读取策略）
    - 调用 VLM（见下一节）
    - 落库（见“持久化映射”）
-   - 更新 batch `status=succeeded`（或失败写 `failed/nextRunAt/error*`）
+   - 更新 batch `vlm_status=succeeded`（或失败写 `failed/vlm_next_run_at/vlm_error_message`）
 
 ### VLM 调用与输出 Schema
 
@@ -503,14 +495,14 @@
 
 #### 4) 更新 `batches`
 
-- `status = succeeded`
+- `vlm_status = succeeded`
 - `indexJson = JSON.stringify(vlmOutput)`（可选，便于 debug；若体积过大可只存摘要或禁用）
-- `threadLlmStatus = pending`（为 M4 链路做准备）
+- `thread_llm_status = pending`（为 M4 链路做准备）
 
 并在成功后触发（**并行执行**）：
 
 - wake `ocrScheduler`（如果存在任何 `ocrStatus=pending`）
-- wake `threadScheduler`（batch.threadLlmStatus=pending）
+- wake `threadScheduler`（batch.thread_llm_status=pending）
 
 ### 可直接复用的代码（copy 指引）
 
@@ -532,7 +524,7 @@
 - 连续截图能触发 batch（2 张或 60s），并由 BatchVlmScheduler 推进为 succeeded
 - 每张截图在 `context_nodes` 中最多 1 条（以 `origin_key` 保证幂等）
 - `context_edges` 没有任何读写
-- VLM 子任务状态被正确推进（以 `batches.status` 为准）
+- VLM 子任务状态被正确推进（以 `batches.vlm_status` 为准）
 - `context_nodes.*_json` 拆字段被正确写入（`app_context_json/knowledge_json/state_snapshot_json/ui_text_snippets_json/keywords_json/...`）
 - 对需要 OCR 的截图能正确置 `ocrStatus=pending`（但 OCR 逻辑由 M3 完成）
 - VLM 请求有 llmUsage 与 trace 记录
@@ -616,7 +608,7 @@
 
 - due 条件：`ocrStatus in (pending, failed)` 且 attempts < maxAttempts 且（nextRunAt is null 或 <= now）且 `filePath is not null` 且 `storageState != deleted`
 - 成功：`ocrStatus=succeeded`, `ocrText=...`, `ocrNextRunAt=null`, 清 error
-- 失败：写 `failed` + `ocrNextRunAt`（指数退避 + jitter）；达到上限后 `failed_permanent`
+- 失败：写 `failed` + `ocrNextRunAt`（固定延迟=processingConfig.retry.delayMs）；达到上限后 `failed_permanent`
 
 ### OCR 调度器实现（OcrScheduler）
 
@@ -660,7 +652,7 @@
 - `demo/ocr-demo.ts`：
   - `preprocessImage()` 与 `performOCR()` 的核心实现可以直接迁移到 `ocr-service.ts`
 - `vector-document-scheduler.ts`：
-  - stale recovery / due scan / claim / retry/backoff 结构
+  - stale recovery / due scan / claim / retry 结构
 
 ### 验收标准（DoD）
 
@@ -697,7 +689,7 @@
 
 ### 依赖
 
-- M0：`threads` 表 + `batches.threadLlmStatus/threadLlmAttempts/threadLlmNextRunAt/...` 字段已就位
+- M0：`threads` 表 + `batches.thread_llm_*` 字段已就位
 - M2：每张截图已落为 1 条 `context_nodes`（`origin_key = screenshot:<id>`），且 batch 的 VLM 子任务可推进到 `succeeded`
 - （推荐）`context_nodes.batch_id` 已存在，便于 ThreadScheduler 直接按 batch 拉取 nodes
 
@@ -724,22 +716,22 @@
 - **[fallbackRecentThreads]** `1`（无活跃 thread 时，带最近 1 个）
 - **[recentNodesPerThread]** `3`（每个 thread 仅带最近 3 个节点）
 
-### `batches.threadLlmStatus` 状态机（Thread LLM 子任务）
+### `batches.thread_llm_status` 状态机（Thread LLM 子任务）
 
-ThreadScheduler 只推进 `batches.threadLlm*` 字段，不触碰 VLM 的 `batches.status`：
+ThreadScheduler 只推进 `batches.thread_llm_*` 字段，不触碰 VLM 的 `batches.vlm_*`：
 
 - `pending` → `running` → `succeeded`
-- 失败：`failed`（指数退避后重试）→ 达到 `maxAttempts` → `failed_permanent`
+- 失败：`failed`（固定延迟=processingConfig.retry.delayMs 后重试）→ 达到 `maxAttempts` → `failed_permanent`
 
 触发点（与 M2 联动）：
 
 - BatchVlmScheduler 在 batch VLM 成功、nodes 落库后：
-  - `UPDATE batches SET threadLlmStatus='pending', threadLlmNextRunAt=NULL ... WHERE id=?`
+  - `UPDATE batches SET thread_llm_status='pending', thread_llm_next_run_at=NULL ... WHERE id=?`
   - 调用 `threadScheduler.wake("batch:vlm:succeeded")`
 
 ### 调度器实现（`ThreadScheduler`）
 
-调度器模板与 error/backoff/stale recovery 结构直接复制：
+调度器模板与 error/retry/stale recovery 结构直接复制：
 
 - `electron/services/screenshot-processing/vector-document-scheduler.ts`
 - `electron/services/screenshot-processing/activity-timeline-scheduler.ts`
@@ -750,24 +742,24 @@ ThreadScheduler 只推进 `batches.threadLlm*` 字段，不触碰 VLM 的 `batch
 
 ThreadScheduler 处理条件（以 `batches` 为中心）：
 
-- `batches.status == 'succeeded'`（VLM 已成功落库）
-- `threadLlmStatus in ('pending','failed')`
-- `threadLlmAttempts < maxAttempts`
-- `threadLlmNextRunAt is null OR threadLlmNextRunAt <= now`
+- `batches.vlm_status == 'succeeded'`（VLM 已成功落库）
+- `thread_llm_status in ('pending','failed')`
+- `thread_llm_attempts < maxAttempts`
+- `thread_llm_next_run_at is null OR thread_llm_next_run_at <= now`
 
 #### 2) claim（避免并发重复处理）
 
 参考 `vector-document-scheduler.ts` 的“claim then process”模式：
 
-- `UPDATE batches SET threadLlmStatus='running', threadLlmAttempts=threadLlmAttempts+1, updatedAt=now WHERE id=? AND threadLlmStatus IN ('pending','failed')`
+- `UPDATE batches SET thread_llm_status='running', thread_llm_attempts=thread_llm_attempts+1, updated_at=now WHERE id=? AND thread_llm_status IN ('pending','failed')`
 - 仅当 `changes == 1` 才继续执行（否则跳过）
 
 #### 3) stale recovery
 
 回收卡死的 `running`（逻辑与 `vector_documents` 一致）：
 
-- `threadLlmStatus == 'running'` 且 `updatedAt < now - staleRunningThresholdMs`
-  - 回滚到 `pending`（或 `failed`），并清掉 `threadLlmNextRunAt` 以尽快重跑
+- `thread_llm_status == 'running'` 且 `updated_at < now - staleRunningThresholdMs`
+  - 回滚到 `pending`（或 `failed`），并清掉 `thread_llm_next_run_at` 以尽快重跑
 
 #### 4) 并发与 lane
 
@@ -848,7 +840,7 @@ Thread LLM 输出应用到 DB 时要做到“可重试 + 不产生重复 threads
 
 - **[只补不改]** 对 batchNodes：仅对 `threadId IS NULL` 的节点写入 `threadId`；已存在 `threadId` 时保持不变
 - **[Snapshot]** 写入 `thread_snapshot_json`：在分配节点到 thread 时，捕获并存入 thread 的当前状态快照
-- **[事务]** “创建新 thread + 写入节点 threadId/snapshot + 更新 thread 统计 + 更新 batch.threadLlmStatus”必须在一个事务内完成
+- **[事务]** “创建新 thread + 写入节点 threadId/snapshot + 更新 thread 统计 + 更新 batch.thread_llm_status”必须在一个事务内完成
 - **[强校验]** LLM 输出缺失/越界/重复/不一致时直接 fail（进入 `failed` 并 retry），禁止 partial apply
 
 推荐的事务步骤（伪流程）：
@@ -871,7 +863,7 @@ Thread LLM 输出应用到 DB 时要做到“可重试 + 不产生重复 threads
     - `title/summary/currentPhase/currentFocus`：有值则覆盖
     - `new_milestone.description`：append 到 `milestonesJson` 数组尾部
 7.  **更新 threads 统计**（见下一节）
-8.  `UPDATE batches SET threadLlmStatus='succeeded', threadLlmError*=NULL, updatedAt=now WHERE id=?`
+8.  `UPDATE batches SET thread_llm_status='succeeded', thread_llm_error_message=NULL, updated_at=now WHERE id=?`
 9.  `COMMIT`
 
 ### Thread 统计计算（durationMs / nodeCount / lastActiveAt）
@@ -896,7 +888,7 @@ Thread LLM 输出应用到 DB 时要做到“可重试 + 不产生重复 threads
 首版优先正确性：每次 thread 写入新节点后，对该 thread 全量重算一次即可：
 
 - `SELECT event_time FROM context_nodes WHERE kind='event' AND thread_id=? ORDER BY event_time ASC`
-- 计算并写回 `startTime/lastActiveAt/durationMs/nodeCount/updatedAt`
+- 计算并写回 `startTime/lastActiveAt/durationMs/nodeCount/updated_at`
 
 受影响 threads 集合：
 
@@ -920,7 +912,7 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 
 ### 联动点
 
-- **输入来源**：M2 在 batch VLM 成功并落库后把 `batches.threadLlmStatus` 置为 `pending`
+- **输入来源**：M2 在 batch VLM 成功并落库后把 `batches.thread_llm_status` 置为 `pending`
 - **输出消费**：
   - M6 ActivityTimeline：用 `context_nodes.threadId` 做跨窗口聚合；用 `threads.durationMs` 做 long event 判定（排除 gap）
   - M5 Vector/Search：`vector_documents.metaPayload.thread_id` 需要包含 threadId（threadId 从 null → 有值时要触发 doc dirty）
@@ -931,13 +923,13 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 
 ### 可直接复用的代码（copy 指引）
 
-- **[scheduler 模板]** `vector-document-scheduler.ts`（claim / stale recovery / backoff / lane）
+- **[scheduler 模板]** `vector-document-scheduler.ts`（claim / stale recovery / retry / lane）
 - **[usage/trace]** `deep-search-service.ts`（`llmUsageService.logEvent` + `aiRequestTraceBuffer.record`）
 - **[时间计算]** `activity-monitor-service.ts`（本地时间窗口边界计算）
 
 ### 验收标准（DoD）
 
-- ThreadScheduler 能把 due batch 从 `threadLlmStatus=pending/failed` 推进到 `succeeded`
+- ThreadScheduler 能把 due batch 从 `thread_llm_status=pending/failed` 推进到 `succeeded`
 - batch 内所有新 `context_nodes` 都获得 `threadId`
 - 创建新 thread 时：`threads` 表有新行，且写入 `title/summary/currentPhase/currentFocus/milestonesJson`
 - `threads.durationMs` 按 gapThresholdMs 规则计算（构造 gap>10min 的数据验证）
@@ -979,7 +971,7 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 - 把 search 的 temporal expansion 与 IPC traverse 都改为 thread/time 邻域扩展
 - keyword 路径中引入 `screenshots_fts`（FTS5）检索：`MATCH` + `bm25/snippet`，并 join 回 screenshots/context_screenshot_links
 - 从 `context_nodes.state_snapshot_json` 提取 `issue`，用于过滤/排序（至少保证可观测）
-- `electron/services/screenshot-processing/context-graph-service.ts`
+- `electron/services/screenshot-processing/context-node-service.ts`
 - M5 目标是“Search/Vector 无 edges”，因此这里的 `traverse()` 应被移除或不再被调用
 - `electron/ipc/context-graph-handlers.ts`
 - `handleTraverse()` 保留 channel，但返回的 `edges` 恒为空数组（或改成兼容期专用返回类型）
@@ -1272,7 +1264,7 @@ details 输出落库：
 
 首版保留该机制，但判定条件需更贴合新 pipeline：
 
-- 只要窗口内关联的 `batches.status in (pending,running)` 或 `failed but retryable`，就保持 Processing
+- 只要窗口内关联的 `batches.vlm_status in (pending,running)` 或 `failed but retryable`，就保持 Processing
 - **不等待 thread assignment**：threadId 缺失不阻塞窗口 summary（符合“summary 不依赖 thread 边界”）；长事件会在 threadId 补齐后由 `syncLongEventsFromThreads()` 追补
 
 ### 可直接复用的代码（copy 指引）
@@ -1318,9 +1310,9 @@ details 输出落库：
 把监控面板（Performance Monitor / AI Monitor）与 `QueueInspector` 适配到新状态机与队列结构，做到“出了问题能一眼看出卡在哪一段”。
 
 - **[队列可见性]** 展示 pipeline 的关键 backlog：
-  - `batches.status`（VLM 队列）
+  - `batches.vlm_status`（VLM 队列）
   - `screenshots.ocrStatus`（OCR 队列，M0 增加）
-  - `batches.threadLlmStatus`（Thread LLM 队列，M4 增加）
+  - `batches.thread_llm_status`（Thread LLM 队列，M4 增加）
   - `vector_documents.embeddingStatus/indexStatus`（已存在）
   - `activity_summaries.status`（已存在）
   - （可选）`activity_events.detailsStatus`（用户点击生成 long event details 后的状态）
@@ -1330,7 +1322,7 @@ details 输出落库：
 ### 依赖
 
 - M0：`screenshots.ocrStatus` / OCR retry 字段已落 schema（否则无法统计 OCR queue）
-- M4：`batches.threadLlmStatus` 已落 schema
+- M4：`batches.thread_llm_*` 已落 schema
 - M6：long event 以 `threads.durationMs` 派生 `activity_events.is_long=1`（可选统计 detailsStatus）
 
 ### 需要改动/新增的文件
@@ -1338,7 +1330,7 @@ details 输出落库：
 - `electron/services/monitoring/monitoring-types.ts`
   - 扩展 `QueueStatus` 类型，加入新队列字段
 - `electron/services/monitoring/queue-inspector.ts`
-  - 新增对 `screenshots`/`batches.threadLlmStatus`/（可选）`activity_events.detailsStatus` 的统计
+  - 新增对 `screenshots`/`batches.thread_llm_status`/（可选）`activity_events.detailsStatus` 的统计
   - 更新 `getTotalPendingCount()` 的累计逻辑
 - `electron/services/monitoring/static/dashboard.html`
   - Queue Status 表格新增行 + i18n 文案 + JS 显示绑定
@@ -1365,9 +1357,9 @@ details 输出落库：
 
 复用 `countByStatus(db, table, statusColumn)`（已有 try/catch，不会让监控直接崩）。
 
-- **Batches VLM**：`countByStatus(db, batches, "status")`
+- **Batches VLM**：`countByStatus(db, batches, "vlm_status")`
 - **Screenshots OCR**：`countByStatus(db, screenshots, "ocrStatus")`
-- **Batches Thread LLM**：`countByStatus(db, batches, "threadLlmStatus")`
+- **Batches Thread LLM**：`countByStatus(db, batches, "thread_llm_status")`
 - （可选）**Activity Event Details**：`countByStatus(db, activityEvents, "detailsStatus")`
   - 注意：这不是后台队列，只是“用户触发 details 后是否卡住/失败”的诊断指标
 
@@ -1449,7 +1441,7 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 ### 需要改动/新增的文件
 
 - `electron/services/screenshot-processing/*-scheduler.ts`
-  - 对齐统一的 stale recovery / claim / retry/backoff 口径
+  - 对齐统一的 stale recovery / claim / retry 口径
 - `electron/services/screenshot-processing/*-repository.ts`（若已有/新增）
   - 抽出关键写入的“单事务 + 幂等”封装
 - `electron/services/screenshot-processing/config.ts`
@@ -1466,7 +1458,7 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
    - 重跑同一 batch：
      - 不重复创建 batch
      - shardStatus/indexJson 可以覆盖更新
-   - Thread LLM：写入 `threadLlmStatus`/attempts/nextRunAt 必须遵循“claim 后才能变 running”
+   - Thread LLM：写入 `thread_llm_status`/`thread_llm_attempts`/`thread_llm_next_run_at` 必须遵循“claim 后才能变 running”
 
 2. **`screenshots`**
    - VLM/OCR 相关字段更新必须只由对应状态机推进
@@ -1497,38 +1489,37 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 
 统一规则：
 
-- 任何任务进入 `running` 必须写 `updatedAt=now`（或同等字段）
+- 任何任务进入 `running` 必须写 `updated_at=now`（或同等字段）
 - scheduler 每轮优先执行 `recoverStaleStates()`：
-  - `status='running' AND updatedAt < now - staleRunningThresholdMs` → 回滚到 `pending`（或 `failed`）
-  - 清空 `nextRunAt`（让其尽快被再次 claim）
+  - `status='running' AND updated_at < now - staleRunningThresholdMs` → 回滚到 `pending`（或 `failed`）
+  - 清空 `*_next_run_at`（让其尽快被再次 claim）
 
 需要覆盖的状态机：
 
-- **Batch VLM**：`batches.status` + shards 状态（如果 shard 局部 running，需要整体回滚策略）
+- **Batch VLM**：`batches.vlm_status` + shards 状态（如果 shard 局部 running，需要整体回滚策略）
 - **OCR**：`screenshots.ocrStatus`
-- **Thread LLM**：`batches.threadLlmStatus`
+- **Thread LLM**：`batches.thread_llm_status`
 - **Vector Docs**：`vector_documents.embeddingStatus/indexStatus`（已有 pattern）
 - **Activity Summaries**：`activity_summaries.status`（已有 pattern）
 - **Activity Event Details（on-demand）**：`activity_events.detailsStatus`
   - 不由 scheduler 推进生成
-  - 但需要“卡死自愈”：若 `detailsStatus='running'` 且 `updatedAt` 超过 `staleRunningThresholdMs`，在下一次用户请求 details 时先重置为 `failed`/`pending`（只做状态修复，不做生成）
+  - 但需要“卡死自愈”：若 `detailsStatus='running'` 且 `updated_at` 超过 `staleRunningThresholdMs`，在下一次用户请求 details 时先重置为 `failed`/`pending`（只做状态修复，不做生成）
 
-#### 3) Retry / Backoff / Permanent Failure 的统一策略
+#### 3) Retry / Permanent Failure 的统一策略
 
-复用 `processingConfig.scheduler.retryConfig`：
+复用 `processingConfig.retry`：
 
 - `maxAttempts`
-- `baseDelayMs` / `maxDelayMs`
-- `jitterMs`
+- `delayMs`
 
 约定：
 
-- `failed`：可重试（attempts++，nextRunAt=backoff）
+- `failed`：可重试（attempts++，\*\_next_run_at=now + delayMs）
 - `failed_permanent`：不再重试（同时在 monitoring 中计入 failed）
 
 补充（on-demand details 特例）：
 
-- `activity_events.detailsStatus` 不走 scheduler 的 `nextRunAt`/backoff；仅在用户触发时尝试生成
+- `activity_events.detailsStatus` 不走 scheduler 的 `nextRunAt`；仅在用户触发时尝试生成
 - 达到 `maxAttempts` 后将 details 标记为 `failed_permanent`（避免无限点击触发重试）
 
 #### 4) Cleanup（资源与数据的生命周期）
@@ -1562,7 +1553,7 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 
 1. **Capture → Batch → VLM**
    - 连续截图进入 batch
-   - VLM 成功后 batches.status 进入 succeeded
+   - VLM 成功后 batches.vlm_status 进入 succeeded
 
 2. **Batch → Context Node**
    - 每张截图只产生 1 个 context node
@@ -1601,5 +1592,11 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 
 - **[幂等]** 每个表的 unique key 与 upsert 行为是否与实现一致
 - **[事务]** 关键写入是否在单事务内完成（特别是 thread assign + node 更新 + long event upsert）
-- **[恢复]** stale recovery 是否覆盖所有新增状态机（OCR / threadLlmStatus）
+- **[恢复]** stale recovery 是否覆盖所有新增状态机（OCR / thread_llm_status）
 - **[清理]** 任何 cleanup 都不应影响证据可回溯（links 仍可用/或降级明确）
+- **[Batch IdempotencyKey]** Alpha 版本 `batch-builder.ts` 将 `idempotencyKey`（content-based hash）改为 `batchId`（UUID）：
+  - 旧版：`idempotencyKey = vlm_batch:<sourceKey>:<tsStart>-<tsEnd>:<screenshotIdsHash>`，保证相同内容的 batch 不会重复入库
+  - 新版：使用 `crypto.randomUUID()` 生成 `batchId`，通过 `batchId` 判断冲突
+  - **Concern**：崩溃恢复场景下，如果 `SourceBufferRegistry` buffer 已 drain 但 `persistBatch` 未完成，重启后可能产生重复 batch（新 UUID ≠ 旧 UUID）
+  - **当前保护**：`screenshots.batchId` 检查可防止同一 screenshot 被分配到多个 batch，但无法防止创建空 batch 或部分重叠的 batch
+  - **建议**：评估是否需要恢复 content-based idempotencyKey（例如基于 screenshotIds hash），或确认 buffer drain + screenshot 检查组合足够

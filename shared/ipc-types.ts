@@ -58,7 +58,6 @@ export const IPC_CHANNELS = {
   CONTEXT_SEARCH: "context:search",
   CONTEXT_SEARCH_CANCEL: "context:search:cancel",
   CONTEXT_GET_THREAD: "context:get-thread",
-  CONTEXT_TRAVERSE: "context:traverse",
   CONTEXT_GET_EVIDENCE: "context:get-evidence",
   // Usage channels
   USAGE_GET_SUMMARY: "usage:get-summary",

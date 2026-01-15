@@ -13,15 +13,39 @@ export type ContextKind =
   | "plan"
   | "entity_profile";
 
-export type EdgeType =
-  | "event_next"
-  | "event_mentions_entity"
-  | "event_produces_knowledge"
-  | "event_updates_state"
-  | "event_suggests_plan"
-  | "event_uses_procedure";
+export type EdgeType = never;
 
 export type StorageState = "ephemeral" | "persisted" | "deleted";
+
+export type ThreadStatus = "active" | "inactive" | "closed";
+
+export interface Thread {
+  id: string;
+  title: string;
+  summary: string;
+  currentPhase?: string;
+  currentFocus?: string;
+  status: ThreadStatus;
+  startTime: number;
+  lastActiveAt: number;
+  durationMs: number;
+  nodeCount: number;
+  apps: string[];
+  mainProject?: string;
+  keyEntities: string[];
+  milestones?: unknown;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  summary: string;
+  status: ThreadStatus;
+  lastActiveAt: number;
+  durationMs: number;
+}
 
 /**
  * Entity reference in a context node
@@ -189,15 +213,4 @@ export interface SearchResult {
 /**
  * Result of graph traversal
  */
-export interface GraphTraversalResult {
-  /** Nodes found during traversal */
-  nodes: ExpandedContextNode[];
-  /** Edges traversed */
-  edges: Array<{
-    fromId: number;
-    toId: number;
-    edgeType: EdgeType;
-  }>;
-  /** Screenshot IDs found */
-  screenshotIds: number[];
-}
+export type GraphTraversalResult = never;

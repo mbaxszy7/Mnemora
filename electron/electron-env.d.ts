@@ -124,15 +124,6 @@ interface Window {
         import("../shared/context-types").ExpandedContextNode[]
       >
     >;
-    traverse(req: {
-      nodeId: string;
-      depth: number;
-      edgeTypes?: import("../shared/context-types").EdgeType[];
-    }): Promise<
-      import("../shared/ipc-types").IPCResult<
-        import("../shared/context-types").GraphTraversalResult
-      >
-    >;
     getEvidence(
       nodeIds: number[]
     ): Promise<

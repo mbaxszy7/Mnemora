@@ -1,1 +1,0 @@
-ALTER TABLE `llm_config` ADD `language` text DEFAULT 'en' NOT NULL;

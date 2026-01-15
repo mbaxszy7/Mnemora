@@ -1,12 +1,4 @@
-import {
-  sqliteTable,
-  text,
-  integer,
-  blob,
-  real,
-  index,
-  uniqueIndex,
-} from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, blob, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const STORAGE_STATE_VALUES = ["ephemeral", "persisted", "deleted"] as const;
 export const VLM_STATUS_VALUES = [
@@ -16,37 +8,14 @@ export const VLM_STATUS_VALUES = [
   "failed",
   "failed_permanent",
 ] as const;
-export const BATCH_STATUS_VALUES = [
+export const OCR_STATUS_VALUES = [
   "pending",
   "running",
   "succeeded",
   "failed",
   "failed_permanent",
 ] as const;
-export const CONTEXT_KIND_VALUES = [
-  "event",
-  "knowledge",
-  "state_snapshot",
-  "procedure",
-  "plan",
-  "entity_profile",
-] as const;
-// Note: Screenshot evidence is tracked via context_screenshot_links table, not edges
-export const EDGE_TYPE_VALUES = [
-  "event_next",
-  "event_mentions_entity",
-  "event_produces_knowledge",
-  "event_updates_state",
-  "event_suggests_plan",
-  "event_uses_procedure",
-] as const;
-export const MERGE_STATUS_VALUES = [
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "failed_permanent",
-] as const;
+export const THREAD_STATUS_VALUES = ["active", "inactive", "closed"] as const;
 export const EMBEDDING_STATUS_VALUES = [
   "pending",
   "running",
@@ -61,13 +30,11 @@ export const INDEX_STATUS_VALUES = [
   "failed",
   "failed_permanent",
 ] as const;
-export const ALIAS_TYPE_VALUES = ["nickname", "abbr", "translation"] as const;
-export const ALIAS_SOURCE_VALUES = ["ocr", "vlm", "llm", "manual"] as const;
-export const DOC_TYPE_VALUES = ["context_node", "screenshot_snippet"] as const;
 export const SUMMARY_STATUS_VALUES = [
   "pending",
   "running",
   "succeeded",
+  "no_data",
   "failed",
   "failed_permanent",
 ] as const;
@@ -123,6 +90,36 @@ export const llmConfig = sqliteTable("llm_config", {
 // Screenshot Processing Tables
 // ============================================================================
 
+export const threads = sqliteTable(
+  "threads",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    currentPhase: text("current_phase"),
+    currentFocus: text("current_focus"),
+    status: text("status", {
+      enum: THREAD_STATUS_VALUES,
+    })
+      .notNull()
+      .default("active"),
+    startTime: integer("start_time").notNull(),
+    lastActiveAt: integer("last_active_at").notNull(),
+    durationMs: integer("duration_ms").notNull().default(0),
+    nodeCount: integer("node_count").notNull().default(0),
+    apps: text("apps_json").notNull().default("[]"),
+    mainProject: text("main_project"),
+    keyEntities: text("key_entities_json").notNull().default("[]"),
+    milestones: text("milestones_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_threads_last_active_at").on(table.lastActiveAt),
+    index("idx_threads_status").on(table.status),
+  ]
+);
+
 /**
  * Batches table
  * Stores batch processing jobs for VLM analysis
@@ -132,40 +129,43 @@ export const batches = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
 
+    // Batch content
+    screenshotIds: text("screenshot_ids").notNull(), // JSON array of screenshot IDs
+
     // Batch identification
     batchId: text("batch_id").notNull().unique(),
     sourceKey: text("source_key").notNull(),
 
-    // Batch content
-    screenshotIds: text("screenshot_ids").notNull(), // JSON array of screenshot IDs
     tsStart: integer("ts_start").notNull(),
     tsEnd: integer("ts_end").notNull(),
-    historyPack: text("history_pack"), // JSON: HistoryPack object
 
-    // Idempotency
-    idempotencyKey: text("idempotency_key").notNull().unique(),
-
-    // Processing state
-    shardStatusJson: text("shard_status_json"), // JSON: {shard0: {status, attempts, error}, ...}
-    indexJson: text("index_json"), // JSON: merged VLM Index result
-
-    // Status tracking
-    status: text("status", {
-      enum: BATCH_STATUS_VALUES,
+    // Processing state: VLM
+    vlmStatus: text("vlm_status", {
+      enum: VLM_STATUS_VALUES,
     })
       .notNull()
       .default("pending"),
-    attempts: integer("attempts").notNull().default(0),
-    nextRunAt: integer("next_run_at"),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
+    vlmAttempts: integer("vlm_attempts").notNull().default(0),
+    vlmNextRunAt: integer("vlm_next_run_at"),
+    vlmErrorMessage: text("vlm_error_message"),
+
+    // Processing state: Thread LLM
+    threadLlmStatus: text("thread_llm_status", {
+      enum: VLM_STATUS_VALUES,
+    })
+      .notNull()
+      .default("pending"),
+    threadLlmAttempts: integer("thread_llm_attempts").notNull().default(0),
+    threadLlmNextRunAt: integer("thread_llm_next_run_at"),
+    threadLlmErrorMessage: text("thread_llm_error_message"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    index("idx_batches_status").on(table.status),
+    index("idx_batches_vlm_status").on(table.vlmStatus),
+    index("idx_batches_thread_llm_status").on(table.threadLlmStatus),
     index("idx_batches_source_key").on(table.sourceKey),
   ]
 );
@@ -183,52 +183,37 @@ export const screenshots = sqliteTable(
     sourceKey: text("source_key").notNull(), // format: screen:<id> or window:<id>
     ts: integer("ts").notNull(), // capture timestamp in milliseconds
 
-    // File storage
-    filePath: text("file_path"),
-    storageState: text("storage_state", {
-      enum: STORAGE_STATE_VALUES,
-    })
-      .notNull()
-      .default("ephemeral"),
-    retentionExpiresAt: integer("retention_expires_at"),
-
     // Image metadata
-    phash: text("phash"), // perceptual hash for deduplication
+    phash: text("phash").notNull(), // perceptual hash (16 hex chars)
     width: integer("width"),
     height: integer("height"),
-    bytes: integer("bytes"),
-    mime: text("mime"),
 
-    // Evidence pack fields
+    // Evidence fields
     appHint: text("app_hint"),
     windowTitle: text("window_title"),
     ocrText: text("ocr_text"), // limited to 8k characters
-    uiTextSnippets: text("ui_text_snippets"), // JSON array of high-value text snippets
-    detectedEntities: text("detected_entities"), // JSON array of detected entities
-    vlmIndexFragment: text("vlm_index_fragment"), // JSON fragment from VLM output
+    ocrStatus: text("ocr_status", {
+      enum: OCR_STATUS_VALUES,
+    }),
+    ocrAttempts: integer("ocr_attempts").notNull().default(0),
+    ocrNextRunAt: integer("ocr_next_run_at"),
 
-    // VLM processing status
-    vlmStatus: text("vlm_status", {
-      enum: VLM_STATUS_VALUES,
-    })
-      .notNull()
-      .default("pending"),
-    vlmAttempts: integer("vlm_attempts").notNull().default(0),
-    vlmNextRunAt: integer("vlm_next_run_at"),
-    vlmErrorCode: text("vlm_error_code"),
-    vlmErrorMessage: text("vlm_error_message"),
-    enqueuedBatchId: integer("enqueued_batch_id").references(() => batches.id),
+    batchId: integer("batch_id").references(() => batches.id),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
+
+    filePath: text("file_path"),
+    storageState: text("storage_state", {
+      enum: STORAGE_STATE_VALUES,
+    }),
   },
   (table) => [
     index("idx_screenshots_source_key").on(table.sourceKey),
     index("idx_screenshots_ts").on(table.ts),
-    index("idx_screenshots_vlm_status").on(table.vlmStatus),
-    index("idx_screenshots_storage_state").on(table.storageState),
-    index("idx_screenshots_enqueued_batch_id").on(table.enqueuedBatchId),
+    index("idx_screenshots_batch_id").on(table.batchId),
+    index("idx_screenshots_ocr_status").on(table.ocrStatus),
   ]
 );
 
@@ -241,42 +226,40 @@ export const contextNodes = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
 
-    // Node type and identity
-    kind: text("kind", {
-      enum: CONTEXT_KIND_VALUES,
-    }).notNull(),
-    threadId: text("thread_id"), // groups related events into threads
-    originKey: text("origin_key"),
+    // Batch linkage
+    batchId: integer("batch_id")
+      .notNull()
+      .references(() => batches.id),
 
-    // Content
+    // Core content
     title: text("title").notNull(),
     summary: text("summary").notNull(),
-    keywords: text("keywords"), // JSON array of keywords
-    entities: text("entities"), // JSON array of EntityRef objects
+
+    // Timing
+    eventTime: integer("event_time").notNull(),
+
+    // Thread linkage
+    threadId: text("thread_id").references(() => threads.id),
+    threadSnapshot: text("thread_snapshot_json"),
+
+    // App context and extracted knowledge/state
+    //  { appHint, windowTitle, sourceKey }
+    appContext: text("app_context_json").notNull(),
+    //  { contentType, sourceUrl, projectOrLibrary, keyInsights, language, textRegion?: { box: { top, left, width, height }, confidence } }
+    knowledge: text("knowledge_json"),
+    //  { subjectType, subject, currentState, metrics?, issue?: { detected: boolean, type: "error"|"bug"|"blocker"|"question"|"warning", description: string, severity: 1-5 } }
+    stateSnapshot: text("state_snapshot_json"),
+    //  string[]
+    uiTextSnippets: text("ui_text_snippets_json"),
 
     // Scoring
     importance: integer("importance").notNull().default(5), // 0-10 scale
     confidence: integer("confidence").notNull().default(5), // 0-10 scale
 
-    // Timing
-    eventTime: integer("event_time"), // when the event occurred
-
-    // Merge tracking
-    mergedFromIds: text("merged_from_ids"), // JSON array of merged node IDs
-
-    // Additional data
-    payloadJson: text("payload_json"), // type-specific additional data
+    // Keywords
+    keywords: text("keywords_json").notNull().default("[]"),
 
     // Processing status
-    mergeStatus: text("merge_status", {
-      enum: MERGE_STATUS_VALUES,
-    })
-      .notNull()
-      .default("pending"),
-    mergeAttempts: integer("merge_attempts").notNull().default(0),
-    mergeNextRunAt: integer("merge_next_run_at"),
-    mergeErrorCode: text("merge_error_code"),
-    mergeErrorMessage: text("merge_error_message"),
     embeddingStatus: text("embedding_status", {
       enum: EMBEDDING_STATUS_VALUES,
     })
@@ -284,113 +267,34 @@ export const contextNodes = sqliteTable(
       .default("pending"),
     embeddingAttempts: integer("embedding_attempts").notNull().default(0),
     embeddingNextRunAt: integer("embedding_next_run_at"),
-    embeddingErrorCode: text("embedding_error_code"),
-    embeddingErrorMessage: text("embedding_error_message"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    index("idx_context_nodes_kind").on(table.kind),
     index("idx_context_nodes_thread_id").on(table.threadId),
-    index("idx_context_nodes_merge_status").on(table.mergeStatus),
+    index("idx_context_nodes_event_time").on(table.eventTime),
     index("idx_context_nodes_embedding_status").on(table.embeddingStatus),
-    uniqueIndex("idx_context_nodes_origin_key_unique").on(table.originKey),
   ]
 );
 
-/**
- * Context Edges table
- * Stores relationships between context nodes
- */
-export const contextEdges = sqliteTable(
-  "context_edges",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-
-    // Edge endpoints
-    fromNodeId: integer("from_node_id")
-      .notNull()
-      .references(() => contextNodes.id),
-    toNodeId: integer("to_node_id")
-      .notNull()
-      .references(() => contextNodes.id),
-
-    // Edge type
-    edgeType: text("edge_type", {
-      enum: EDGE_TYPE_VALUES,
-    }).notNull(),
-
-    // Timestamps
-    createdAt: integer("created_at").notNull(),
-  },
-  (table) => [
-    index("idx_context_edges_from").on(table.fromNodeId),
-    index("idx_context_edges_to").on(table.toNodeId),
-    index("idx_context_edges_type").on(table.edgeType),
-    uniqueIndex("idx_context_edges_unique").on(table.fromNodeId, table.toNodeId, table.edgeType),
-  ]
-);
-
-/**
- * Context Screenshot Links table
- * Links context nodes to their source screenshots
- */
 export const contextScreenshotLinks = sqliteTable(
   "context_screenshot_links",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-
-    // Link endpoints
     nodeId: integer("node_id")
       .notNull()
       .references(() => contextNodes.id),
     screenshotId: integer("screenshot_id")
       .notNull()
       .references(() => screenshots.id),
-
-    // Timestamps
     createdAt: integer("created_at").notNull(),
   },
   (table) => [
     index("idx_csl_node").on(table.nodeId),
     index("idx_csl_screenshot").on(table.screenshotId),
     uniqueIndex("idx_csl_unique").on(table.nodeId, table.screenshotId),
-  ]
-);
-
-/**
- * Entity Aliases table
- * Stores alternative names/aliases for entity profiles
- */
-export const entityAliases = sqliteTable(
-  "entity_aliases",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-
-    // Entity reference
-    entityId: integer("entity_id")
-      .notNull()
-      .references(() => contextNodes.id),
-
-    // Alias information
-    alias: text("alias").notNull(),
-    aliasType: text("alias_type", {
-      enum: ALIAS_TYPE_VALUES,
-    }),
-    confidence: real("confidence").notNull().default(1.0),
-    source: text("source", {
-      enum: ALIAS_SOURCE_VALUES,
-    }),
-
-    // Timestamps
-    createdAt: integer("created_at").notNull(),
-  },
-  (table) => [
-    index("idx_entity_aliases_entity").on(table.entityId),
-    index("idx_entity_aliases_alias").on(table.alias),
-    uniqueIndex("idx_entity_aliases_entity_alias_unique").on(table.entityId, table.alias),
   ]
 );
 
@@ -405,19 +309,16 @@ export const vectorDocuments = sqliteTable(
 
     // Vector identification
     vectorId: text("vector_id").notNull().unique(),
-    docType: text("doc_type", {
-      enum: DOC_TYPE_VALUES,
-    }).notNull(),
-    refId: integer("ref_id").notNull(), // references context_nodes.id or screenshots.id
+    docType: text("doc_type").notNull(),
+    refId: integer("ref_id").notNull(), // references context_nodes.id
 
-    // Content hash for idempotency
+    // Content
+    textContent: text("text_content").notNull(),
     textHash: text("text_hash").notNull(),
+    metaPayload: text("meta_payload_json"),
 
-    // Embedding data
-    embedding: blob("embedding"), // stored as BLOB for index rebuild capability
-
-    // Metadata for filtering
-    metaPayload: text("meta_payload").notNull(), // JSON: {kind, thread_id, ts, app_hint, entities, source_key}
+    // Embedding
+    embedding: blob("embedding"),
 
     // Processing status
     embeddingStatus: text("embedding_status", {
@@ -434,17 +335,15 @@ export const vectorDocuments = sqliteTable(
       .default("pending"),
     indexAttempts: integer("index_attempts").notNull().default(0),
     indexNextRunAt: integer("index_next_run_at"),
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    index("idx_vector_documents_embedding_status").on(table.embeddingStatus),
-    index("idx_vector_documents_index_status").on(table.indexStatus),
-    index("idx_vector_documents_text_hash").on(table.textHash),
+    index("idx_vd_embedding_status").on(table.embeddingStatus),
+    index("idx_vd_index_status").on(table.indexStatus),
+    uniqueIndex("idx_vd_text_hash").on(table.textHash),
   ]
 );
 
@@ -461,15 +360,6 @@ export const activitySummaries = sqliteTable(
     windowStart: integer("window_start").notNull(),
     windowEnd: integer("window_end").notNull(),
 
-    // Idempotency
-    idempotencyKey: text("idempotency_key").notNull().unique(),
-
-    // Summary content (extended for Milestone 6)
-    title: text("title"), // One-line title for timeline block display
-    summary: text("summary").notNull(), // Markdown content
-    highlights: text("highlights"), // JSON: string[] - key highlights
-    stats: text("stats"), // JSON: { topApps[], topEntities[], nodeCount, screenshotCount, threadCount }
-
     // Processing status
     status: text("status", {
       enum: SUMMARY_STATUS_VALUES,
@@ -477,17 +367,20 @@ export const activitySummaries = sqliteTable(
       .notNull()
       .default("pending"),
     attempts: integer("attempts").notNull().default(0),
-    nextRunAt: integer("next_run_at"), // For retry scheduling
-    errorCode: text("error_code"),
-    errorMessage: text("error_message"),
+
+    nextRunAt: integer("next_run_at"),
+
+    // Content
+    summaryText: text("summary_text"),
+    highlights: text("highlights_json"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    index("idx_activity_summaries_window").on(table.windowStart, table.windowEnd),
-    index("idx_activity_summaries_status").on(table.status),
+    uniqueIndex("idx_as_window").on(table.windowStart, table.windowEnd),
+    index("idx_as_status").on(table.status),
   ]
 );
 
@@ -513,26 +406,22 @@ export const activityEvents = sqliteTable(
     // Event identification (unique session key for idempotency)
     eventKey: text("event_key").notNull().unique(),
 
-    // Time range
-    startTs: integer("start_ts").notNull(),
-    endTs: integer("end_ts").notNull(),
-    durationMs: integer("duration_ms").notNull(), // Computed: endTs - startTs
-
     // Event metadata
     title: text("title").notNull(),
     kind: text("kind").notNull(), // e.g. focus/work/meeting/break/browse/coding
-    confidence: integer("confidence").notNull().default(5), // 0-10
-    importance: integer("importance").notNull().default(5), // 0-10
+
+    startTs: integer("start_ts").notNull(),
+    endTs: integer("end_ts").notNull(),
 
     // Associations
-    threadId: text("thread_id"), // From context_nodes.threadId for cross-window aggregation
-    nodeIds: text("node_ids"), // JSON: number[] - associated context_nodes.id
+    summaryId: integer("summary_id").references(() => activitySummaries.id),
+    threadId: text("thread_id").references(() => threads.id),
 
-    // Long event marker (computed from durationMs >= 30min)
+    // Long event
     isLong: integer("is_long", { mode: "boolean" }).notNull().default(false),
 
     // Event details (on-demand LLM generation)
-    details: text("details"), // Markdown content
+    detailsText: text("details_text"),
     detailsStatus: text("details_status", {
       enum: ACTIVITY_EVENT_STATUS_VALUES,
     })
@@ -540,17 +429,21 @@ export const activityEvents = sqliteTable(
       .default("pending"),
     detailsAttempts: integer("details_attempts").notNull().default(0),
     detailsNextRunAt: integer("details_next_run_at"),
-    detailsErrorCode: text("details_error_code"),
-    detailsErrorMessage: text("details_error_message"),
+
+    // Linked nodes
+    nodeIds: text("node_ids_json"),
+
+    confidence: integer("confidence"),
+    importance: integer("importance"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
-    index("idx_activity_events_time").on(table.startTs, table.endTs),
-    index("idx_activity_events_thread").on(table.threadId, table.startTs),
-    index("idx_activity_events_is_long").on(table.isLong, table.startTs),
+    index("idx_ae_summary").on(table.summaryId),
+    index("idx_ae_thread").on(table.threadId),
+    index("idx_ae_time").on(table.startTs, table.endTs),
   ]
 );
 
@@ -632,21 +525,17 @@ export type NewScreenshotRecord = typeof screenshots.$inferInsert;
 export type BatchRecord = typeof batches.$inferSelect;
 export type NewBatchRecord = typeof batches.$inferInsert;
 
+// Thread types
+export type ThreadRecord = typeof threads.$inferSelect;
+export type NewThreadRecord = typeof threads.$inferInsert;
+
 // Context Node types
 export type ContextNodeRecord = typeof contextNodes.$inferSelect;
 export type NewContextNodeRecord = typeof contextNodes.$inferInsert;
 
-// Context Edge types
-export type ContextEdgeRecord = typeof contextEdges.$inferSelect;
-export type NewContextEdgeRecord = typeof contextEdges.$inferInsert;
-
 // Context Screenshot Link types
 export type ContextScreenshotLinkRecord = typeof contextScreenshotLinks.$inferSelect;
 export type NewContextScreenshotLinkRecord = typeof contextScreenshotLinks.$inferInsert;
-
-// Entity Alias types
-export type EntityAliasRecord = typeof entityAliases.$inferSelect;
-export type NewEntityAliasRecord = typeof entityAliases.$inferInsert;
 
 // Vector Document types
 export type VectorDocumentRecord = typeof vectorDocuments.$inferSelect;
@@ -670,18 +559,11 @@ export type NewLLMUsageDailyRollupRecord = typeof llmUsageDailyRollups.$inferIns
 // ============================================================================
 // Enum Type Exports (for use in other modules)
 // ============================================================================
-
-export type StorageState = (typeof STORAGE_STATE_VALUES)[number];
 export type VlmStatus = (typeof VLM_STATUS_VALUES)[number];
-export type BatchStatus = (typeof BATCH_STATUS_VALUES)[number];
-export type ContextKind = (typeof CONTEXT_KIND_VALUES)[number];
-export type EdgeType = (typeof EDGE_TYPE_VALUES)[number];
-export type MergeStatus = (typeof MERGE_STATUS_VALUES)[number];
+export type OcrStatus = (typeof OCR_STATUS_VALUES)[number];
+export type ThreadStatus = (typeof THREAD_STATUS_VALUES)[number];
 export type EmbeddingStatus = (typeof EMBEDDING_STATUS_VALUES)[number];
 export type IndexStatus = (typeof INDEX_STATUS_VALUES)[number];
-export type AliasType = (typeof ALIAS_TYPE_VALUES)[number];
-export type AliasSource = (typeof ALIAS_SOURCE_VALUES)[number];
-export type DocType = (typeof DOC_TYPE_VALUES)[number];
 export type SummaryStatus = (typeof SUMMARY_STATUS_VALUES)[number];
 export type ActivityEventStatus = (typeof ACTIVITY_EVENT_STATUS_VALUES)[number];
 

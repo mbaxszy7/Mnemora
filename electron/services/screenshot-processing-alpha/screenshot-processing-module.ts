@@ -1,34 +1,35 @@
 import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
-import { getLogger } from "../logger";
-
 import { getDb } from "../../database";
 import { screenshots } from "../../database/schema";
+import { getLogger } from "../logger";
+import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
+import { screenCaptureEventBus, type ScreenCaptureModuleType } from "../screen-capture";
+import { aiRuntimeService } from "../ai-runtime-service";
+
+import { batchBuilder } from "./batch-builder";
 import type { AcceptedScreenshot, SourceKey } from "./types";
-import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { ScreenshotInput } from "./source-buffer-registry";
+import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { BatchPersistedEvent, BatchReadyEvent } from "./events";
 import { screenshotProcessingEventBus } from "./event-bus";
-import { batchBuilder } from "./batch-builder";
 import { screenshotPipelineScheduler } from "./screenshot-pipeline-scheduler";
 import { activityTimelineScheduler } from "./activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
-import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
-import { ScreenCaptureModuleType } from "../screen-capture";
-import { screenCaptureEventBus } from "../screen-capture";
-import { aiRuntimeService } from "../ai-runtime-service";
+
+type InitializeArgs = {
+  screenCapture: ScreenCaptureModuleType;
+};
 
 export class ScreenshotProcessingModule {
   private readonly logger = getLogger("screenshot-processing-module");
   private initialized = false;
 
-  private cleanupInterval: NodeJS.Timeout | null = null;
-  private cleanupInProgress = false;
-
-  initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
+  initialize(options: InitializeArgs): void {
     if (this.initialized) {
       this.dispose();
     }
+
     const screenCapture = options.screenCapture;
     aiRuntimeService.registerCaptureControlCallbacks({
       stop: async () => {
@@ -39,6 +40,7 @@ export class ScreenshotProcessingModule {
       },
       getState: () => screenCapture.getState(),
     });
+
     sourceBufferRegistry.initialize(this.onPersistAcceptedScreenshot);
 
     screenCaptureEventBus.on("preferences:changed", this.onPreferencesChanged);
@@ -49,7 +51,6 @@ export class ScreenshotProcessingModule {
     screenshotPipelineScheduler.start();
     activityTimelineScheduler.start();
     vectorDocumentScheduler.start();
-
     this.initialized = true;
   }
 
@@ -63,13 +64,12 @@ export class ScreenshotProcessingModule {
     screenshotProcessingEventBus.off("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.off("batch:persisted", this.onBatchPersisted);
 
-    this.stopCleanupLoop();
-
     sourceBufferRegistry.dispose();
 
     screenshotPipelineScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
+
     this.initialized = false;
   }
 
@@ -99,15 +99,8 @@ export class ScreenshotProcessingModule {
         height: accepted.meta.height ?? null,
         appHint: accepted.meta.appHint ?? null,
         windowTitle: accepted.meta.windowTitle ?? null,
-        ocrText: null,
-        ocrStatus: null,
-        ocrAttempts: 0,
-        ocrNextRunAt: null,
-        batchId: null,
         createdAt: now,
         updatedAt: now,
-        filePath: accepted.filePath,
-        storageState: "ephemeral",
       })
       .returning({ id: screenshots.id })
       .get();
@@ -158,9 +151,12 @@ export class ScreenshotProcessingModule {
         [SourceKey, BatchReadyEvent["batches"][SourceKey]]
       >;
 
-      for (const [sourceKey, screenshots] of entries) {
+      for (const [sourceKey, screenshotsForSource] of entries) {
         try {
-          const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, screenshots);
+          const { batch } = await batchBuilder.createAndPersistBatch(
+            sourceKey,
+            screenshotsForSource
+          );
           this.logger.info({ batchId: batch.batchId, sourceKey }, "Batch persisted");
         } catch (error) {
           this.logger.error(
@@ -189,13 +185,6 @@ export class ScreenshotProcessingModule {
       );
     }
   };
-
-  private stopCleanupLoop(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-  }
 }
 
 export const screenshotProcessingModule = new ScreenshotProcessingModule();

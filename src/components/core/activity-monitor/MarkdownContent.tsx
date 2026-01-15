@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import type { AnchorHTMLAttributes, HTMLAttributes } from "react";
 
 interface MarkdownContentProps {
   content: string;
@@ -18,7 +19,7 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
   return (
     <ReactMarkdown
       components={{
-        h2: ({ children }) => (
+        h2: ({ children }: HTMLAttributes<HTMLHeadingElement>) => (
           <h3
             className={`font-semibold first:mt-0 flex items-center gap-2 text-foreground ${
               isCompact ? "text-base mt-4 mb-2" : "text-base mt-6 mb-3"
@@ -27,7 +28,7 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
             {children}
           </h3>
         ),
-        h3: ({ children }) => (
+        h3: ({ children }: HTMLAttributes<HTMLHeadingElement>) => (
           <h4
             className={`font-medium text-muted-foreground ${
               isCompact ? "text-sm mt-3 mb-1.5" : "text-sm mt-4 mb-2"
@@ -36,12 +37,12 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
             {children}
           </h4>
         ),
-        ul: ({ children }) => (
+        ul: ({ children }: HTMLAttributes<HTMLUListElement>) => (
           <ul className={`${isCompact ? "space-y-1 mb-3" : "space-y-1.5 mb-4"} last:mb-0`}>
             {children}
           </ul>
         ),
-        li: ({ children }) => {
+        li: ({ children }: HTMLAttributes<HTMLLIElement>) => {
           // Use a fixed height for the bullet container that matches the text's line-height (1.25rem for text-sm)
           // to ensure perfect vertical centering with the first line.
           return (
@@ -53,12 +54,12 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
             </li>
           );
         },
-        p: ({ children }) => (
+        p: ({ children }: HTMLAttributes<HTMLParagraphElement>) => (
           <p className={`text-sm text-muted-foreground ${isCompact ? "my-1.5" : "my-2"} last:mb-0`}>
             {children}
           </p>
         ),
-        a: ({ href, children }) => (
+        a: ({ href, children }: AnchorHTMLAttributes<HTMLAnchorElement>) => (
           <a
             href={href}
             className="text-primary hover:underline"
@@ -68,7 +69,7 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
             {children}
           </a>
         ),
-        code: ({ className, children, ...props }) => {
+        code: ({ className, children, ...props }: HTMLAttributes<HTMLElement>) => {
           const match = /language-(\w+)/.exec(className || "");
           const codeString = String(children).replace(/\n$/, "");
 

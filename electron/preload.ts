@@ -17,9 +17,7 @@ import type {
   SearchQuery,
   SearchResult,
   ExpandedContextNode,
-  GraphTraversalResult,
   ScreenshotEvidence,
-  EdgeType,
 } from "@shared/context-types";
 import type { SchedulerStatePayload } from "@shared/ipc-types";
 import type {
@@ -232,11 +230,6 @@ export interface ContextGraphApi {
   search(query: SearchQuery): Promise<IPCResult<SearchResult>>;
   cancelSearch(requestId: string): Promise<IPCResult<boolean>>;
   getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>>;
-  traverse(req: {
-    nodeId: string;
-    depth: number;
-    edgeTypes?: EdgeType[];
-  }): Promise<IPCResult<GraphTraversalResult>>;
   getEvidence(nodeIds: number[]): Promise<IPCResult<ScreenshotEvidence[]>>;
 }
 
@@ -251,14 +244,6 @@ const contextGraphApi: ContextGraphApi = {
 
   async getThread(threadId: string): Promise<IPCResult<ExpandedContextNode[]>> {
     return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET_THREAD, threadId);
-  },
-
-  async traverse(req: {
-    nodeId: string;
-    depth: number;
-    edgeTypes?: EdgeType[];
-  }): Promise<IPCResult<GraphTraversalResult>> {
-    return ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_TRAVERSE, req);
   },
 
   async getEvidence(nodeIds: number[]): Promise<IPCResult<ScreenshotEvidence[]>> {

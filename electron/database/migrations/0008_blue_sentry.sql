@@ -1,1 +1,0 @@
-CREATE UNIQUE INDEX `idx_entity_aliases_entity_alias_unique` ON `entity_aliases` (`entity_id`,`alias`);

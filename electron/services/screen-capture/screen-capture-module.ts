@@ -37,7 +37,7 @@ import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
 import type { CapturePreferences } from "@shared/capture-source-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
-import { screenshotProcessingModule } from "../screenshot-processing/screenshot-processing-module";
+import { screenshotProcessingModule } from "../screenshot-processing-alpha/screenshot-processing-module";
 import { aiRuntimeService } from "../ai-runtime-service";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];

@@ -1,1 +1,0 @@
-CREATE INDEX `idx_context_nodes_merge_status` ON `context_nodes` (`merge_status`);

@@ -35,8 +35,8 @@ export class QueueInspector {
     try {
       const db = getDb();
 
-      // Batch status counts
-      const batchCounts = await this.countByStatus(db, batches, "status");
+      // Batch status counts (VLM queue)
+      const batchCounts = await this.countByStatus(db, batches, "vlmStatus");
 
       // Vector documents - embedding status
       const vectorEmbeddingCounts = await this.countByStatus(
@@ -50,9 +50,6 @@ export class QueueInspector {
 
       // Activity summaries status
       const activitySummaryCounts = await this.countByStatus(db, activitySummaries, "status");
-
-      // Context nodes - merge status
-      const contextMergeCounts = await this.countByStatus(db, contextNodes, "mergeStatus");
 
       // Context nodes - embedding status
       const contextEmbeddingCounts = await this.countByStatus(db, contextNodes, "embeddingStatus");
@@ -83,8 +80,8 @@ export class QueueInspector {
             (activitySummaryCounts.get("failed_permanent") ?? 0),
         },
         contextNodes: {
-          mergePending: contextMergeCounts.get("pending") ?? 0,
-          mergeRunning: contextMergeCounts.get("running") ?? 0,
+          mergePending: 0,
+          mergeRunning: 0,
           embeddingPending: contextEmbeddingCounts.get("pending") ?? 0,
           embeddingRunning: contextEmbeddingCounts.get("running") ?? 0,
         },

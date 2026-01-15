@@ -273,6 +273,7 @@ export const contextNodes = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (table) => [
+    index("idx_context_nodes_batch_id").on(table.batchId),
     index("idx_context_nodes_thread_id").on(table.threadId),
     index("idx_context_nodes_event_time").on(table.eventTime),
     index("idx_context_nodes_embedding_status").on(table.embeddingStatus),

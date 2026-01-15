@@ -22,6 +22,13 @@
       "when": 1768491749000,
       "tag": "0002_screenshots_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1768494286456,
+      "tag": "0003_sweet_namor",
+      "breakpoints": true
     }
   ]
 }

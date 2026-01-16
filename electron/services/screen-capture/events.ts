@@ -7,6 +7,7 @@ import type {
   CaptureSchedulerEvent,
   CaptureSchedulerEventHandler,
   CaptureSchedulerEventPayload,
+  BackpressureLevelChangedEvent,
 } from "./types";
 
 export type {
@@ -26,4 +27,5 @@ export interface ScreenCaptureEventMap {
   "capture:error": CaptureErrorEvent;
   "capture-scheduler:state": CaptureSchedulerStateEvent;
   "preferences:changed": PreferencesChangedEvent;
+  "backpressure:level-changed": BackpressureLevelChangedEvent;
 }

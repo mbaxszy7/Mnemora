@@ -91,23 +91,25 @@ export const processingConfig = {
   },
 
   /**
+   * Global Scheduler Configuration
+   */
+  scheduler: {
+    /** Default interval to scan for new work (ms) */
+    scanIntervalMs: 30 * 1000, // 30 seconds
+    /** Threshold to detect stale "running" tasks for crash recovery (ms) */
+    staleRunningThresholdMs: 5 * 60 * 1000, // 5 minutes
+    /** Age after which a record is treated as "recovery" lane instead of "realtime" (ms) */
+    laneRecoveryAgeMs: 10 * 1000 * 60, // 10 minutes
+  },
+
+  /**
    * Retry Configuration (All Schedulers)
-   *
-   * Applies to: BatchScheduler (VLM/Thread LLM), VectorDocumentScheduler,
-   * ActivityTimelineScheduler
-   *
-   * State machine: pending → running → succeeded | failed → failed_permanent
-   * - Failed tasks retry after delayMs
-   * - After maxAttempts, status becomes failed_permanent
-   * - Crash recovery: running tasks older than staleRunningThresholdMs → pending
    */
   retry: {
     /** Maximum retry attempts before marking as failed_permanent */
     maxAttempts: 2,
     /** Delay before retry (ms) */
     delayMs: 60 * 1000, // 1 minute
-    /** Threshold to detect stale "running" tasks for crash recovery (ms) */
-    staleRunningThresholdMs: 5 * 60 * 1000, // 5 minutes
   },
 
   /**
@@ -201,6 +203,8 @@ export const processingConfig = {
     ],
     /** Observation period before recovering to lower pressure level (ms) */
     recoveryHysteresisMs: 30000, // 30 seconds
+    /** Backpressure level change check interval (ms) */
+    checkIntervalMs: 5000,
     /** Pending count must stay below threshold for this many cycles */
     recoveryBatchThreshold: 2,
   },

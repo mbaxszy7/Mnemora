@@ -126,6 +126,199 @@ CREATE INDEX idx_screenshots_batch_id ON screenshots(batch_id);
 
 ---
 
+### 1.1 截图文件生命周期（Image Lifecycle）
+
+> [!IMPORTANT]
+> 截图文件仅在 VLM/OCR 处理期间临时保留，处理完成后立即删除以节省磁盘空间。
+> 使用现有 `screenshots.filePath` 和 `screenshots.storageState` 字段追踪文件状态。
+
+#### Schema 字段说明
+
+```typescript
+// electron/database/schema.ts
+filePath: text("file_path"),                      // 截图文件路径
+storageState: text("storage_state", {
+  enum: ["ephemeral", "persisted", "deleted"],    // 存储状态
+}),
+```
+
+| storageState | 含义 | 何时设置 |
+|--------------|------|----------|
+| `ephemeral` | 临时文件，待处理 | 截图入库时初始值 |
+| `deleted` | 文件已删除 | VLM/OCR 处理完成后 |
+| `persisted` | 用户主动保留（可选功能） | 预留扩展，当前不使用 |
+
+#### 生命周期阶段图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Screenshot Image Lifecycle                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  [Capture Service]                                                           │
+│       │                                                                      │
+│       ▼ 保存图片到临时目录                                                    │
+│  ┌──────────────────────────────────────────────────────────┐               │
+│  │ 临时文件: captures/<timestamp>_<hash>.webp               │               │
+│  │ • filePath 存入 SourceBuffer (内存)                       │               │
+│  └──────────────────────────────────────────────────────────┘               │
+│       │                                                                      │
+│       │ pHash 去重                                                           │
+│       ▼                                                                      │
+│  ┌─────────┐                                                                 │
+│  │ 重复?   │──是──▶ [立即删除] safeDeleteCaptureFile()                       │
+│  └────┬────┘                                                                 │
+│       │ 否                                                                   │
+│       ▼                                                                      │
+│  [screenshots 表入库]                                                        │
+│       │ filePath = 实际路径                                                  │
+│       │ storageState = "ephemeral"                                           │
+│       ▼                                                                      │
+│  [SourceBuffer] 积累截图                                                     │
+│       │                                                                      │
+│       │ 触发 Batch（2 张或 60 秒）                                            │
+│       ▼                                                                      │
+│  [Batch 创建]                                                                │
+│       │ 从 screenshots.filePath 读取图片                                     │
+│       ▼                                                                      │
+│  ┌──────────────────────────────────────────────────────────┐               │
+│  │ VLM 处理                                                  │               │
+│  │ • Base64 编码图片发送给 VLM                               │               │
+│  │ • 判断截图是否包含 knowledge (需要 OCR)                   │               │
+│  │ • 提取 text_region 坐标（用于 OCR 裁剪）                  │               │
+│  └──────────────────────────────────────────────────────────┘               │
+│       │                                                                      │
+│       ├──────────────────────────────────────────────────────┐               │
+│       │                                                      │               │
+│       ▼                                                      ▼               │
+│  ┌──────────────────────┐                  ┌──────────────────────────────┐ │
+│  │ 需要 OCR？           │                  │ 不需要 OCR                   │ │
+│  │ (knowledge 且 en/zh) │                  │ (其他语言或无 knowledge)     │ │
+│  └──────────┬───────────┘                  └──────────────┬───────────────┘ │
+│             │                                              │                 │
+│             ▼                                              ▼                 │
+│  ┌──────────────────────────────────┐      ┌──────────────────────────────┐ │
+│  │ OCR 处理                         │      │ ✅ VLM 完成后删除            │ │
+│  │ • 从 filePath 读取图片           │      │    storageState = "deleted"  │ │
+│  │ • 裁剪 text_region               │      │    safeDeleteCaptureFile()   │ │
+│  │ • Tesseract.js OCR               │      └──────────────────────────────┘ │
+│  │ • ocr_text 存入 screenshots 表   │                                       │
+│  └──────────────────────────────────┘                                       │
+│             │                                                                │
+│             ▼                                                                │
+│  ┌──────────────────────────────────┐                                       │
+│  │ ✅ OCR 完成后删除                 │                                       │
+│  │    storageState = "deleted"      │                                       │
+│  │    safeDeleteCaptureFile()       │                                       │
+│  └──────────────────────────────────┘                                       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### 关键设计决策
+
+| 设计点 | 决策 | 理由 |
+|-------|------|------|
+| **filePath 入库** | `screenshots.filePath = 实际路径` | 需要在 VLM/OCR 处理时从 DB 读取文件位置。 |
+| **storageState 追踪** | 使用 `ephemeral → deleted` 状态转换 | DB 记录文件是否已删，避免重复删除或读取已删文件。 |
+| **删除时机** | VLM 成功后（无 OCR）或 OCR 成功后（有 OCR） | 确保图片在被需要时可用，用完即删。 |
+| **删除失败容错** | `safeDeleteCaptureFile()` 静默失败，不阻断流程 | 删除失败仅记录日志，依赖后续 cleanup 机制。 |
+
+#### 实现代码要点
+
+```typescript
+// BatchVLMScheduler: VLM 成功后
+async processOneBatch(batch: Batch): Promise<void> {
+  // 1. 从 DB 读取 filePath 并加载图片 Base64
+  const screenshotRecords = await db.select().from(screenshots).where(...);
+  const images = await loadBatchImages(screenshotRecords);
+  
+  // 2. 调用 VLM
+  const vlmResult = await callVLM(images);
+  
+  // 3. 落库 context_nodes / 设置 ocrStatus
+  await persistVLMResults(vlmResult);
+  
+  // 4. 删除不需要 OCR 的图片
+  for (const ss of screenshotRecords) {
+    if (ss.ocrStatus === null && ss.storageState !== "deleted") {
+      await safeDeleteCaptureFile(ss.filePath);
+      await db.update(screenshots)
+        .set({ storageState: "deleted", updatedAt: Date.now() })
+        .where(eq(screenshots.id, ss.id));
+    }
+  }
+}
+
+// OCRScheduler: OCR 成功后
+async processOneScreenshot(ss: ScreenshotRecord): Promise<void> {
+  // 检查文件是否已删除
+  if (ss.storageState === "deleted" || !ss.filePath) {
+    throw new Error("Screenshot file not available");
+  }
+  
+  // 1. 读取并裁剪图片
+  const imageBuffer = await loadAndCropImage(ss.filePath, ss.textRegion);
+  
+  // 2. OCR
+  const ocrText = await ocrService.recognize(imageBuffer);
+  
+  // 3. 更新 screenshots.ocr_text
+  await updateOcrText(ss.id, ocrText);
+  
+  // 4. 删除图片并更新 storageState
+  await safeDeleteCaptureFile(ss.filePath);
+  await db.update(screenshots)
+    .set({ storageState: "deleted", updatedAt: Date.now() })
+    .where(eq(screenshots.id, ss.id));
+}
+```
+
+#### 与 Cleanup Loop 的关系
+
+> [!NOTE]
+> 新 pipeline **不再依赖周期性 cleanup loop**。图片删除由处理流程主动触发，而非等待 TTL 过期。
+
+| 场景 | 处理方式 |
+|------|----------|
+| VLM 成功 + 无 OCR | VLM 完成后立即删除，设置 `storageState = "deleted"` |
+| VLM 成功 + 需要 OCR | OCR 完成后立即删除，设置 `storageState = "deleted"` |
+| VLM 失败 | 图片保留（`storageState = "ephemeral"`），VLM 重试时需要；达到 `failed_permanent` 后由兜底 cleanup 清理 |
+| OCR 失败 | 图片保留（`storageState = "ephemeral"`），OCR 重试时需要；达到 `failed_permanent` 后由兜底 cleanup 清理 |
+| App 崩溃 | 下次启动时，扫描 `storageState = "ephemeral"` 且 `createdAt` 过久的记录，执行兜底清理 |
+
+#### 兜底 Cleanup（Fallback Cleanup）
+
+为处理异常情况（崩溃、永久失败等），保留一个兜底清理机制：
+
+```typescript
+// 启动时或定期执行
+async fallbackCleanup(): Promise<void> {
+  const maxAgeMs = 24 * 60 * 60 * 1000; // 24 小时
+  const now = Date.now();
+  
+  // 查找过期的 ephemeral 文件
+  const staleScreenshots = await db.select()
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.storageState, "ephemeral"),
+        lt(screenshots.createdAt, now - maxAgeMs),
+        isNotNull(screenshots.filePath)
+      )
+    );
+  
+  for (const ss of staleScreenshots) {
+    await safeDeleteCaptureFile(ss.filePath);
+    await db.update(screenshots)
+      .set({ storageState: "deleted", updatedAt: now })
+      .where(eq(screenshots.id, ss.id));
+  }
+}
+```
+
+---
+
 ### 2. batches 表
 
 ```sql
@@ -511,6 +704,9 @@ CREATE INDEX idx_ae_time ON activity_events(start_ts, end_ts);
 ┌────────────────────────────────────────────────────────────────────────────┐
 │                           Scheduler Architecture                            │
 ├────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│  > **Observability Tip**: Use `ScreenshotProcessingEventBus` for all        │
+│    scheduler state changes and milestone completions.                       │
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────┐               │
 │  │               BatchScheduler                            │               │

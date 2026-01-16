@@ -1,7 +1,6 @@
 import { screen } from "electron";
 
 import type { CapturePreferences } from "@shared/capture-source-types";
-import { AutoRefreshCache } from "../screen-capture/auto-refresh-cache";
 import { getLogger } from "../logger";
 import { processingConfig } from "./config";
 import { computeHash, isDuplicateByLast } from "./phash-dedup";
@@ -35,6 +34,7 @@ export interface ScreenshotInput {
 export class SourceBufferRegistry {
   private buffers = new Map<SourceKey, SourceBuffer>();
   private activeSources = new Set<SourceKey>();
+  private batchTimeoutTimers = new Map<SourceKey, NodeJS.Timeout>();
   private disposed = false;
   private processingBatches = false;
   private persistAcceptedScreenshot:
@@ -42,10 +42,10 @@ export class SourceBufferRegistry {
     | null = null;
 
   private preferences: CapturePreferences | null = null;
-  private batchTriggerCache: AutoRefreshCache<void> | null = null;
 
   private readonly batchSize = processingConfig.batch.minSize;
   private readonly batchTimeoutMs = processingConfig.batch.timeoutMs;
+  private phashThreshold = processingConfig.backpressure.levels[0].phashThreshold;
   private readonly gracePeriodMs = 60 * 1000;
   private readonly computeHashFn: (imageBuffer: Buffer) => Promise<string>;
 
@@ -59,8 +59,7 @@ export class SourceBufferRegistry {
     this.preferences = null;
     this.persistAcceptedScreenshot = onPersistAcceptedScreenshot;
 
-    this.batchTriggerCache?.dispose();
-    this.batchTriggerCache = null;
+    this.clearAllBatchTimeouts();
     this.disposed = false;
 
     try {
@@ -68,17 +67,13 @@ export class SourceBufferRegistry {
     } catch (error) {
       logger.error({ error }, "Failed to perform initial source refresh");
     }
+  }
 
-    this.batchTriggerCache = new AutoRefreshCache<void>({
-      fetchFn: async () => {
-        this.processReadyBatches("timeout");
-      },
-      interval: this.batchTimeoutMs,
-      immediate: false,
-      onError: (error) => {
-        logger.error({ error }, "Failed to process batch timeouts");
-      },
-    });
+  /**
+   * Update the pHash Hamming distance threshold for deduplication.
+   */
+  setPhashThreshold(threshold: number): void {
+    this.phashThreshold = threshold;
   }
 
   async add(input: ScreenshotInput): Promise<AddResult> {
@@ -94,7 +89,7 @@ export class SourceBufferRegistry {
     const phash: string =
       input.phash ?? screenshot.phash ?? (await this.computeHashFn(imageBuffer));
 
-    if (isDuplicateByLast(phash, buffer.lastPHash)) {
+    if (isDuplicateByLast(phash, buffer.lastPHash, this.phashThreshold)) {
       logger.debug({ sourceKey, phash }, "Rejected screenshot: duplicate");
       return { accepted: false, reason: "duplicate" };
     }
@@ -135,6 +130,7 @@ export class SourceBufferRegistry {
     }
 
     this.processReadyBatches("add");
+    this.ensureBatchTimeout(sourceKey, buffer);
 
     return { accepted: true };
   }
@@ -159,8 +155,7 @@ export class SourceBufferRegistry {
     if (this.disposed) return;
 
     this.disposed = true;
-    this.batchTriggerCache?.dispose();
-    this.batchTriggerCache = null;
+    this.clearAllBatchTimeouts();
     this.buffers.clear();
     this.activeSources.clear();
   }
@@ -175,6 +170,7 @@ export class SourceBufferRegistry {
     const screenshots = [...buffer.screenshots];
     buffer.screenshots = [];
     buffer.batchStartTs = null;
+    this.clearBatchTimeout(sourceKey);
 
     return screenshots;
   }
@@ -201,6 +197,7 @@ export class SourceBufferRegistry {
 
     for (const key of keysToRemove) {
       this.drainForBatch(key);
+      this.clearBatchTimeout(key);
       this.buffers.delete(key);
     }
 
@@ -263,6 +260,84 @@ export class SourceBufferRegistry {
     }
 
     return buffer;
+  }
+
+  private ensureBatchTimeout(sourceKey: SourceKey, buffer: SourceBuffer): void {
+    if (buffer.batchStartTs === null) {
+      return;
+    }
+
+    if (this.batchTimeoutTimers.has(sourceKey)) {
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - buffer.batchStartTs;
+    const delayMs = Math.max(0, this.batchTimeoutMs - elapsed);
+
+    const timer = setTimeout(() => {
+      this.batchTimeoutTimers.delete(sourceKey);
+      this.handleBatchTimeout(sourceKey);
+    }, delayMs);
+
+    this.batchTimeoutTimers.set(sourceKey, timer);
+  }
+
+  private handleBatchTimeout(sourceKey: SourceKey): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const buffer = this.buffers.get(sourceKey);
+    if (!buffer || buffer.screenshots.length === 0 || buffer.batchStartTs === null) {
+      return;
+    }
+
+    if (this.processingBatches) {
+      this.scheduleBatchTimeoutRetry(sourceKey);
+      return;
+    }
+
+    this.processReadyBatches("timeout");
+    this.rescheduleBatchTimeoutIfNeeded(sourceKey);
+  }
+
+  private rescheduleBatchTimeoutIfNeeded(sourceKey: SourceKey): void {
+    const buffer = this.buffers.get(sourceKey);
+    if (!buffer || buffer.screenshots.length === 0 || buffer.batchStartTs === null) {
+      return;
+    }
+
+    this.ensureBatchTimeout(sourceKey, buffer);
+  }
+
+  private scheduleBatchTimeoutRetry(sourceKey: SourceKey): void {
+    if (this.batchTimeoutTimers.has(sourceKey)) {
+      return;
+    }
+
+    const delayMs = Math.min(250, this.batchTimeoutMs);
+    const timer = setTimeout(() => {
+      this.batchTimeoutTimers.delete(sourceKey);
+      this.handleBatchTimeout(sourceKey);
+    }, delayMs);
+
+    this.batchTimeoutTimers.set(sourceKey, timer);
+  }
+
+  private clearBatchTimeout(sourceKey: SourceKey): void {
+    const timer = this.batchTimeoutTimers.get(sourceKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.batchTimeoutTimers.delete(sourceKey);
+    }
+  }
+
+  private clearAllBatchTimeouts(): void {
+    for (const timer of this.batchTimeoutTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.batchTimeoutTimers.clear();
   }
 
   private processReadyBatches(trigger: "add" | "timeout"): void {

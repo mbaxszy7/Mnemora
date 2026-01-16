@@ -106,7 +106,8 @@ export type CaptureSchedulerEvent =
   | "capture:complete"
   | "capture:error"
   | "capture-scheduler:state"
-  | "preferences:changed";
+  | "preferences:changed"
+  | "backpressure:level-changed";
 
 /**
  * Event emitted when a capture cycle begins
@@ -158,6 +159,19 @@ export interface PreferencesChangedEvent {
 }
 
 /**
+ * Event emitted when backpressure level changes
+ */
+export interface BackpressureLevelChangedEvent {
+  type: "backpressure:level-changed";
+  timestamp: number;
+  level: number;
+  config: {
+    intervalMultiplier: number;
+    phashThreshold: number;
+  };
+}
+
+/**
  * Union type for all scheduler event payloads
  */
 export type CaptureSchedulerEventPayload =
@@ -165,7 +179,8 @@ export type CaptureSchedulerEventPayload =
   | CaptureCompleteEvent
   | CaptureErrorEvent
   | CaptureSchedulerStateEvent
-  | PreferencesChangedEvent;
+  | PreferencesChangedEvent
+  | BackpressureLevelChangedEvent;
 
 /**
  * Event handler type for scheduler events

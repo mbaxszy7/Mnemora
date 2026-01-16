@@ -39,6 +39,8 @@ import type { CapturePreferences } from "@shared/capture-source-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenshotProcessingModule } from "../screenshot-processing-alpha/screenshot-processing-module";
 import { aiRuntimeService } from "../ai-runtime-service";
+import { backpressureMonitor } from "./backpressure-monitor";
+import type { BackpressureLevelChangedEvent } from "./types";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
@@ -66,6 +68,7 @@ class ScreenCaptureModule {
     );
 
     screenCaptureEventBus.on("capture-scheduler:state", this.onSchedulerStateChanged);
+    screenCaptureEventBus.on("backpressure:level-changed", this.onBackpressureLevelChanged);
     this.setupPowerMonitorCallbacks();
     this.logger.info("ScreenCaptureModule initialized");
   }
@@ -257,6 +260,20 @@ class ScreenCaptureModule {
     this.processingInitialized = true;
   }
 
+  private readonly onBackpressureLevelChanged = (event: BackpressureLevelChangedEvent) => {
+    this.logger.info(
+      { level: event.level, config: event.config },
+      "Handling backpressure level change"
+    );
+
+    // Update capture interval
+    const newInterval = DEFAULT_SCHEDULER_CONFIG.interval * event.config.intervalMultiplier;
+    this.updateConfig({ interval: newInterval });
+
+    // Update phash threshold in processing module
+    screenshotProcessingModule.setPhashThreshold(event.config.phashThreshold);
+  };
+
   start(): void {
     if (this.disposed) {
       this.logger.warn("Cannot start disposed module");
@@ -264,6 +281,8 @@ class ScreenCaptureModule {
     }
 
     this.initializeProcessingPipeline();
+    // Start backpressure monitor
+    backpressureMonitor.start();
     // Reset circuit breaker when starting capture
     aiRuntimeService.resetBreaker();
     this.logger.info("Starting capture scheduler");
@@ -277,6 +296,7 @@ class ScreenCaptureModule {
     }
     this.logger.info("Stopping scheduler");
     this.captureScheduler.stop();
+    backpressureMonitor.stop();
   }
 
   pause(): void {
@@ -346,7 +366,9 @@ class ScreenCaptureModule {
     this.disposed = true;
 
     screenCaptureEventBus.off("capture-scheduler:state", this.onSchedulerStateChanged);
+    screenCaptureEventBus.off("backpressure:level-changed", this.onBackpressureLevelChanged);
     this.captureScheduler.stop();
+    backpressureMonitor.stop();
     screenshotProcessingModule.dispose();
     this.processingInitialized = false;
 

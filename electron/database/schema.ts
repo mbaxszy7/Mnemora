@@ -1,35 +1,27 @@
 import { sqliteTable, text, integer, blob, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const STORAGE_STATE_VALUES = ["ephemeral", "persisted", "deleted"] as const;
-export const VLM_STATUS_VALUES = [
+
+// Base processing status values (shared by VLM, OCR, Embedding, Index, ActivityEvent)
+export const PROCESSING_STATUS_VALUES = [
   "pending",
   "running",
   "succeeded",
   "failed",
   "failed_permanent",
 ] as const;
-export const OCR_STATUS_VALUES = [
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "failed_permanent",
-] as const;
+
+// Derived status arrays - all use the same base values
+export const VLM_STATUS_VALUES = PROCESSING_STATUS_VALUES;
+export const OCR_STATUS_VALUES = PROCESSING_STATUS_VALUES;
+export const EMBEDDING_STATUS_VALUES = PROCESSING_STATUS_VALUES;
+export const INDEX_STATUS_VALUES = PROCESSING_STATUS_VALUES;
+export const ACTIVITY_EVENT_STATUS_VALUES = PROCESSING_STATUS_VALUES;
+
+// Thread has different semantics
 export const THREAD_STATUS_VALUES = ["active", "inactive", "closed"] as const;
-export const EMBEDDING_STATUS_VALUES = [
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "failed_permanent",
-] as const;
-export const INDEX_STATUS_VALUES = [
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "failed_permanent",
-] as const;
+
+// Summary extends base with "no_data" (cannot use spread due to drizzle-orm tuple type requirement)
 export const SUMMARY_STATUS_VALUES = [
   "pending",
   "running",
@@ -89,7 +81,6 @@ export const llmConfig = sqliteTable("llm_config", {
 // ============================================================================
 // Screenshot Processing Tables
 // ============================================================================
-
 export const threads = sqliteTable(
   "threads",
   {
@@ -385,14 +376,6 @@ export const activitySummaries = sqliteTable(
   ]
 );
 
-export const ACTIVITY_EVENT_STATUS_VALUES = [
-  "pending",
-  "running",
-  "succeeded",
-  "failed",
-  "failed_permanent",
-] as const;
-
 /**
  * Activity Events table
  * Stores cross-window event sessions for Activity Monitor
@@ -560,6 +543,7 @@ export type NewLLMUsageDailyRollupRecord = typeof llmUsageDailyRollups.$inferIns
 // ============================================================================
 // Enum Type Exports (for use in other modules)
 // ============================================================================
+export type ProcessingStatus = (typeof PROCESSING_STATUS_VALUES)[number];
 export type VlmStatus = (typeof VLM_STATUS_VALUES)[number];
 export type OcrStatus = (typeof OCR_STATUS_VALUES)[number];
 export type ThreadStatus = (typeof THREAD_STATUS_VALUES)[number];

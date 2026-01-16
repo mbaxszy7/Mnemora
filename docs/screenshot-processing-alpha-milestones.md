@@ -41,7 +41,7 @@
 - OCR：仅对 knowledge 且语言 en/zh 做本地 OCR
 - Search/Activity：不依赖 context_edges
 - 鲁棒性：stale recovery + retry（全局配置：maxAttempts=2，delayMs=60s） + 幂等
-- 可观测：LLMUsage + trace
+- 可观测：LLMUsage + trace + **Event Bus (推荐用于调度与数据状态观测)**
 
 ---
 
@@ -56,17 +56,164 @@
 
 ---
 
+## 截图文件生命周期（Image Lifecycle）
+
+> [!IMPORTANT]
+> 截图文件仅在 VLM/OCR 处理期间临时保留，处理完成后立即删除以节省磁盘空间。
+> 使用现有 `screenshots.filePath` 和 `screenshots.storageState` 字段追踪文件状态。
+
+此机制横跨 M2（VLM）和 M3（OCR），是 pipeline 的核心存储策略。
+
+### Schema 字段说明
+
+```typescript
+// electron/database/schema.ts
+filePath: text("file_path"),                      // 截图文件路径
+storageState: text("storage_state", {
+  enum: ["ephemeral", "persisted", "deleted"],    // 存储状态
+}),
+```
+
+| storageState | 含义                     | 何时设置             |
+| ------------ | ------------------------ | -------------------- |
+| `ephemeral`  | 临时文件，待处理         | 截图入库时初始值     |
+| `deleted`    | 文件已删除               | VLM/OCR 处理完成后   |
+| `persisted`  | 用户主动保留（可选功能） | 预留扩展，当前不使用 |
+
+### 生命周期阶段图
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        Screenshot Image Lifecycle                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  [Capture Service]                                                           │
+│       │                                                                      │
+│       ▼ 保存图片到临时目录                                                    │
+│  ┌──────────────────────────────────────────────────────────┐               │
+│  │ 临时文件: captures/<timestamp>_<hash>.webp               │               │
+│  │ • filePath 存入 SourceBuffer (内存)                       │               │
+│  └──────────────────────────────────────────────────────────┘               │
+│       │                                                                      │
+│       │ pHash 去重                                                           │
+│       ▼                                                                      │
+│  ┌─────────┐                                                                 │
+│  │ 重复?   │──是──▶ [立即删除] safeDeleteCaptureFile()                       │
+│  └────┬────┘                                                                 │
+│       │ 否                                                                   │
+│       ▼                                                                      │
+│  [screenshots 表入库]                                                        │
+│       │ filePath = 实际路径                                                  │
+│       │ storageState = "ephemeral"                                           │
+│       ▼                                                                      │
+│  [SourceBuffer] 积累截图                                                     │
+│       │                                                                      │
+│       │ 触发 Batch（2 张或 60 秒）                                            │
+│       ▼                                                                      │
+│  [Batch 创建]                                                                │
+│       │ 从 screenshots.filePath 读取图片                                     │
+│       ▼                                                                      │
+│  ┌──────────────────────────────────────────────────────────┐               │
+│  │ VLM 处理 (M2)                                             │               │
+│  │ • Base64 编码图片发送给 VLM                               │               │
+│  │ • 判断截图是否包含 knowledge (需要 OCR)                   │               │
+│  │ • 提取 text_region 坐标（用于 OCR 裁剪）                  │               │
+│  └──────────────────────────────────────────────────────────┘               │
+│       │                                                                      │
+│       ├──────────────────────────────────────────────────────┐               │
+│       │                                                      │               │
+│       ▼                                                      ▼               │
+│  ┌──────────────────────┐                  ┌──────────────────────────────┐ │
+│  │ 需要 OCR？           │                  │ 不需要 OCR                   │ │
+│  │ (knowledge 且 en/zh) │                  │ (其他语言或无 knowledge)     │ │
+│  └──────────┬───────────┘                  └──────────────┬───────────────┘ │
+│             │                                              │                 │
+│             ▼                                              ▼                 │
+│  ┌──────────────────────────────────┐      ┌──────────────────────────────┐ │
+│  │ OCR 处理 (M3)                    │      │ ✅ VLM 完成后删除 (M2)       │ │
+│  │ • 从 filePath 读取图片           │      │    storageState = "deleted"  │ │
+│  │ • 裁剪 text_region               │      │    safeDeleteCaptureFile()   │ │
+│  │ • Tesseract.js OCR               │      └──────────────────────────────┘ │
+│  │ • ocr_text 存入 screenshots 表   │                                       │
+│  └──────────────────────────────────┘                                       │
+│             │                                                                │
+│             ▼                                                                │
+│  ┌──────────────────────────────────┐                                       │
+│  │ ✅ OCR 完成后删除 (M3)            │                                       │
+│  │    storageState = "deleted"      │                                       │
+│  │    safeDeleteCaptureFile()       │                                       │
+│  └──────────────────────────────────┘                                       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 关键设计决策
+
+| 设计点                | 决策                                           | 理由                                              |
+| --------------------- | ---------------------------------------------- | ------------------------------------------------- |
+| **filePath 入库**     | `screenshots.filePath = 实际路径`              | 需要在 VLM/OCR 处理时从 DB 读取文件位置。         |
+| **storageState 追踪** | 使用 `ephemeral → deleted` 状态转换            | DB 记录文件是否已删，避免重复删除或读取已删文件。 |
+| **删除时机**          | VLM 成功后（无 OCR）或 OCR 成功后（有 OCR）    | 确保图片在被需要时可用，用完即删。                |
+| **删除失败容错**      | `safeDeleteCaptureFile()` 静默失败，不阻断流程 | 删除失败仅记录日志，依赖后续 cleanup 机制。       |
+
+### 与 Cleanup Loop 的关系
+
+> [!NOTE]
+> 新 pipeline **不再依赖周期性 cleanup loop**。图片删除由处理流程主动触发，而非等待 TTL 过期。
+
+| 场景                | 处理方式                                                                                                |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| VLM 成功 + 无 OCR   | VLM 完成后立即删除，设置 `storageState = "deleted"`                                                     |
+| VLM 成功 + 需要 OCR | OCR 完成后立即删除，设置 `storageState = "deleted"`                                                     |
+| VLM 失败            | 图片保留（`storageState = "ephemeral"`），VLM 重试时需要；达到 `failed_permanent` 后由兜底 cleanup 清理 |
+| OCR 失败            | 图片保留（`storageState = "ephemeral"`），OCR 重试时需要；达到 `failed_permanent` 后由兜底 cleanup 清理 |
+| App 崩溃            | 下次启动时，扫描 `storageState = "ephemeral"` 且 `createdAt` 过久的记录，执行兜底清理                   |
+
+### 兜底 Cleanup（Fallback Cleanup）
+
+为处理异常情况（崩溃、永久失败等），保留一个兜底清理机制：
+
+```typescript
+// 启动时或定期执行
+async fallbackCleanup(): Promise<void> {
+  const maxAgeMs = 24 * 60 * 60 * 1000; // 24 小时
+  const now = Date.now();
+
+  // 查找过期的 ephemeral 文件
+  const staleScreenshots = await db.select()
+    .from(screenshots)
+    .where(
+      and(
+        eq(screenshots.storageState, "ephemeral"),
+        lt(screenshots.createdAt, now - maxAgeMs),
+        isNotNull(screenshots.filePath)
+      )
+    );
+
+  for (const ss of staleScreenshots) {
+    await safeDeleteCaptureFile(ss.filePath);
+    await db.update(screenshots)
+      .set({ storageState: "deleted", updatedAt: now })
+      .where(eq(screenshots.id, ss.id));
+  }
+}
+```
+
+---
+
 # Milestones（按实现顺序）
 
 - M0 — DB Schema/Migrations + shared types/IPC 适配（移除 edges，引入 threads，补 OCR 状态）
 - M1 — Pipeline 落地方式与入口切换（只启动 schedulers）
-- M2 — BatchScheduler(VLM)：batch → VLM (Stateless) → 单图单 node 入库
-- M3 — OCRScheduler：knowledge(en/zh) → 本地 OCR (Region optimized) → 与 M4 并行执行
+- M2 — BatchScheduler(VLM)：batch → VLM (Stateless) → 单图单 node 入库 + **图片删除（无 OCR 场景）**
+- M3 — OCRScheduler：knowledge(en/zh) → 本地 OCR (Region optimized) + **图片删除（OCR 场景）** → 与 M4 并行执行
 - M4 — ThreadScheduler：thread assignment + continuity tracking + snapshot → 与 M3 并行执行
 - M5 — Vector/Search：vector_documents + embedding + index + evidence 回溯（无 edges）
 - M6 — ActivityTimeline：20min summary + long events + details 触发
 - M7 — Monitoring/Queue Inspector：dashboard 适配新状态机
-- M8 — Hardening：幂等/崩溃恢复/清理策略与回归 checklist
+- M8 — Hardening：幂等/崩溃恢复/清理策略（含兜底 Cleanup）与回归 checklist
+
+> 📁 **截图文件生命周期**：详见上方 [截图文件生命周期（Image Lifecycle）](#截图文件生命周期image-lifecycle) 章节，横跨 M2 和 M3。
 
 ---
 
@@ -368,6 +515,18 @@
 - 新增 `electron/services/screenshot-processing/context-node-service.ts`
   - 新增/调整：`upsertNodeForScreenshot(...)`（仅写 node + link，不写 edges，不做 merge/derived nodes）
 
+### TODO（Implementation Checklist）
+
+- [ ] 实现 `BatchVlmScheduler.computeEarliestNextRun()`：按 `vlm_status/attempts/next_run_at` 扫描 due 任务并返回最早 next run。
+- [ ] 实现 `runCycle()` 主流程：stale recovery → scan → claim → process（含 lanes + concurrency）。
+- [ ] VLM 调用必须复用：`aiRuntimeService.acquire("vlm")` + llmUsage + trace + timeout/abort。
+- [ ] 落库映射完成：
+  - `context_nodes`：单图单 node（`origin_key = screenshot:<id>`）+ 字段拆分写入（`app_context_json/knowledge_json/state_snapshot_json/ui_text_snippets_json/keywords_json/...`）
+  - `context_screenshot_links`：upsert 证据链
+  - `batches.vlm_status` 推进到 `succeeded/failed/failed_permanent`，并在成功后置 `thread_llm_status=pending`
+- [ ] OCR gatekeeper：仅 `knowledge` 且语言 `en/zh` 才置 `screenshots.ocrStatus=pending`，其余置 `null`。
+- [ ] 图片删除：VLM 成功后删除 **不需要 OCR** 的截图文件并更新 `storageState="deleted"`。
+
 ### Batch VLM 状态机
 
 使用 `batches.vlm_*` 字段作为 VLM 子任务状态机：
@@ -504,6 +663,30 @@
 - wake `ocrScheduler`（如果存在任何 `ocrStatus=pending`）
 - wake `threadScheduler`（batch.thread_llm_status=pending）
 
+#### 5) 删除不需要 OCR 的截图图片
+
+> [!IMPORTANT]
+> 图片文件仅在 VLM/OCR 处理期间临时保留，用完即删。
+
+对 batch 内每张截图：
+
+- **不需要 OCR**（`ocrStatus = null`）：VLM 成功后立即删除
+  - `await safeDeleteCaptureFile(screenshot.filePath)`
+- **需要 OCR**（`ocrStatus = pending`）：保留图片，由 M3 OCRScheduler 处理后删除
+
+```typescript
+// VLM 成功后，删除不需要 OCR 的图片并更新 storageState
+for (const ss of screenshotRecords) {
+  if (ss.ocrStatus === null && ss.storageState !== "deleted") {
+    await safeDeleteCaptureFile(ss.filePath);
+    await db
+      .update(screenshots)
+      .set({ storageState: "deleted", updatedAt: Date.now() })
+      .where(eq(screenshots.id, ss.id));
+  }
+}
+```
+
 ### 可直接复用的代码（copy 指引）
 
 - **[调度器骨架]** `vector-document-scheduler.ts` 的：
@@ -528,15 +711,17 @@
 - `context_nodes.*_json` 拆字段被正确写入（`app_context_json/knowledge_json/state_snapshot_json/ui_text_snippets_json/keywords_json/...`）
 - 对需要 OCR 的截图能正确置 `ocrStatus=pending`（但 OCR 逻辑由 M3 完成）
 - VLM 请求有 llmUsage 与 trace 记录
+- **不需要 OCR 的截图图片在 VLM 成功后被删除，`storageState` 更新为 `"deleted"`**
 
 ### Review Checklist
 
 - **[幂等]** 重复运行同一个 batch（或崩溃恢复后重跑）不会产生重复 node/link
 - **[字段覆盖策略]** 不会把 capture 提供的 app/window 信息覆盖成 null
-- **[文件生命周期]** 需要 OCR 的截图不会被 cleanup loop 提前删除
-- **[输出约束]** VLM prompt 与 schema 确保“不产出 ocr_text”且“单图单对象”
+- **[文件生命周期]** 需要 OCR 的截图保持 `storageState = "ephemeral"`，等待 M3 处理后删除
+- **[输出约束]** VLM prompt 与 schema 确保"不产出 ocr_text"且"单图单对象"
 - **[Stateless]** VLM 是否不再依赖 `history_pack` (近期上下文)
 - **[OCR Optimized]** 是否产出了 `text_region`
+- **[图片删除]** 不需要 OCR 的图片是否在 VLM 成功后立即删除并更新 `storageState`
 
 ---
 
@@ -575,6 +760,14 @@
 
 - （可选）`electron/services/screenshot-processing/services/ocr-worker-pool.ts`（新增）
   - 如需并发 >1，维护多 worker；否则可单 worker
+
+### TODO（Implementation Checklist）
+
+- [ ] 实现 `OcrService`：worker 复用（避免每张图 create/terminate），并明确 `workerPath/corePath/langPath` 策略。
+- [ ] 实现基于 `text_region` 的 region optimized 裁剪（无 region 时 fallback 全图）。
+- [ ] 实现 `OcrScheduler.computeEarliestNextRun()` + `runCycle()`：stale recovery → scan → claim → OCR → 状态推进。
+- [ ] OCR 成功：写 `screenshots.ocrText`（≤8000 chars）+ `ocrStatus=succeeded`，并删除图片文件 + `storageState="deleted"`。
+- [ ] OCR 失败：写 `ocrStatus=failed` + `ocrNextRunAt=now+delayMs`；超过 `maxAttempts` → `failed_permanent`。
 
 ### OCR Worker 实现（OcrService）
 
@@ -635,10 +828,42 @@
 
 为避免 OCR 还未执行图片就被删除：
 
-- 在 M2 将 `ocrStatus=pending` 的截图，必须设置更长的 `retentionExpiresAt`（至少覆盖 OCR 重试窗口）
-- OCR 成功后：
-  - 可选择把 `retentionExpiresAt` 缩短为常规 TTL（例如 1h），让 cleanup 更快释放空间
-  - 或保持原 TTL，依赖周期性清理
+- **不需要 OCR 的截图**：已在 M2 中被删除（`storageState = "deleted"`）
+- **需要 OCR 的截图**：保持 `storageState = "ephemeral"`，直到 OCR 完成
+
+#### 5) OCR 成功后删除图片
+
+> [!IMPORTANT]
+> OCR 完成后立即删除图片文件，并更新 `storageState = "deleted"`。
+
+```typescript
+// OCRScheduler: OCR 成功后
+async processOneScreenshot(ss: ScreenshotRecord): Promise<void> {
+  // 检查文件是否可用
+  if (ss.storageState === "deleted" || !ss.filePath) {
+    throw new Error("Screenshot file not available");
+  }
+
+  // 1. 读取并裁剪图片
+  const imageBuffer = await loadAndCropImage(ss.filePath, ss.textRegion);
+
+  // 2. OCR
+  const ocrText = await ocrService.recognize(imageBuffer);
+
+  // 3. 更新 screenshots.ocr_text 和 ocrStatus
+  // 4. 删除图片并更新 storageState
+  await db.update(screenshots)
+    .set({
+      ocrText,
+      ocrStatus: "succeeded",
+      storageState: "deleted",
+      updatedAt: Date.now(),
+    })
+    .where(eq(screenshots.id, ss.id));
+
+  await safeDeleteCaptureFile(ss.filePath);
+}
+```
 
 ### 联动点
 
@@ -656,10 +881,10 @@
 
 ### 验收标准（DoD）
 
-- 对 `ocrStatus=pending` 且有 filePath 的截图：OCR scheduler 能推进到 `succeeded` 并写入 `ocrText`
+- 对 `ocrStatus=pending` 且 `storageState != "deleted"` 的截图：OCR scheduler 能推进到 `succeeded` 并写入 `ocrText`
 - OCR 文本长度被限制在 8000 字符以内
 - OCR 失败会进入 `failed` 并按 nextRunAt 重试；达到阈值进入 `failed_permanent`
-- OCR 过程中图片不会被 cleanup loop 提前删除
+- **OCR 成功后图片被删除，`storageState` 更新为 `"deleted"`**
 
 ### Review Checklist
 
@@ -669,6 +894,7 @@
 - **[一致性]** OCR 文本是否只来源于本地 OCR（无任何 VLM ocr_text 写入路径）
 - **[Gatekeeper]** `other` 语言是否被正确过滤
 - **[裁剪]** 是否正确应用了 `text_region` 裁剪
+- **[图片删除]** OCR 成功后是否立即删除图片并更新 `storageState`
 
 ---
 
@@ -704,6 +930,14 @@
 - `electron/services/screenshot-processing/schedulers/thread-scheduler.ts`（新增）
 - `electron/services/screenshot-processing/services/thread-llm-service.ts`（新增）
 - `electron/services/screenshot-processing/services/thread-repository.ts`（新增，可选：把 threads 的 upsert/统计/里程碑 append 封装起来）
+
+### TODO（Implementation Checklist）
+
+- [ ] 实现 Thread LLM prompt + schema（严格对齐 `docs/alpha-prompt-templates.md`），并接入 llmUsage + trace。
+- [ ] 实现 `ThreadScheduler`：按 `batches.thread_llm_*` 扫描 due、claim、推进状态机（含 stale recovery + retry）。
+- [ ] 落库必须单事务：创建新 thread + 更新 nodes.threadId + 写 `thread_snapshot_json` + 更新 threads 统计 + 更新 batch 状态。
+- [ ] durationMs 计算按 gap 排除规则实现，并补单测覆盖 gap>10min。
+- [ ] thread assignment 成功后触发 vector docs dirty（或逐 node upsert），确保 threadId 变更能进入 search/index。
 
 ### 配置项（`processingConfig.thread`）
 
@@ -978,6 +1212,14 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 - `electron/services/screenshot-processing/vector-document-service.ts`
   - 调整 `metaPayload` 更新策略：threadId 变化时仍能刷新（见下文）
 
+### TODO（Implementation Checklist）
+
+- [ ] 彻底移除所有 `context_edges` 读写与 `event_next` 依赖（含 `batch-builder.ts.queryOpenSegments()` 等残留点）。
+- [ ] 实现 thread/time neighborhood expansion：search 与 IPC traverse 统一改为 thread 邻域（`edges=[]`）。
+- [ ] keyword search 集成 `screenshots_fts`（FTS5）：MATCH + snippet/bm25，并可回溯到 screenshots/node。
+- [ ] `SearchFilters.threadId` 在 keyword + semantic 两条路径都必须生效。
+- [ ] Vector meta 刷新：`textHash` 命中时也更新 `vector_documents.metaPayload`（尤其 threadId），但不重置 embedding/index 状态机。
+
 （建议同 Milestone 一起修掉的残留引用）
 
 ### 设计：thread/time 邻域扩展（替代 edges）
@@ -1114,6 +1356,13 @@ ThreadScheduler（M4）会在 batch 后写入 `context_nodes.threadId`。为了�
   - 对齐新增/调整：`getActivityEventDetailsSystemPrompt/getActivityEventDetailsUserPrompt`
 - `electron/services/screenshot-processing/schemas.ts`
   - 确保 `ActivityWindowSummaryLLMProcessedSchema` / `ActivityEventDetailsLLMProcessedSchema` 与 prompt schema 一致
+
+### TODO（Implementation Checklist）
+
+- [ ] 适配窗口 seed 与等待策略：窗口生成与处理不应被 processing 卡死（nextRunAt/attempts 策略明确）。
+- [ ] Summary/Event/Details 的 prompt 与 schema 对齐 `docs/alpha-prompt-templates.md`，并接入 llmUsage + trace + activityAlert。
+- [ ] long event：基于 `threads.durationMs >= 25min`（gap 排除）派生并 upsert `eventKey=thr_<threadId>`。
+- [ ] details 严格 on-demand（用户请求时生成），重试/失败口径与 `maxAttempts` 对齐。
 
 ### 设计要点
 
@@ -1335,6 +1584,12 @@ details 输出落库：
 - `electron/services/monitoring/static/dashboard.html`
   - Queue Status 表格新增行 + i18n 文案 + JS 显示绑定
 
+### TODO（Implementation Checklist）
+
+- [ ] 扩展 `monitoring-types.QueueStatus`：新增 VLM/OCR/Thread LLM（可选 details）队列字段。
+- [ ] `QueueInspector.getQueueStatus()`：补齐新队列 groupBy 统计；`getTotalPendingCount()` 纳入 pending+running。
+- [ ] dashboard.html：新增 DOM 行 + en/zh-CN 文案 + 前端绑定（/api/queue + SSE）。
+
 （通常无需改动）
 
 - `electron/services/monitoring/monitoring-server.ts`
@@ -1449,6 +1704,14 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 - `electron/services/monitoring/*`
   - 确保错误/告警能覆盖所有新状态机
 
+### TODO（Implementation Checklist）
+
+- [ ] 统一 stale recovery：覆盖 VLM/OCR/Thread/Vector/ActivitySummary（以及 on-demand details 的“状态修复”）。
+- [ ] 统一 retry 策略：`maxAttempts=2`、`delayMs=60s`，并确保 `failed_permanent` 不再被调度。
+- [ ] 兜底 cleanup：扫描过久的 `storageState="ephemeral"` 文件并删除（崩溃/永久失败场景）。
+- [ ] 队列膨胀保护：每轮 scan/claim 增加 cap（避免大表扫描/长事务）。
+- [ ] 处理 BatchBuilder 幂等性：评估并落地稳定的 content-based `idempotencyKey`（避免崩溃恢复产生重复 batch）。
+
 ### 设计与实现细节
 
 #### 1) 幂等契约（按表/写入点列清楚）
@@ -1530,12 +1793,44 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
      - 只在 `storageState` 允许时删除
      - 删除后更新 `storageState=deleted` 并记录 `retentionExpiresAt`
 
-2. **队列膨胀保护**
+2. **兜底 Cleanup（Fallback Cleanup）**
+
+   > [!IMPORTANT]
+   > 为处理异常情况（崩溃、永久失败等），保留一个兜底清理机制。
+   > 详见上方 [截图文件生命周期（Image Lifecycle）](#截图文件生命周期image-lifecycle) 章节。
+
+   ```typescript
+   // 启动时或定期执行
+   async fallbackCleanup(): Promise<void> {
+     const maxAgeMs = 24 * 60 * 60 * 1000; // 24 小时
+     const now = Date.now();
+
+     // 查找过期的 ephemeral 文件
+     const staleScreenshots = await db.select()
+       .from(screenshots)
+       .where(
+         and(
+           eq(screenshots.storageState, "ephemeral"),
+           lt(screenshots.createdAt, now - maxAgeMs),
+           isNotNull(screenshots.filePath)
+         )
+       );
+
+     for (const ss of staleScreenshots) {
+       await safeDeleteCaptureFile(ss.filePath);
+       await db.update(screenshots)
+         .set({ storageState: "deleted", updatedAt: now })
+         .where(eq(screenshots.id, ss.id));
+     }
+   }
+   ```
+
+3. **队列膨胀保护**
    - 为每类队列增加 cap：
      - 例如单次扫描最多 claim N 个（避免大表扫描 + 长事务）
    - 为 `aiRequestTraceBuffer` / `activityAlertBuffer` 已是 ring buffer，无需额外清理
 
-3. **老数据清理（可选）**
+4. **老数据清理（可选）**
    - `llm_usage_events` 可按天聚合/裁剪（若增长过快）
    - `vector_documents` 可提供“重建索引”路径（不在 M8 强制做，但要写出操作手册）
 

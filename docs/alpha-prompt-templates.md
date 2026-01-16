@@ -219,6 +219,11 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
   - Decision Rule: If the text is purely symbolic or in a language other than English/Chinese, MUST use "other".
 - source_url: ONLY include if URL is clearly visible in screenshot
 - key_insights: Max 5 specific takeaways from the content
+- language: CRITICAL - Detect the primary language of the main text area.
+  - "en": For content that is primarily English.
+  - "zh": For content that contains Chinese characters.
+  - "other": For code-only blocks, or other languages.
+  - Decision Rule: If the text is purely symbolic or in a language other than English/Chinese, MUST use "other".
 - text_region (IMPORTANT for OCR optimization): 
   - Identify the main text content area, EXCLUDING: navigation bars, sidebars, headers, footers, ads
   - box: Pixel coordinates { top, left, width, height } of the main content region

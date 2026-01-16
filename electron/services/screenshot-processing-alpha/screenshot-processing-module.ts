@@ -13,9 +13,11 @@ import type { ScreenshotInput } from "./source-buffer-registry";
 import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { BatchPersistedEvent, BatchReadyEvent } from "./events";
 import { screenshotProcessingEventBus } from "./event-bus";
-import { screenshotPipelineScheduler } from "./screenshot-pipeline-scheduler";
-import { activityTimelineScheduler } from "./activity-timeline-scheduler";
-import { vectorDocumentScheduler } from "./vector-document-scheduler";
+import { batchVlmScheduler } from "./schedulers/batch-vlm-scheduler";
+import { ocrScheduler } from "./schedulers/ocr-scheduler";
+import { threadScheduler } from "./schedulers/thread-scheduler";
+import { activityTimelineScheduler } from "./schedulers/activity-timeline-scheduler";
+import { vectorDocumentScheduler } from "./schedulers/vector-document-scheduler";
 
 type InitializeArgs = {
   screenCapture: ScreenCaptureModuleType;
@@ -48,7 +50,9 @@ export class ScreenshotProcessingModule {
     screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
 
-    screenshotPipelineScheduler.start();
+    batchVlmScheduler.start();
+    ocrScheduler.start();
+    threadScheduler.start();
     activityTimelineScheduler.start();
     vectorDocumentScheduler.start();
     this.initialized = true;
@@ -66,7 +70,9 @@ export class ScreenshotProcessingModule {
 
     sourceBufferRegistry.dispose();
 
-    screenshotPipelineScheduler.stop();
+    batchVlmScheduler.stop();
+    ocrScheduler.stop();
+    threadScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
 
@@ -99,6 +105,8 @@ export class ScreenshotProcessingModule {
         height: accepted.meta.height ?? null,
         appHint: accepted.meta.appHint ?? null,
         windowTitle: accepted.meta.windowTitle ?? null,
+        filePath: accepted.filePath,
+        storageState: "ephemeral",
         createdAt: now,
         updatedAt: now,
       })
@@ -107,6 +115,15 @@ export class ScreenshotProcessingModule {
 
     return inserted.id;
   };
+
+  /**
+   * Update the pHash Hamming distance threshold for deduplication.
+   * Called by BackpressureMonitor via ScreenCaptureModule.
+   */
+  setPhashThreshold(threshold: number): void {
+    this.logger.info({ threshold }, "Updating pHash threshold in SourceBufferRegistry");
+    sourceBufferRegistry.setPhashThreshold?.(threshold);
+  }
 
   private readonly onCaptureComplete = async (event: CaptureCompleteEvent) => {
     try {
@@ -175,14 +192,11 @@ export class ScreenshotProcessingModule {
     try {
       this.logger.info(
         { batchId: event.batchId, batchDbId: event.batchDbId, sourceKey: event.sourceKey },
-        "Waking screenshot pipeline scheduler"
+        "Waking batch VLM scheduler"
       );
-      screenshotPipelineScheduler.wake();
+      batchVlmScheduler.wake();
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to wake screenshot pipeline scheduler on batch:persisted"
-      );
+      this.logger.error({ error }, "Failed to wake batch VLM scheduler on batch:persisted");
     }
   };
 }

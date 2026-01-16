@@ -603,6 +603,23 @@ async fallbackCleanup(): Promise<void> {
 - VLM 只负责“结构化提取 + 判断是否需要 OCR + language + **text_region**”
 - **[Issue Detection]** 检测 `state_snapshot.issue` (error/bug/blocker)
 
+#### 1.5) 命名与字段转换规则（强制）
+
+为避免输入/输出/入库的字段命名不一致（`snake_case` vs `camelCase`）导致漏字段、错字段，必须遵守以下强制规定：
+
+- **[LLM 边界命名]** 所有与 LLM 直接交互的 JSON（prompt 中嵌入的 metadata、以及 LLM 输出）必须使用 **`snake_case`**，并严格对齐 `docs/alpha-prompt-templates.md`。
+  - 示例：`screenshot_index`、`app_context.window_title`、`state_snapshot.current_state`、`ui_text_snippets`、`content_type`。
+
+- **[内部命名]** 代码内部类型（service/scheduler/DB 入库 payload）必须使用 **`camelCase`**。
+  - 示例：`screenshotIndex`、`appContext.windowTitle`、`stateSnapshot.currentState`、`uiTextSnippets`、`contentType`。
+
+- **[单点转换]** `snake_case → camelCase` 的转换 **只能存在一个地方**：
+  - 位置：`electron/services/screenshot-processing/schemas.ts` 中 `VLMOutputProcessedSchema.transform(...)`。
+    - 实现阶段路径可能为 `electron/services/screenshot-processing-alpha/schemas.ts`，最终通过目录重命名对齐。
+  - 禁止：在 scheduler / persistence 层手写字段映射（例如在 `BatchVlmScheduler.persistResults()` 内逐字段转换）。
+
+- **[类型出口]** Scheduler / DB 入库必须仅依赖 processed 后的 `VLMContextNode`（camelCase），不得在下游继续接触 raw LLM schema。
+
 #### 2) 输出（response）
 
 **严格复用** `docs/alpha-prompt-templates.md` 的 VLM 输出 schema（字段名与结构不得自行改写）。

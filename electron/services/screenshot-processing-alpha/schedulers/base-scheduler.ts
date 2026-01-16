@@ -1,4 +1,6 @@
-import { getLogger } from "../logger";
+import { getLogger } from "../../logger";
+import { screenshotProcessingEventBus } from "../event-bus";
+import type { ScreenshotProcessingEventMap } from "../events";
 
 const logger = getLogger("base-scheduler");
 
@@ -12,6 +14,14 @@ export abstract class BaseScheduler {
   protected isRunning = false;
   protected isProcessing = false;
   protected wakeRequested = false;
+  protected abstract name: string;
+
+  protected emit<K extends keyof ScreenshotProcessingEventMap>(
+    eventName: K,
+    payload: ScreenshotProcessingEventMap[K]
+  ): void {
+    screenshotProcessingEventBus.emit(eventName, payload);
+  }
 
   /**
    * Process items from multiple lanes using a weighted fair strategy.

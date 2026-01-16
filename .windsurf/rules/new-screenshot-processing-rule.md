@@ -34,6 +34,17 @@ Content
   - monitoring/queue/status 相关字段与 UI label
 - **[说明]** 本文引用的权威文档文件名包含 `alpha`（如 `docs/alpha-implementation-plan.md`、`docs/alpha-prompt-templates.md`），这是文档命名，不应反向影响代码命名。
 
+## 命名与字段转换规则（强制）
+
+为避免输入/输出/入库的字段命名不一致（snake_case vs camelCase）导致漏字段、错字段，必须遵守：
+
+- **LLM 边界命名**：所有与 LLM 直接交互的 JSON（prompt 中嵌入的 metadata、以及 LLM 输出）必须使用 **snake_case**，并严格对齐 `docs/alpha-prompt-templates.md`。
+- **内部命名**：代码内部类型（service/scheduler/DB 入库 payload）必须使用 **camelCase**。
+- **单点转换**：`snake_case → camelCase` 的转换 **只能存在一个地方**：
+  - `electron/services/screenshot-processing(-alpha)/schemas.ts` 的 `VLMOutputProcessedSchema.transform(...)`
+  - 禁止在 scheduler / persistence 层手写字段映射（例如 [BatchVlmScheduler.persistResults()](cci:1://file:///c:/frank-repos/Mnemora/electron/services/screenshot-processing-alpha/schedulers/batch-vlm-scheduler.ts:281:2-384:3) 逐字段转换）
+- **类型出口**：scheduler/DB 入库必须只依赖 processed 后的 [VLMContextNode](cci:2://file:///c:/frank-repos/Mnemora/electron/services/screenshot-processing-alpha/schemas.ts:152:0-152:56)（camelCase），不得在下游继续接触 raw LLM schema。
+
 ## 核心决策（已确认）
 
 - `context_edges` 表物理删除/停用（不再写入/不再读取）

@@ -1,4 +1,4 @@
-import type { VlmStatus } from "../../database/schema";
+import { type VlmStatus } from "../../database/schema";
 
 export type { VlmStatus };
 
@@ -33,6 +33,21 @@ export interface AcceptedScreenshot {
   meta: ScreenshotMeta;
 }
 
+export interface VlmScreenshotInput {
+  id: number;
+  ts: number;
+  sourceKey: string;
+  filePath: string | null;
+  appHint: string | null;
+  windowTitle: string | null;
+}
+
+export interface VlmBatchInput {
+  batchId: string;
+  sourceKey: string;
+  screenshots: VlmScreenshotInput[];
+}
+
 export interface HistoryThreadSummary {
   threadId: string;
   title: string;
@@ -59,4 +74,67 @@ export interface Batch {
   screenshots: AcceptedScreenshot[];
   tsStart: number;
   tsEnd: number;
+}
+
+export interface PendingBatchRecord {
+  id: number;
+  batchId: string;
+  sourceKey: string;
+  screenshotIds: number[];
+  tsStart: number;
+  tsEnd: number;
+  vlmAttempts: number;
+  updatedAt: number;
+}
+
+export interface AppContextPayload {
+  appHint: string | null;
+  windowTitle: string | null;
+  sourceKey: string;
+}
+
+export interface KnowledgePayload {
+  contentType: string;
+  sourceUrl?: string;
+  projectOrLibrary?: string;
+  keyInsights: string[];
+  language: "en" | "zh" | "other";
+  textRegion?: {
+    box: {
+      top: number;
+      left: number;
+      width: number;
+      height: number;
+    };
+    description?: string;
+    confidence: number;
+  };
+}
+
+export interface StateSnapshotPayload {
+  subjectType: string;
+  subject: string;
+  currentState: string;
+  metrics?: Record<string, string | number>;
+  issue?: {
+    detected: boolean;
+    type: "error" | "bug" | "blocker" | "question" | "warning";
+    description: string;
+    severity: number;
+  };
+}
+
+export interface UpsertNodeInput {
+  batchId: number;
+  screenshotId: number;
+  screenshotTs: number;
+  title: string;
+  summary: string;
+  appContext: AppContextPayload;
+  knowledge: KnowledgePayload | null;
+  stateSnapshot: StateSnapshotPayload | null;
+  uiTextSnippets: string[];
+  keywords: string[];
+  importance: number;
+  confidence: number;
 }

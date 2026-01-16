@@ -8,6 +8,7 @@ import { processingConfig } from "../config";
 const logger = getLogger("ocr-scheduler");
 
 export class OcrScheduler extends BaseScheduler {
+  protected name = "OcrScheduler";
   private minDelayMs = 2000;
   private defaultIntervalMs = processingConfig.scheduler.scanIntervalMs;
 
@@ -19,18 +20,22 @@ export class OcrScheduler extends BaseScheduler {
     if (this.isRunning) return;
     this.isRunning = true;
     logger.info("OCR scheduler started");
+    this.emit("scheduler:started", { scheduler: this.name, timestamp: Date.now() });
     this.scheduleSoon();
   }
 
   stop(): void {
+    if (!this.isRunning) return;
     this.isRunning = false;
     this.clearTimer();
     logger.info("OCR scheduler stopped");
+    this.emit("scheduler:stopped", { scheduler: this.name, timestamp: Date.now() });
   }
 
   wake(reason?: string): void {
     if (!this.isRunning) return;
     logger.debug({ reason }, "Wake requested for OCR scheduler");
+    this.emit("scheduler:waked", { scheduler: this.name, timestamp: Date.now(), reason });
 
     if (this.isProcessing) {
       this.wakeRequested = true;
@@ -57,14 +62,24 @@ export class OcrScheduler extends BaseScheduler {
     if (!this.isRunning || this.isProcessing) return;
 
     this.isProcessing = true;
+    const cycleStartTs = Date.now();
     logger.debug("Starting OCR scheduler cycle");
+    this.emit("scheduler:cycle:start", { scheduler: this.name, timestamp: cycleStartTs });
 
+    let cycleError: string | undefined;
     try {
       await this.recoverStaleStates();
       // Processing logic following M3
     } catch (error) {
+      cycleError = error instanceof Error ? error.message : String(error);
       logger.error({ error }, "Error in OCR scheduler cycle");
     } finally {
+      this.emit("scheduler:cycle:end", {
+        scheduler: this.name,
+        timestamp: Date.now(),
+        durationMs: Date.now() - cycleStartTs,
+        error: cycleError,
+      });
       this.isProcessing = false;
       if (this.isRunning) {
         if (this.wakeRequested) {

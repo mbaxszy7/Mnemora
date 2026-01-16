@@ -130,6 +130,8 @@ export const processingConfig = {
 
     /** VLM request timeout (ms) */
     vlmTimeoutMs: 120000, // 2 minutes
+    /** VLM max output tokens */
+    vlmMaxOutputTokens: 8129,
     /** Text LLM request timeout (ms) */
     textTimeoutMs: 120000, // 2 minutes
     /** Embedding request timeout (ms) */

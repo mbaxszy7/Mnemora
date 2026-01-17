@@ -18,6 +18,7 @@ import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
 import { screenCaptureModule } from "./services/screen-capture";
+import { screenshotProcessingModule } from "./services/screenshot-processing-alpha/screenshot-processing-module";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 import { monitoringServer } from "./services/monitoring";
@@ -103,6 +104,7 @@ class AppLifecycleController {
     await this.initializeApp();
 
     this.mainWindow = this.createMainWindow();
+    this.warmupOcrOnSplash();
     this.trayService = TrayService.getInstance();
     this.trayService
       .configure({
@@ -118,6 +120,20 @@ class AppLifecycleController {
       })
       .init();
     this.logger.info("Main window created");
+  }
+
+  private warmupOcrOnSplash(): void {
+    setTimeout(() => {
+      void this.tryWarmupOcrService();
+    }, 0);
+  }
+
+  private async tryWarmupOcrService(): Promise<void> {
+    try {
+      await screenshotProcessingModule.ocrWarmup();
+    } catch (error) {
+      this.logger.warn({ error }, "Failed to warm up OCR service");
+    }
   }
 
   private createMainWindow(): BrowserWindow {

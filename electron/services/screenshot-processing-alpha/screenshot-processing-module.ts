@@ -18,6 +18,7 @@ import { ocrScheduler } from "./schedulers/ocr-scheduler";
 import { threadScheduler } from "./schedulers/thread-scheduler";
 import { activityTimelineScheduler } from "./schedulers/activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./schedulers/vector-document-scheduler";
+import { ocrService } from "./ocr-service";
 
 type InitializeArgs = {
   screenCapture: ScreenCaptureModuleType;
@@ -77,6 +78,10 @@ export class ScreenshotProcessingModule {
     vectorDocumentScheduler.stop();
 
     this.initialized = false;
+  }
+
+  async ocrWarmup(): Promise<void> {
+    await ocrService.warmup();
   }
 
   private readonly onPreferencesChanged = async (event: PreferencesChangedEvent) => {

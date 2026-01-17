@@ -217,7 +217,7 @@ export class BatchVlmScheduler extends BaseScheduler {
     const now = Date.now();
     const laneCutoff = now - processingConfig.scheduler.laneRecoveryAgeMs;
 
-    return records.reduce(
+    const lanes = records.reduce(
       (acc, record) => {
         if (record.updatedAt < laneCutoff) {
           acc.recovery.push(record);
@@ -228,6 +228,10 @@ export class BatchVlmScheduler extends BaseScheduler {
       },
       { realtime: [] as PendingBatchRecord[], recovery: [] as PendingBatchRecord[] }
     );
+
+    lanes.realtime.sort((a, b) => b.updatedAt - a.updatedAt);
+    lanes.recovery.sort((a, b) => a.updatedAt - b.updatedAt);
+    return lanes;
   }
 
   private async processOneBatch(record: PendingBatchRecord): Promise<void> {
@@ -247,7 +251,8 @@ export class BatchVlmScheduler extends BaseScheduler {
         and(
           eq(batches.id, record.id),
           or(eq(batches.vlmStatus, "pending"), eq(batches.vlmStatus, "failed")),
-          lt(batches.vlmAttempts, processingConfig.retry.maxAttempts)
+          lt(batches.vlmAttempts, processingConfig.retry.maxAttempts),
+          or(isNull(batches.vlmNextRunAt), lte(batches.vlmNextRunAt, now))
         )
       )
       .run();

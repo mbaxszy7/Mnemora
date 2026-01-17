@@ -84,8 +84,8 @@ export const processingConfig = {
     maxChars: 8000,
     /** Tesseract.js language pack (Chinese + English) */
     languages: "eng+chi_sim",
-    /** Pre-initialize OCR worker during splash screen */
-    initOnSplash: true,
+    /** Max parallel OCR workers (keep low to avoid CPU spikes) */
+    concurrency: 1,
     /** Only trigger OCR when VLM detects these languages */
     supportedLanguages: ["en", "zh"],
   },

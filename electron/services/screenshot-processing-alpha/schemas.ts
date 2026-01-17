@@ -161,3 +161,69 @@ export type VLMScreenshotMeta = {
   app_hint: string | null;
   window_title: string | null;
 };
+
+// =========================================================================
+// Thread LLM Output Schemas
+// =========================================================================
+
+const ThreadAssignmentSchema = z.object({
+  node_index: z.number().int().nonnegative(),
+  thread_id: z.string().min(1),
+  reason: z.string().max(100),
+});
+
+const ThreadUpdateSchema = z.object({
+  thread_id: z.string().min(1),
+  title: z.string().max(100).optional(),
+  summary: z.string().max(300).optional(),
+  current_phase: z.string().optional(),
+  current_focus: z.string().optional(),
+  new_milestone: z
+    .object({
+      description: z.string(),
+    })
+    .optional(),
+});
+
+const NewThreadSchema = z.object({
+  title: z.string().max(100),
+  summary: z.string().max(300),
+  current_phase: z.string().optional(),
+  node_indices: z.array(z.number().int().nonnegative()),
+  milestones: z.array(z.string()),
+});
+
+export const ThreadLLMOutputSchema = z.object({
+  assignments: z.array(ThreadAssignmentSchema),
+  thread_updates: z.array(ThreadUpdateSchema).default([]),
+  new_threads: z.array(NewThreadSchema).default([]),
+});
+
+export type ThreadLLMOutputRaw = z.infer<typeof ThreadLLMOutputSchema>;
+
+export const ThreadLLMOutputProcessedSchema = ThreadLLMOutputSchema.transform((val) => {
+  return {
+    assignments: val.assignments.map((a) => ({
+      nodeIndex: a.node_index,
+      threadId: a.thread_id,
+      reason: a.reason,
+    })),
+    threadUpdates: val.thread_updates.map((u) => ({
+      threadId: u.thread_id,
+      title: u.title,
+      summary: u.summary,
+      currentPhase: u.current_phase,
+      currentFocus: u.current_focus,
+      newMilestone: u.new_milestone ? { description: u.new_milestone.description } : undefined,
+    })),
+    newThreads: val.new_threads.map((t) => ({
+      title: t.title,
+      summary: t.summary,
+      currentPhase: t.current_phase,
+      nodeIndices: t.node_indices,
+      milestones: t.milestones,
+    })),
+  };
+});
+
+export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;

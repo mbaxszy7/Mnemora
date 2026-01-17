@@ -29,6 +29,20 @@
       "when": 1768494286456,
       "tag": "0003_sweet_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1768653928599,
+      "tag": "0004_tiny_talkback",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1768655210953,
+      "tag": "0005_grey_supernaut",
+      "breakpoints": true
     }
   ]
 }

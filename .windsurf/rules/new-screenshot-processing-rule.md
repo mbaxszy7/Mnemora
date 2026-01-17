@@ -50,6 +50,7 @@ Content
 - `context_edges` 表物理删除/停用（不再写入/不再读取）
 - 历史数据不迁移，新 pipeline 重新开始
 - 本地 OCR 为准（VLM 不再产出 `ocr_text`）
+- 更改数据库schema字段时，只需要改schema文件即可，不需要擅自加sql文件，可以使用`pnpm run db:generate`生成migration文件
 
 ---
 

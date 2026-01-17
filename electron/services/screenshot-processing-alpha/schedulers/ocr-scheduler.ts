@@ -141,7 +141,7 @@ export class OcrScheduler extends BaseScheduler {
     const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
 
     try {
-      const result = await db
+      const result = db
         .update(screenshots)
         .set({
           ocrStatus: "pending",
@@ -155,7 +155,8 @@ export class OcrScheduler extends BaseScheduler {
             isNotNull(screenshots.filePath),
             or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
           )
-        );
+        )
+        .run();
 
       if (result.changes > 0) {
         logger.info({ recovered: result.changes }, "Recovered stale OCR screenshots");

@@ -15,6 +15,21 @@ export interface VLMUserPromptArgs {
   screenshotMetaJson: string;
 }
 
+export interface ThreadLLMUserPromptArgs {
+  activeThreadsJson: string;
+  threadRecentNodesJson: string;
+  batchNodesJson: string;
+  localTime: string;
+  timeZone: string;
+  now: Date;
+  nowTs: number;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
+}
+
 // ============================================================================
 // VLM Processor Prompts (Alpha)
 // ============================================================================
@@ -149,6 +164,137 @@ ${args.screenshotMetaJson}
 
 const VLM_USER_PROMPT_ZH = VLM_USER_PROMPT_EN;
 
+// =========================================================================
+// Thread LLM Prompts
+// =========================================================================
+
+const THREAD_LLM_SYSTEM_PROMPT_EN = `You are an activity thread analyzer. Your task is to organize context nodes into coherent activity threads.
+
+## Core Concepts
+
+- **Thread**: A continuous stream of related user activity (e.g., "Working on auth-service refactoring")
+- **Node**: A single activity snapshot from one screenshot
+- **Assignment**: Connecting a node to an existing or new thread
+
+## Principles
+
+1. **Continuity**: Group related activities into the same thread
+2. **Coherence**: Each thread should represent one clear goal/project/task
+3. **Precision**: Don't over-merge unrelated activities
+
+## Matching Criteria (in order of importance)
+
+1. **Same project/repository** - Strongest signal
+2. **Same application context** - Strong signal
+3. **Related topic/technology** - Medium signal
+4. **Time proximity** (within 30 minutes) - Weak signal alone
+
+## Output JSON Schema
+
+{
+  "assignments": [
+    {
+      "node_index": 0,
+      "thread_id": "existing-uuid-here",
+      "reason": "Continues auth-service debugging from earlier"
+    },
+    {
+      "node_index": 1,
+      "thread_id": "NEW",
+      "reason": "New activity: researching database optimization"
+    }
+  ],
+  "thread_updates": [
+    {
+      "thread_id": "existing-uuid-here",
+      "current_phase": "debugging",
+      "current_focus": "OAuth2 token refresh issue"
+    }
+  ],
+  "new_threads": [
+    {
+      "title": "Researching PostgreSQL optimization",
+      "summary": "Exploring database query optimization techniques for the analytics pipeline",
+      "current_phase": "research",
+      "node_indices": [1],
+      "milestones": [
+        "Started researching PostgreSQL query optimization techniques for analytics pipeline"
+      ]
+    }
+  ]
+}
+
+## Field Requirements
+
+### assignments (required, one per input node)
+- node_index: Must match input batch node index (0-based)
+- thread_id: Use exact UUID from active_threads, or "NEW" for new thread
+- reason: Brief explanation (≤100 chars) why this assignment makes sense
+
+### thread_updates (optional)
+- Only include if node activity changes thread state
+- title: Update if activity reveals better thread description
+- summary: Update to reflect latest progress
+- current_phase: coding, debugging, reviewing, deploying, researching, meeting, etc. MUST be high-information text (e.g., "Designing OAuth2 refresh logic" instead of just "coding").
+- current_focus: Current specific focus area (high-information)
+- new_milestone: Add if significant progress detected. MUST provide a rich and descriptive milestone (e.g., "Successfully resolved the auth-service token refresh race condition after 2 hours of debugging").
+
+### new_threads (required if any node has thread_id: "NEW")
+- title: Descriptive title (≤100 chars)
+- summary: What this thread is about (≤300 chars)
+- current_phase: Initial phase
+- node_indices: All nodes assigned to this new thread
+- milestones: Initial milestones (rich description). MUST be an array (can be empty).
+
+## Hard Rules
+
+1. Output MUST be valid JSON only. No markdown fences.
+2. EVERY input node MUST have exactly one assignment.
+3. If using "NEW", there MUST be a corresponding entry in new_threads.
+4. thread_id in assignments MUST be either an exact UUID from input OR "NEW".
+5. Do NOT create a new thread if activity clearly continues an existing thread.
+6. Do NOT merge unrelated activities into one thread.
+7. assignments MUST be sorted by node_index ascending.
+8. Only use thread_id values that appear in the Active Threads input; do NOT invent UUIDs.
+9. Prefer fewer threads: if multiple batch nodes describe the same new activity, group them into one new_threads entry.
+10. new_threads[].node_indices MUST contain exactly the nodes assigned to that new thread (no extra nodes; no missing nodes).`;
+
+const THREAD_LLM_SYSTEM_PROMPT_ZH = THREAD_LLM_SYSTEM_PROMPT_EN;
+
+const THREAD_LLM_USER_PROMPT_EN = (
+  args: ThreadLLMUserPromptArgs
+) => `Analyze the following batch of context nodes and assign them to threads.
+
+## Current Time Context
+Current time: ${args.now.toISOString()}
+Current Unix timestamp (ms): ${args.nowTs}
+Timezone: ${args.timeZone}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
+
+## Active Threads (most recent first)
+${args.activeThreadsJson}
+
+## Each Thread's Recent Nodes (Faithful Context)
+${args.threadRecentNodesJson}
+
+## New Nodes from This Batch (to be assigned)
+${args.batchNodesJson}
+
+## Instructions
+1. For each new node, determine the best thread assignment.
+2. Use existing thread_id if activity continues that thread.
+3. Use "NEW" if this is a clearly different activity.
+4. Update thread metadata (phase, focus, milestones) using high-information, rich descriptions.
+5. Return ONLY the JSON object - no extra text.`;
+
+const THREAD_LLM_USER_PROMPT_ZH = THREAD_LLM_USER_PROMPT_EN;
+
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
@@ -157,5 +303,15 @@ export const promptTemplates = {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? VLM_USER_PROMPT_ZH(args)
       : VLM_USER_PROMPT_EN(args);
+  },
+  getThreadLlmSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? THREAD_LLM_SYSTEM_PROMPT_ZH
+      : THREAD_LLM_SYSTEM_PROMPT_EN;
+  },
+  getThreadLlmUserPrompt(args: ThreadLLMUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? THREAD_LLM_USER_PROMPT_ZH(args)
+      : THREAD_LLM_USER_PROMPT_EN(args);
   },
 };

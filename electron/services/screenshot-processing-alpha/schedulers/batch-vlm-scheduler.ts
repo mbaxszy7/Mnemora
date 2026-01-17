@@ -145,14 +145,15 @@ export class BatchVlmScheduler extends BaseScheduler {
     const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
 
     try {
-      const result = await db
+      const result = db
         .update(batches)
         .set({
           vlmStatus: "pending",
           vlmNextRunAt: null,
           updatedAt: Date.now(),
         })
-        .where(and(eq(batches.vlmStatus, "running"), lt(batches.updatedAt, staleThreshold)));
+        .where(and(eq(batches.vlmStatus, "running"), lt(batches.updatedAt, staleThreshold)))
+        .run();
 
       if (result.changes > 0) {
         logger.info({ recovered: result.changes }, "Recovered stale VLM batches");

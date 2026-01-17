@@ -85,6 +85,7 @@ export const threads = sqliteTable(
   "threads",
   {
     id: text("id").primaryKey(),
+    originKey: text("origin_key").notNull(),
     title: text("title").notNull(),
     summary: text("summary").notNull(),
     currentPhase: text("current_phase"),
@@ -108,6 +109,7 @@ export const threads = sqliteTable(
   (table) => [
     index("idx_threads_last_active_at").on(table.lastActiveAt),
     index("idx_threads_status").on(table.status),
+    uniqueIndex("idx_threads_origin_key").on(table.originKey),
   ]
 );
 

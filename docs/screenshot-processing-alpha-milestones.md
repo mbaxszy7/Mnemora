@@ -1235,6 +1235,7 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 - [ ] 实现 thread/time neighborhood expansion：search 与 IPC traverse 统一改为 thread 邻域（`edges=[]`）。
 - [ ] keyword search 集成 `screenshots_fts`（FTS5）：MATCH + snippet/bm25，并可回溯到 screenshots/node。
 - [ ] `SearchFilters.threadId` 在 keyword + semantic 两条路径都必须生效。
+- [ ] **Thread → Vector 联动**：当 M4 写入/补全 `context_nodes.threadId` 后，必须触发对应 nodes 的 vector 文档刷新/入队（否则 `filters.threadId` 可能不生效或 meta 不可观测）。
 - [ ] Vector meta 刷新：`textHash` 命中时也更新 `vector_documents.metaPayload`（尤其 threadId），但不重置 embedding/index 状态机。
 
 （建议同 Milestone 一起修掉的残留引用）
@@ -1305,7 +1306,8 @@ ThreadScheduler 每轮 `runCycle()` 可附带一次轻量维护：
 
 ThreadScheduler（M4）会在 batch 后写入 `context_nodes.threadId`。为了让 Search/Debug 能及时看到 threadId：
 
-- **[推荐]** M4 在事务提交后，对 batchNodes 调用 `vectorDocumentService.upsertForContextNode(nodeId)`（或 emit `vector-documents:dirty`）
+- **[推荐]** 在 thread assignment 成功（事务提交）后，对 batchNodes 调用 `vectorDocumentService.upsertForContextNode(nodeId)`（或 emit `vector-documents:dirty` 并在调度器里完成入队/刷新）。
+- **[建议落点]** 该联动属于 M5 的实现范围：可以通过监听 `batch:thread:succeeded`（携带 batchId/threadId）后按 `batchId` 查询本 batch 的 nodeIds，再逐个 upsert/refresh；或在 ThreadScheduler 的成功路径里直接触发。
 
 同时注意现状：`VectorDocumentService.upsertForContextNode()` 若 `textHash` 不变会直接 return，导致：
 

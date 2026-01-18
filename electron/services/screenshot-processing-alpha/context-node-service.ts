@@ -32,6 +32,7 @@ export class ContextNodeService {
       importance: input.importance,
       confidence: input.confidence,
       keywords: JSON.stringify(input.keywords ?? []),
+      entities: JSON.stringify(input.entities ?? []),
       createdAt: now,
       updatedAt: now,
     };
@@ -49,6 +50,7 @@ export class ContextNodeService {
           importance: nodeRecord.importance,
           confidence: nodeRecord.confidence,
           keywords: nodeRecord.keywords,
+          entities: nodeRecord.entities,
           updatedAt: now,
         })
         .where(eq(contextNodes.id, existingLink.nodeId))

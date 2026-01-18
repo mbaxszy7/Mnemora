@@ -30,6 +30,33 @@ export interface ThreadLLMUserPromptArgs {
   weekAgo: number;
 }
 
+export interface QueryUnderstandingUserPromptArgs {
+  nowDate: Date;
+  nowTs: number;
+  timeZone: string;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
+  canonicalCandidatesJson: string;
+  userQuery: string;
+}
+
+export interface AnswerSynthesisUserPromptArgs {
+  userQuery: string;
+  localTime: string;
+  timeZone: string;
+  nowDate: Date;
+  formattedTimeSpanStart: string;
+  formattedTimeSpanEnd: string;
+  topAppsStr: string;
+  topEntitiesStr: string;
+  kindsStr: string;
+  nodesJson: string;
+  evidenceJson: string;
+}
+
 // ============================================================================
 // VLM Processor Prompts (Alpha)
 // ============================================================================
@@ -113,6 +140,8 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
 
 ### entities (max 10)
 - Named entities only; exclude generic terms
+- type MUST be one of: person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+- Include raw/confidence when visible
 
 ### action_items (optional)
 - Only if explicit TODOs/next steps are visible
@@ -295,6 +324,270 @@ ${args.batchNodesJson}
 
 const THREAD_LLM_USER_PROMPT_ZH = THREAD_LLM_USER_PROMPT_EN;
 
+// =========================================================================
+// Deep Search Prompts
+// =========================================================================
+
+const QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN = `You are a search query analyzer. Your task is to parse a user's natural language query and extract structured search parameters.
+
+## Output Schema (JSON only)
+
+{
+  "embedding_text": string,     // Optimized text for semantic search (normalized entities, clear intent)
+  "filters_patch": {            // Optional extracted filters
+    "time_range": { "start": number, "end": number }, // Unix timestamps in milliseconds
+    "app_hint": string,         // Application name if mentioned (MUST be one of Canonical App Candidates)
+    "entities": string[]        // Entity names mentioned (0-20, see rules)
+  },
+  "kind_hint": "event" | "knowledge" | "state_snapshot",
+  "extracted_entities": [ { "name": string, "type": string, "raw": string, "confidence": number } ],
+  "keywords": string[],         // 0-10 high-signal keywords for exact SQL matching
+  "time_range_reasoning": string, // Brief explanation of time parsing
+  "confidence": number          // 0-1
+}
+
+## Rules
+
+1. **embedding_text**: Rephrase the query for better semantic matching. Remove filler words, normalize entity names.
+2. **filters_patch.time_range**: Only include if user explicitly mentions time (e.g., "yesterday", "last week", "in March").
+3. **filters_patch.app_hint**: Only include if user mentions a specific application. If provided, it MUST be one of the Canonical App Candidates provided in the prompt.
+4. **Do NOT include thread_id** in filters_patch - that's user-controlled context.
+5. **kind_hint**: Infer what type of information the user is looking for.
+6. **confidence**: Set lower if query is ambiguous or you're uncertain about extractions.
+7. **extracted_entities** rules:
+   - 0-20 canonical named entities across the query.
+   - Only meaningful named entities (person/project/team/org/app/repo/issue/ticket like "ABC-123").
+   - type MUST be one of: person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other.
+   - EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
+   - EXCLUDE URLs without meaningful names.
+   - Deduplicate and prefer canonical names.
+
+## Important
+
+- Return ONLY valid JSON, no markdown or explanations.
+- If you cannot parse the query meaningfully, set confidence to 0.`;
+
+const QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH = `你是一个搜索查询分析器。你的任务是解析用户的自然语言查询并提取结构化的搜索参数。
+
+## 输出模式 (仅 JSON)
+
+{
+  "embedding_text": 字符串,     // 用于语义搜索的优化文本（规范化实体，明确意图）
+  "filters_patch": {            // 可选的提取过滤器
+    "time_range": { "start": 数字, "end": 数字 }, // Unix 毫秒级时间戳
+    "app_hint": 字符串,         // 如果提到则为应用名称（必须是“规范应用候选”之一）
+    "entities": 字符串数组       // 提到的实体名称 (0-20, 见规则)
+  },
+  "kind_hint": "event" | "knowledge" | "state_snapshot",
+  "extracted_entities": [ { "name": 字符串, "type": 字符串, "raw": 字符串, "confidence": 数字 } ],
+  "keywords": 字符串数组,        // 用于精确匹配的 0-10 个高信号关键词
+  "time_range_reasoning": 字符串, // 时间解析的简要说明
+  "confidence": 数字           // 0-1
+}
+
+## 规则
+
+1. **embedding_text**：为了更好的语义匹配，请重新描述查询。移除填充词，规范化实体名称。
+2. **filters_patch.time_range**：仅当用户明确提到时间（例如“昨天”、“上周”、“三月”）时才包含。
+3. **filters_patch.app_hint**：仅当用户提到特定应用程序时才包含。如果提供，它必须在提示中提供的“规范应用候选”列表中。
+4. **不要在 filters_patch 中包含 thread_id** - 这是受用户控制的上下文。
+5. **kind_hint**：推断用户正在寻找的信息类型。
+6. **confidence**：如果查询含糊不清或对提取不确定，请设置较低的置信度。
+7. **extracted_entities** 规则：
+   - 整个查询中 0-20 个规范的命名实体。
+   - 仅包含有意义的命名实体（人物/项目/团队/组织/应用/仓库/Issue/任务单，如 "ABC-123"）。
+   - type 必须为：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+   - 排除通用技术术语、库、命令、文件路径和文件夹，如 "npm", "node_modules", "dist", ".git"。
+   - 排除没有意义名称的 URL。
+   - 去重并优先使用规范名称。
+
+## 重要提示
+
+- 仅返回有效的 JSON，不要有 markdown 或说明。
+- 如果无法有意义地解析查询，请将置信度设置为 0。`;
+
+const ANSWER_SYNTHESIS_SYSTEM_PROMPT_EN = `You are a context-aware answer synthesizer. Your task is to generate a concise, accurate answer based on search results.
+
+## Input
+
+You will receive:
+1. The user's original query
+2. Current User Time (local time and timezone)
+3. Retrieved context nodes with these fields:
+   - id, kind, title, summary, keywords, entities (array of names), event_time, local_time, thread_id, screenshot_ids
+4. Screenshot evidence with these fields:
+   - screenshot_id, timestamp, local_time, app_hint, window_title, ui_snippets
+
+## Output Schema (JSON only)
+
+{
+  "answer_title": string,       // Optional short title for the answer (≤100 chars)
+  "answer": string,             // Main answer text (concise, factual)
+  "bullets": string[],          // Key bullet points (≤8 items)
+  "citations": [                // References to source nodes/screenshots
+    { "node_id": number, "screenshot_id": number, "quote": string }
+  ],
+  "confidence": number          // 0-1, based on evidence quality
+}
+
+## Rules
+
+1. **Faithfulness**: ONLY use information from the provided context. Do NOT invent facts.
+2. **Local Time Enforcement**: ALL times in your answer (answer text, bullets) MUST be in the User's Local Time format (e.g., "14:30" or "2:30 PM").
+3. **Citations required**: Every claim must have at least one citation. Use node_id or screenshot_id from the input.
+4. **Quote**: Short excerpt (≤80 chars) from the source as evidence. No sensitive information.
+5. **Confidence**: Set lower if evidence is sparse or contradictory. Set very low if no relevant evidence.
+6. **answer**: Keep concise and directly address the query.
+
+## Important
+
+- Return ONLY valid JSON, no markdown or explanations.
+- If no relevant information is found, set confidence to 0.1 and explain in the answer.`;
+
+const ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH = `你是一个上下文感知的答案合成器。你的任务是根据搜索结果生成简洁、准确的答案。
+
+## 输入
+
+你将收到：
+1. 用户的原始查询
+2. 当前用户时间（本地时间和时区）
+3. 检索到的上下文节点，包含以下字段：
+   - id, kind, title, summary, keywords, entities (名称数组), event_time, local_time, thread_id, screenshot_ids
+4. 截图证据，包含以下字段：
+   - screenshot_id, timestamp, local_time, app_hint, window_title, ui_snippets
+
+## 输出模式 (仅 JSON)
+
+{
+  "answer_title": 字符串,       // 答案的可选短标题 (≤100 字符)
+  "answer": 字符串,             // 答案正文（简洁、真实）
+  "bullets": 字符串数组,          // 关键点 (≤8 项)
+  "citations": [                // 对源节点/截图的引用
+    { "node_id": 数字, "screenshot_id": 数字, "quote": 字符串 }
+  ],
+  "confidence": 数字           // 0-1, 基于证据质量
+}
+
+## 规则
+
+1. **忠实度**：仅使用提供的上下文中的信息。不得捏造事实。
+2. **本地时间强制要求**：答案（正文、要点）中的所有时间必须采用用户的本地时间格式（例如 "14:30" 或 "2:30 PM"）。
+3. **必须包含引用**：每个声明必须至少有一个引用。使用输入中的 node_id 或 screenshot_id。
+4. **引用文段**：来自源的短摘录 (≤80 字符) 作为证据。不得包含敏感信息。
+5. **置信度**：如果证据稀疏或矛盾，请设置较低数值。如果没有相关证据，请设置极低数值。
+6. **answer**：保持简洁并直接回答查询。
+
+## 重要提示
+
+- 仅返回有效的 JSON，不要有 markdown 或说明。
+- 如果未找到相关信息，请将置信度设置为 0.1 并在答案中说明。`;
+
+const QUERY_UNDERSTANDING_USER_PROMPT_EN = (
+  args: QueryUnderstandingUserPromptArgs
+) => `Current time: ${args.nowDate.toISOString()}
+Current Unix timestamp (ms): ${args.nowTs}
+Timezone: ${args.timeZone}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
+
+## Canonical App Candidates (for filters_patch.app_hint)
+${args.canonicalCandidatesJson}
+
+## App mapping rules (critical)
+- filters_patch.app_hint MUST be a canonical name from the list above.
+- If the user query uses an alias like "chrome", "google chrome", etc., map it to the canonical app name.
+- If you cannot confidently map to one canonical app, OMIT filters_patch.app_hint.
+
+## Time calculation rules (critical)
+- ALWAYS use the Time Reference Points above for calculating filters_patch.time_range.
+- For "today", use Today start and Today end timestamps directly.
+- For "yesterday", use Yesterday start and Yesterday end timestamps directly.
+- Do NOT calculate Unix timestamps from scratch - use the provided reference points!
+
+User query: "${args.userQuery}"
+
+Parse this query and return the structured search parameters.`;
+
+const QUERY_UNDERSTANDING_USER_PROMPT_ZH = (
+  args: QueryUnderstandingUserPromptArgs
+) => `当前时间：${args.nowDate.toISOString()}
+当前 Unix 时间戳（毫秒）：${args.nowTs}
+时区：${args.timeZone}
+
+## 时间参考点（Unix 毫秒，用于时间计算！）
+- 今天开始 (00:00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 规范应用候选（用于 filters_patch.app_hint）
+${args.canonicalCandidatesJson}
+
+## 应用映射规则（关键）
+- filters_patch.app_hint 必须是上述列表中的规范名称。
+- 如果用户查询使用别名如 "chrome", "google chrome" 等，请将其映射到规范的应用名称。
+- 如果无法自信地映射到一个规范应用，请省略 filters_patch.app_hint。
+
+## 时间计算规则（关键）
+- 始终使用上面的时间参考点计算 filters_patch.time_range。
+- 对于 "今天" (today)，直接使用今天开始和今天结束时间戳。
+- 对于 "昨天" (yesterday)，直接使用昨天开始和昨天结束时间戳。
+- 不要从头开始计算 Unix 时间戳 - 使用提供的参考点！
+
+用户查询："${args.userQuery}"
+
+解析此查询并返回结构化搜索参数。`;
+
+const ANSWER_SYNTHESIS_USER_PROMPT_EN = (args: AnswerSynthesisUserPromptArgs) => `## User Query
+"${args.userQuery}"
+
+## Current User Time
+- local_time: ${args.localTime}
+- time_zone: ${args.timeZone}
+- now_utc: ${args.nowDate.toISOString()}
+
+## Global Summary
+- Time span: ${args.formattedTimeSpanStart} to ${args.formattedTimeSpanEnd}
+- Top apps: ${args.topAppsStr}
+- Top entities: ${args.topEntitiesStr}
+- Kinds: ${args.kindsStr}
+
+## Context Nodes
+${args.nodesJson}
+
+## Screenshot Evidence
+${args.evidenceJson}
+
+Based on the above context, provide a structured answer to the user's query. Remember to use ONLY the local time zone (${args.timeZone}) for all time references in your answer.`;
+
+const ANSWER_SYNTHESIS_USER_PROMPT_ZH = (args: AnswerSynthesisUserPromptArgs) => `## 用户查询
+"${args.userQuery}"
+
+## 当前用户时间
+- local_time: ${args.localTime}
+- time_zone: ${args.timeZone}
+- now_utc: ${args.nowDate.toISOString()}
+
+## 全局摘要
+- 时间跨度：${args.formattedTimeSpanStart} 至 ${args.formattedTimeSpanEnd}
+- Top apps: ${args.topAppsStr}
+- Top entities: ${args.topEntitiesStr}
+- Kinds: ${args.kindsStr}
+
+## 上下文节点
+${args.nodesJson}
+
+## 截图证据
+${args.evidenceJson}
+
+基于以上上下文，为用户查询生成结构化答案。请确保所有时间引用均使用本地时间 (${args.timeZone})。`;
+
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
@@ -313,5 +606,25 @@ export const promptTemplates = {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? THREAD_LLM_USER_PROMPT_ZH(args)
       : THREAD_LLM_USER_PROMPT_EN(args);
+  },
+  getQueryUnderstandingSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH
+      : QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN;
+  },
+  getQueryUnderstandingUserPrompt(args: QueryUnderstandingUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? QUERY_UNDERSTANDING_USER_PROMPT_ZH(args)
+      : QUERY_UNDERSTANDING_USER_PROMPT_EN(args);
+  },
+  getAnswerSynthesisSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH
+      : ANSWER_SYNTHESIS_SYSTEM_PROMPT_EN;
+  },
+  getAnswerSynthesisUserPrompt(args: AnswerSynthesisUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ANSWER_SYNTHESIS_USER_PROMPT_ZH(args)
+      : ANSWER_SYNTHESIS_USER_PROMPT_EN(args);
   },
 };

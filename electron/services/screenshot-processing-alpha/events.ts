@@ -53,6 +53,14 @@ export interface ScreenshotProcessingEventMap {
   "batch:persisted": BatchPersistedEvent;
   "screenshot-accept": ScreenshotAcceptEvent;
 
+  "vector-documents:dirty": {
+    type: "vector-documents:dirty";
+    timestamp: number;
+    reason: string;
+    vectorDocumentId: number;
+    nodeId: number;
+  };
+
   // Scheduler Lifecycle
   "scheduler:started": SchedulerLifecycleEvent;
   "scheduler:stopped": SchedulerLifecycleEvent;

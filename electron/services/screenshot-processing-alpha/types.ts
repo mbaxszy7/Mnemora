@@ -1,12 +1,28 @@
 import { type VlmStatus } from "../../database/schema";
+import type {
+  AppContextPayload,
+  KnowledgePayload,
+  StateSnapshotPayload,
+  EntityRef,
+} from "@shared/context-types";
 
 export type { VlmStatus };
 
 export type {
+  AppContextPayload,
+  ContextKind,
+  EntityRef,
   ExpandedContextNode,
+  KnowledgePayload,
   ScreenshotEvidence,
-  SearchQuery,
   SearchResult,
+  SearchFilters,
+  SearchQuery,
+  SearchQueryPlan,
+  SearchAnswer,
+  SearchAnswerCitation,
+  StateSnapshotPayload,
+  ThreadSnapshot,
 } from "@shared/context-types";
 
 export type SourceKey = `screen:${string}` | `window:${string}`;
@@ -87,43 +103,6 @@ export interface PendingBatchRecord {
   updatedAt: number;
 }
 
-export interface AppContextPayload {
-  appHint: string | null;
-  windowTitle: string | null;
-  sourceKey: string;
-}
-
-export interface KnowledgePayload {
-  contentType: string;
-  sourceUrl?: string;
-  projectOrLibrary?: string;
-  keyInsights: string[];
-  language: "en" | "zh" | "other";
-  textRegion?: {
-    box: {
-      top: number;
-      left: number;
-      width: number;
-      height: number;
-    };
-    description?: string;
-    confidence: number;
-  };
-}
-
-export interface StateSnapshotPayload {
-  subjectType: string;
-  subject: string;
-  currentState: string;
-  metrics?: Record<string, string | number>;
-  issue?: {
-    detected: boolean;
-    type: "error" | "bug" | "blocker" | "question" | "warning";
-    description: string;
-    severity: number;
-  };
-}
-
 export interface UpsertNodeInput {
   batchId: number;
   screenshotId: number;
@@ -135,6 +114,7 @@ export interface UpsertNodeInput {
   stateSnapshot: StateSnapshotPayload | null;
   uiTextSnippets: string[];
   keywords: string[];
+  entities: EntityRef[];
   importance: number;
   confidence: number;
 }

@@ -89,11 +89,7 @@ export function SearchBar({
     onSearchStart?.(query.trim());
 
     try {
-      const result = await search({
-        query: query.trim(),
-        deepSearch: true,
-        topK: 20,
-      });
+      const result = await search(query.trim());
 
       if (result.success && result.data) {
         onSearchComplete?.(result.data, query.trim());

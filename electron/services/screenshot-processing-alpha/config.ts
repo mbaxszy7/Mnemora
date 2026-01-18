@@ -1,3 +1,6 @@
+import os from "node:os";
+import path from "node:path";
+
 /**
  * Screenshot Processing Pipeline Configuration
  *
@@ -209,5 +212,11 @@ export const processingConfig = {
     checkIntervalMs: 5000,
     /** Pending count must stay below threshold for this many cycles */
     recoveryBatchThreshold: 2,
+  },
+
+  vectorStore: {
+    indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
+    flushDebounceMs: 500,
+    defaultDimensions: 1024,
   },
 };

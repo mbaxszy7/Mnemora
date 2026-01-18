@@ -43,6 +43,13 @@
       "when": 1768655210953,
       "tag": "0005_grey_supernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1768709090370,
+      "tag": "0006_cheerful_vanisher",
+      "breakpoints": true
     }
   ]
 }

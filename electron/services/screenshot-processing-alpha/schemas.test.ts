@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 
-import { VLMOutputProcessedSchema } from "./schemas";
+import { EntityRefSchema, VLMOutputProcessedSchema } from "./schemas";
 
 describe("VLMOutputProcessedSchema", () => {
   it("truncates and caps fields", () => {
@@ -35,5 +35,32 @@ describe("VLMOutputProcessedSchema", () => {
     expect(node.importance).toBe(10);
     expect(node.confidence).toBe(0);
     expect(node.keywords.length).toBe(5);
+  });
+});
+
+describe("EntityRefSchema", () => {
+  it("accepts shared EntityRef shape", () => {
+    const parsed = EntityRefSchema.parse({
+      name: "auth-service",
+      type: "repo",
+      raw: "auth-service",
+      confidence: 0.75,
+    });
+
+    expect(parsed).toEqual({
+      name: "auth-service",
+      type: "repo",
+      raw: "auth-service",
+      confidence: 0.75,
+    });
+  });
+
+  it("rejects unknown entity types", () => {
+    const result = EntityRefSchema.safeParse({
+      name: "auth-service",
+      type: "invalid",
+    });
+
+    expect(result.success).toBe(false);
   });
 });

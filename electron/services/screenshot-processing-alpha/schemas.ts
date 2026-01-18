@@ -1,5 +1,8 @@
 import { z } from "zod";
 
+import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
+import { CONTEXT_KIND_VALUES, ENTITY_TYPE_VALUES, type EntityRef } from "@shared/context-types";
+
 // =========================================================================
 // VLM Output Schemas (Alpha - One Node per Screenshot)
 // =========================================================================
@@ -8,26 +11,63 @@ function truncateTo(maxLen: number) {
   return (s: string) => (s.length > maxLen ? s.slice(0, maxLen) : s);
 }
 
-export const EntityTypeSchema = z.enum([
-  "person",
-  "project",
-  "team",
-  "org",
-  "jira_id",
-  "pr_id",
-  "commit",
-  "document_id",
-  "url",
-  "repo",
-  "other",
-]);
+export const EntityTypeSchema = z.enum(ENTITY_TYPE_VALUES);
 
-export const EntityRefSchema = z.object({
+export const EntityRefSchema: z.ZodType<EntityRef> = z.object({
   name: z.string(),
   type: EntityTypeSchema,
   raw: z.string().optional(),
   confidence: z.number().optional(),
 });
+
+const normalizeEntityRefs = (
+  entities: z.infer<typeof EntityRefSchema>[],
+  limit: number
+): z.infer<typeof EntityRefSchema>[] => {
+  const normalized: z.infer<typeof EntityRefSchema>[] = [];
+
+  for (const entity of entities) {
+    const name = entity.name.trim();
+    if (!name) {
+      continue;
+    }
+
+    const normalizedEntity: z.infer<typeof EntityRefSchema> = {
+      name: truncateTo(120)(name),
+      type: entity.type,
+    };
+
+    if (entity.raw) {
+      normalizedEntity.raw = truncateTo(200)(entity.raw.trim());
+    }
+
+    if (entity.confidence !== undefined) {
+      normalizedEntity.confidence = Math.max(0, Math.min(1, entity.confidence));
+    }
+
+    normalized.push(normalizedEntity);
+    if (normalized.length >= limit) {
+      break;
+    }
+  }
+
+  return normalized;
+};
+
+const normalizeEntityNames = (entities?: string[], limit = 20): string[] | undefined => {
+  if (!entities) {
+    return undefined;
+  }
+
+  const normalized = entities
+    .map((entity) => entity.trim())
+    .filter((entity) => entity.length > 0)
+    .slice(0, limit);
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const CANONICAL_APP_CANDIDATES = Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
 
 export const KnowledgeSchema = z
   .object({
@@ -132,10 +172,7 @@ export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
           issue: node.state_snapshot.issue,
         }
       : null,
-    entities: node.entities.slice(0, 10).map((entity) => ({
-      ...entity,
-      name: truncateTo(120)(entity.name),
-    })),
+    entities: normalizeEntityRefs(node.entities, 10),
     actionItems: node.action_items ? node.action_items.slice(0, 5) : null,
     uiTextSnippets: node.ui_text_snippets.slice(0, 5).map(truncateTo(200)),
     importance: Math.max(0, Math.min(10, node.importance)),
@@ -151,7 +188,6 @@ export type VLMContextNodeRaw = z.infer<typeof VLMContextNodeSchema>;
 
 export type VLMOutput = z.infer<typeof VLMOutputProcessedSchema>;
 export type VLMContextNode = VLMOutput["nodes"][number];
-export type EntityRef = z.infer<typeof EntityRefSchema>;
 
 export type VLMScreenshotMeta = {
   screenshot_index: number;
@@ -227,3 +263,116 @@ export const ThreadLLMOutputProcessedSchema = ThreadLLMOutputSchema.transform((v
 });
 
 export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;
+
+// =========================================================================
+// Deep Search Schemas
+// =========================================================================
+
+export const SearchQueryPlanSchema = z.object({
+  embedding_text: z.string().min(1),
+  filters_patch: z
+    .object({
+      time_range: z
+        .object({
+          start: z.number(),
+          end: z.number(),
+        })
+        .optional(),
+      app_hint: z.string().optional(),
+      entities: z.array(z.string()).optional(),
+    })
+    .optional(),
+  kind_hint: z.enum(CONTEXT_KIND_VALUES).optional(),
+  extracted_entities: z.array(EntityRefSchema).optional(),
+  keywords: z.array(z.string()).optional(),
+  time_range_reasoning: z.string().optional(),
+  confidence: z.number(),
+});
+
+export const SearchQueryPlanProcessedSchema = SearchQueryPlanSchema.transform((val) => {
+  const result: {
+    embeddingText: string;
+    filtersPatch?: {
+      timeRange?: { start: number; end: number };
+      appHint?: string;
+      entities?: string[];
+    };
+    kindHint?: (typeof CONTEXT_KIND_VALUES)[number];
+    extractedEntities?: z.infer<typeof EntityRefSchema>[];
+    keywords?: string[];
+    timeRangeReasoning?: string;
+    confidence: number;
+  } = {
+    embeddingText: val.embedding_text,
+    confidence: Math.max(0, Math.min(1, val.confidence)),
+  };
+
+  if (val.filters_patch) {
+    result.filtersPatch = {
+      timeRange: val.filters_patch.time_range,
+      appHint: val.filters_patch.app_hint,
+      entities: normalizeEntityNames(val.filters_patch.entities),
+    };
+    if (
+      result.filtersPatch.appHint &&
+      !CANONICAL_APP_CANDIDATES.includes(result.filtersPatch.appHint)
+    ) {
+      delete result.filtersPatch.appHint;
+    }
+  }
+
+  if (val.kind_hint) {
+    result.kindHint = val.kind_hint;
+  }
+
+  if (val.extracted_entities) {
+    result.extractedEntities = normalizeEntityRefs(val.extracted_entities, 20);
+  }
+
+  if (val.keywords) {
+    result.keywords = val.keywords.slice(0, 10);
+  }
+
+  if (val.time_range_reasoning) {
+    result.timeRangeReasoning = val.time_range_reasoning;
+  }
+
+  return result;
+});
+
+const SearchAnswerCitationSchema = z.object({
+  node_id: z.number().int().positive().optional(),
+  screenshot_id: z.number().int().positive().optional(),
+  quote: z.string().optional(),
+});
+
+export const SearchAnswerSchema = z.object({
+  answer_title: z.string().optional(),
+  answer: z.string().min(1),
+  bullets: z.array(z.string()).optional(),
+  citations: z.array(SearchAnswerCitationSchema).default([]),
+  confidence: z.number(),
+});
+
+export const SearchAnswerProcessedSchema = SearchAnswerSchema.transform((val) => {
+  const result = {
+    answerTitle: val.answer_title,
+    answer: val.answer,
+    bullets: val.bullets ? val.bullets.slice(0, 8) : undefined,
+    citations: val.citations.map((citation) => ({
+      nodeId: citation.node_id,
+      screenshotId: citation.screenshot_id,
+      quote: citation.quote,
+    })),
+    confidence: Math.max(0, Math.min(1, val.confidence)),
+  };
+
+  if (result.confidence > 0.2 && result.citations.length === 0) {
+    result.confidence = 0.2;
+  }
+
+  return result;
+});
+
+export type SearchQueryPlanRaw = z.infer<typeof SearchQueryPlanSchema>;
+export type SearchAnswerRaw = z.infer<typeof SearchAnswerSchema>;

@@ -5,13 +5,8 @@
  * and the Renderer process for context graph operations.
  */
 
-export type ContextKind =
-  | "event"
-  | "knowledge"
-  | "state_snapshot"
-  | "procedure"
-  | "plan"
-  | "entity_profile";
+export const CONTEXT_KIND_VALUES = ["event", "knowledge", "state_snapshot"] as const;
+export type ContextKind = (typeof CONTEXT_KIND_VALUES)[number];
 
 export type EdgeType = never;
 
@@ -38,6 +33,55 @@ export interface Thread {
   updatedAt: number;
 }
 
+export interface AppContextPayload {
+  appHint: string | null;
+  windowTitle: string | null;
+  sourceKey: string;
+}
+
+export interface KnowledgePayload {
+  contentType: string;
+  sourceUrl?: string;
+  projectOrLibrary?: string;
+  keyInsights: string[];
+  language: "en" | "zh" | "other";
+  textRegion?: {
+    box: {
+      top: number;
+      left: number;
+      width: number;
+      height: number;
+    };
+    description?: string;
+    confidence: number;
+  };
+}
+
+export interface StateSnapshotPayload {
+  subjectType: string;
+  subject: string;
+  currentState: string;
+  metrics?: Record<string, string | number>;
+  issue?: {
+    detected: boolean;
+    type: "error" | "bug" | "blocker" | "question" | "warning";
+    description: string;
+    severity: number;
+  };
+}
+
+export interface ThreadSnapshot {
+  threadId: string;
+  title: string;
+  summary: string;
+  durationMs: number;
+  startTime: number;
+  lastActiveAt: number;
+  currentPhase?: string | null;
+  currentFocus?: string | null;
+  mainProject?: string | null;
+}
+
 export interface ThreadSummary {
   id: string;
   title: string;
@@ -47,16 +91,32 @@ export interface ThreadSummary {
   durationMs: number;
 }
 
+export const ENTITY_TYPE_VALUES = [
+  "person",
+  "project",
+  "team",
+  "org",
+  "jira_id",
+  "pr_id",
+  "commit",
+  "document_id",
+  "url",
+  "repo",
+  "other",
+] as const;
+
+export type EntityType = (typeof ENTITY_TYPE_VALUES)[number];
+
 /**
  * Entity reference in a context node
  */
 export interface EntityRef {
-  /** Entity ID (if matched to existing entity) */
-  entityId?: number;
   /** Canonical name of the entity */
   name: string;
   /** Type of entity */
-  entityType?: string;
+  type: EntityType;
+  /** Raw text span from source */
+  raw?: string;
   /** Confidence score (0-1) */
   confidence?: number;
 }
@@ -69,28 +129,40 @@ export interface ExpandedContextNode {
   id?: number;
   /** Node type */
   kind: ContextKind;
+  /** Batch identifier */
+  batchId: number;
   /** Thread identifier (for events) */
   threadId?: string;
+  /** Thread snapshot payload */
+  threadSnapshot?: ThreadSnapshot | null;
   /** Node title (≤100 chars) */
   title: string;
   /** Node summary (≤200 chars) */
   summary: string;
+  /** App context */
+  appContext: AppContextPayload;
+  /** Extracted knowledge */
+  knowledge: KnowledgePayload | null;
+  /** Extracted state snapshot */
+  stateSnapshot: StateSnapshotPayload | null;
+  /** High-signal UI snippets */
+  uiTextSnippets: string[];
   /** Keywords for search */
   keywords: string[];
-  /** Entity references */
+  /** Named entities */
   entities: EntityRef[];
   /** Importance score (0-10) */
   importance: number;
   /** Confidence score (0-10) */
   confidence: number;
-  /** IDs of nodes merged into this one */
-  mergedFromIds?: number[];
   /** Screenshot IDs linked to this node */
   screenshotIds: number[];
   /** Event timestamp */
-  eventTime?: number;
+  eventTime: number;
   /** Creation timestamp */
   createdAt?: number;
+  /** Update timestamp */
+  updatedAt?: number;
 }
 
 /**
@@ -111,19 +183,9 @@ export interface SearchFilters {
 }
 
 /**
- * Search query parameters
+ * Search query text
  */
-export interface SearchQuery {
-  requestId?: string;
-  /** Natural language query */
-  query: string;
-  /** Optional filters */
-  filters?: SearchFilters;
-  /** Number of results to return */
-  topK?: number;
-  /** Enable Deep Search (LLM-enhanced query understanding + answer synthesis) */
-  deepSearch?: boolean;
-}
+export type SearchQuery = string;
 
 /**
  * Screenshot evidence in search results
@@ -155,7 +217,7 @@ export interface SearchQueryPlan {
   /** Extracted filter constraints to merge with user-provided filters */
   filtersPatch?: Partial<SearchFilters>;
   /** Hint for result kind (used for ranking, not filtering) */
-  kindHint?: "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile";
+  kindHint?: ContextKind;
   /** Entities extracted from query */
   extractedEntities?: EntityRef[];
   /** Keywords extracted from query for exact matching */

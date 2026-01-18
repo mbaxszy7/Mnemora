@@ -113,6 +113,11 @@ export const threads = sqliteTable(
   ]
 );
 
+export const screenshotsFts = sqliteTable("screenshots_fts", {
+  rowid: integer("rowid"),
+  ocrText: text("ocr_text"),
+});
+
 /**
  * Batches table
  * Stores batch processing jobs for VLM analysis
@@ -252,6 +257,9 @@ export const contextNodes = sqliteTable(
     // Keywords
     keywords: text("keywords_json").notNull().default("[]"),
 
+    // Entities
+    entities: text("entities_json").notNull().default("[]"),
+
     // Processing status
     embeddingStatus: text("embedding_status", {
       enum: EMBEDDING_STATUS_VALUES,
@@ -337,7 +345,7 @@ export const vectorDocuments = sqliteTable(
   (table) => [
     index("idx_vd_embedding_status").on(table.embeddingStatus),
     index("idx_vd_index_status").on(table.indexStatus),
-    uniqueIndex("idx_vd_text_hash").on(table.textHash),
+    index("idx_vd_text_hash").on(table.textHash),
   ]
 );
 

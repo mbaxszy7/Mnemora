@@ -7,6 +7,7 @@ import { processingConfig } from "../config";
 import { threadLlmService } from "../services/thread-llm-service";
 import { threadRepository } from "../services/thread-repository";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
+import { vectorDocumentService } from "../vector-document-service";
 
 const logger = getLogger("thread-scheduler");
 
@@ -295,6 +296,10 @@ export class ThreadScheduler extends BaseScheduler {
           batchNodesAsc: batchNodes,
         });
 
+        await Promise.all(
+          batchNodes.map((node) => vectorDocumentService.upsertForContextNode(node.id))
+        );
+
         for (const tid of finalized.affectedThreadIds) {
           this.emit("batch:thread:succeeded", {
             batchId: record.id,
@@ -319,6 +324,10 @@ export class ThreadScheduler extends BaseScheduler {
         batchNodesAsc: batchNodes,
         output,
       });
+
+      await Promise.all(
+        batchNodes.map((node) => vectorDocumentService.upsertForContextNode(node.id))
+      );
 
       for (const tid of applied.affectedThreadIds) {
         this.emit("batch:thread:succeeded", {

@@ -57,6 +57,26 @@ export interface AnswerSynthesisUserPromptArgs {
   evidenceJson: string;
 }
 
+export interface ActivitySummaryUserPromptArgs {
+  nowTs: number;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
+  windowStart: number;
+  windowEnd: number;
+  windowStartLocal: string;
+  windowEndLocal: string;
+  contextNodesJson: string;
+  longThreadsJson: string;
+  statsJson: string;
+}
+
+export interface EventDetailsUserPromptArgs {
+  userPromptJson: string;
+}
+
 // ============================================================================
 // VLM Processor Prompts (Alpha)
 // ============================================================================
@@ -588,6 +608,184 @@ ${args.evidenceJson}
 
 基于以上上下文，为用户查询生成结构化答案。请确保所有时间引用均使用本地时间 (${args.timeZone})。`;
 
+// =========================================================================
+// Activity Monitor Prompts
+// =========================================================================
+
+const ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant. Your job is to summarize user activity within a 20-minute window.
+
+## Analysis Dimensions
+
+- **Application Usage**: What apps/tools were used
+- **Content Interaction**: What was viewed/edited/decided
+- **Goal Behavior**: What goals were pursued
+- **Activity Pattern**: Focused or multi-threaded
+
+## Output JSON Schema
+
+{
+  "title": "Debugging auth-service OAuth implementation",
+  "summary": "## Core Tasks & Projects\n- Debugging OAuth2 token refresh in auth-service...",
+  "highlights": [
+    "Fixed OAuth token refresh bug",
+    "Updated API documentation"
+  ],
+  "stats": {
+    "top_apps": ["Visual Studio Code", "Google Chrome"],
+    "top_entities": ["auth-service", "OAuth2"]
+  },
+  "events": [
+    {
+      "title": "Debugging OAuth2 implementation",
+      "kind": "debugging",
+      "start_offset_min": 0,
+      "end_offset_min": 15,
+      "confidence": 8,
+      "importance": 7,
+      "description": "Investigating and fixing OAuth2 token refresh issue in auth-service",
+      "node_ids": [123, 124, 125],
+      "thread_id": "uuid-of-long-thread-if-applicable"
+    }
+  ]
+}
+
+## Field Requirements
+
+### title (required, ≤100 chars)
+- One-line summary of the most significant activity
+- Include project/task name when identifiable
+
+### summary (required, Markdown format)
+MUST contain exactly these 4 sections in order:
+
+#### ## Core Tasks & Projects
+- Main work activities with project names
+- Extract from: file paths, git operations, IDE titles
+- If none, output: "- None"
+
+#### ## Key Discussion & Decisions
+- Collaboration: Jira, Slack, Teams, PR reviews, meetings
+- Summarize key points and outcomes
+- If none, output: "- None"
+
+#### ## Documents
+- Wiki, docs, Confluence, README, API docs.
+- **CRITICAL**: If a context node has non-null \`knowledge_json\`, summarize its content using its specific fields: \`content_type\`, \`source_url\`, \`project_or_library\`, and \`key_insights\`. Provide a coherent summary of what was learned or referenced.
+- EXCLUDE source code files (.ts, .js, etc.).
+- Include URLs ONLY if visible.
+- If none, output: "- None"
+
+#### ## Next Steps
+- Planned actions, TODOs
+- If none, output: "- None"
+
+### highlights (max 5)
+- Key achievements or activities
+- Short strings (≤80 chars each)
+
+### stats
+- The input \`stats\` object may include extra numeric keys (e.g. \`thread_count\`, \`node_count\`).
+- You MUST set \`stats.top_apps\` and \`stats.top_entities\` to exactly match the input arrays.
+- Do NOT introduce new apps/entities.
+- Do NOT add extra keys beyond \`top_apps\` and \`top_entities\`.
+
+### events (1-3 candidates)
+- Identify distinct activity periods within the window
+- kind: Match activity type
+- start_offset_min / end_offset_min: Minutes from window start (0-20)
+- node_ids: Context node IDs that belong to this event
+- **MANDATORY**: For each thread in \`long_threads\` input, you MUST generate an event with its \`thread_id\`. Use the thread's title, summary, and context to generate accurate event title and description.
+- For non-long-thread events, \`thread_id\` can be omitted
+
+## Hard Rules
+
+1. Output MUST be valid JSON only. No markdown fences.
+2. All claims MUST be grounded in provided context nodes.
+3. summary MUST contain exactly 4 sections in specified order.
+4. stats MUST match input - do NOT invent apps/entities.
+5. NEVER invent URLs not visible in evidence.
+6. **CRITICAL**: For each thread in \`long_threads\` input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.`;
+
+const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+
+const ACTIVITY_SUMMARY_USER_PROMPT_EN = (
+  args: ActivitySummaryUserPromptArgs
+) => `Summarize user activity in this 20-minute window.
+
+## Current Time Context
+Current Unix timestamp (ms): ${args.nowTs}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
+
+## Time Window
+- Start: ${args.windowStart} (${args.windowStartLocal})
+- End: ${args.windowEnd} (${args.windowEndLocal})
+
+## Context Nodes in This Window
+${args.contextNodesJson}
+
+## Long Threads (MUST generate events for these)
+${args.longThreadsJson}
+
+## Statistics
+${args.statsJson}
+
+## Instructions
+1. Analyze all context nodes within this window.
+2. Generate a comprehensive summary with exactly 4 sections.
+3. **MANDATORY**: For each thread in "Long Threads", generate an event with its thread_id.
+4. Identify additional distinct activity events (total 1-3 events including long thread events).
+5. Return ONLY the JSON object.`;
+
+const ACTIVITY_SUMMARY_USER_PROMPT_ZH = ACTIVITY_SUMMARY_USER_PROMPT_EN;
+
+const EVENT_DETAILS_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant specializing in long-running task context synthesis.
+
+Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 25 minutes) encapsulated in a JSON object.
+
+## Markdown Structure Requirements
+
+The \`details\` field MUST contain exactly these three sections in order:
+
+### 1. Session Activity (本阶段工作)
+- **Scope**: Focus ONLY on the activities captured in \`window_nodes\` (THIS specific time window).
+- **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
+- **Style**: Bullet points preferred.
+
+### 2. Current Status & Progress (当前最新进度)
+- **Scope**: Use \`thread_latest_nodes\` and \`thread\` context to determine the absolute latest state.
+- **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
+- **Style**: Descriptive summary.
+
+### 3. Future Focus & Next Steps (后续关注)
+- **Scope**: Infer based on \`action_items_json\` and overall thread trajectory.
+- **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
+- **Style**: Actionable tasks list.
+
+## Quality Requirements
+
+- **Faithful**: Do NOT invent facts. Only use provided context nodes.
+- **Concise**: Use high-information density language. Avoid generic phrases.
+- **Context-Aware**: Clearly distinguish between what happened *now* vs the *overall* progress.
+
+## Hard Output Requirements
+
+1. Output MUST be a valid JSON object: { "details": "<markdown_content>" }.
+2. The markdown inside MUST follow the three-section outline above.
+3. Use Markdown headings (###) for sections.
+4. Output JSON only. No markdown fences for the JSON itself.`;
+
+const EVENT_DETAILS_SYSTEM_PROMPT_ZH = EVENT_DETAILS_SYSTEM_PROMPT_EN;
+
+const EVENT_DETAILS_USER_PROMPT_EN = (args: EventDetailsUserPromptArgs) => `${args.userPromptJson}`;
+
+const EVENT_DETAILS_USER_PROMPT_ZH = EVENT_DETAILS_USER_PROMPT_EN;
+
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
@@ -626,5 +824,25 @@ export const promptTemplates = {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? ANSWER_SYNTHESIS_USER_PROMPT_ZH(args)
       : ANSWER_SYNTHESIS_USER_PROMPT_EN(args);
+  },
+  getActivitySummarySystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
+      : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+  },
+  getActivitySummaryUserPrompt(args: ActivitySummaryUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ACTIVITY_SUMMARY_USER_PROMPT_ZH(args)
+      : ACTIVITY_SUMMARY_USER_PROMPT_EN(args);
+  },
+  getEventDetailsSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
+      : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+  },
+  getEventDetailsUserPrompt(args: EventDetailsUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? EVENT_DETAILS_USER_PROMPT_ZH(args)
+      : EVENT_DETAILS_USER_PROMPT_EN(args);
   },
 };

@@ -358,6 +358,7 @@ export class BatchVlmScheduler extends BaseScheduler {
         stateSnapshot: node.stateSnapshot,
         uiTextSnippets: node.uiTextSnippets,
         keywords: node.keywords,
+        entities: node.entities,
         importance: node.importance,
         confidence: node.confidence,
       });

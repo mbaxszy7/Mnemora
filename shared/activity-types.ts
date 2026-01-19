@@ -37,6 +37,7 @@ export type ActivityEventKind =
   | "break"
   | "browse"
   | "coding"
+  | "debugging"
   | "unknown";
 
 /**

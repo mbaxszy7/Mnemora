@@ -46,6 +46,16 @@ export interface ScreenshotOcrResultEvent {
   permanent?: boolean;
 }
 
+export interface ActivityTimelineChangedEvent {
+  type: "activity-timeline:changed";
+  timestamp: number;
+  payload: {
+    revision: number;
+    fromTs: number;
+    toTs: number;
+  };
+}
+
 export type ScreenshotAcceptEvent = AcceptedScreenshot;
 
 export interface ScreenshotProcessingEventMap {
@@ -76,4 +86,5 @@ export interface ScreenshotProcessingEventMap {
   "screenshot:ocr:failed": ScreenshotOcrResultEvent;
   "batch:thread:succeeded": { batchId: number; threadId: string; timestamp: number };
   "batch:thread:failed": { batchId: number; error: string; timestamp: number };
+  "activity-timeline:changed": ActivityTimelineChangedEvent;
 }

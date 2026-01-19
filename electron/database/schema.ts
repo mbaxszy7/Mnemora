@@ -373,8 +373,10 @@ export const activitySummaries = sqliteTable(
     nextRunAt: integer("next_run_at"),
 
     // Content
+    title: text("title"),
     summaryText: text("summary_text"),
     highlights: text("highlights_json"),
+    stats: text("stats_json"),
 
     // Timestamps
     createdAt: integer("created_at").notNull(),
@@ -406,6 +408,8 @@ export const activityEvents = sqliteTable(
 
     startTs: integer("start_ts").notNull(),
     endTs: integer("end_ts").notNull(),
+
+    durationMs: integer("duration_ms").notNull().default(0),
 
     // Associations
     summaryId: integer("summary_id").references(() => activitySummaries.id),

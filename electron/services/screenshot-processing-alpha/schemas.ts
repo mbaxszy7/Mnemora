@@ -265,6 +265,72 @@ export const ThreadLLMOutputProcessedSchema = ThreadLLMOutputSchema.transform((v
 export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;
 
 // =========================================================================
+// Activity Monitor LLM Output Schemas
+// =========================================================================
+
+const ActivityEventKindSchema = z.enum([
+  "focus",
+  "work",
+  "meeting",
+  "break",
+  "browse",
+  "coding",
+  "debugging",
+]);
+
+const ActivityEventCandidateSchema = z.object({
+  title: z.string(),
+  kind: ActivityEventKindSchema,
+  start_offset_min: z.number(),
+  end_offset_min: z.number(),
+  confidence: z.number(),
+  importance: z.number(),
+  description: z.string(),
+  node_ids: z.array(z.number().int().positive()),
+  thread_id: z.string().optional(),
+});
+
+export const ActivityWindowSummaryLLMSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  highlights: z.array(z.string()).max(5),
+  stats: z.object({
+    top_apps: z.array(z.string()).max(5),
+    top_entities: z.array(z.string()).max(5),
+  }),
+  events: z.array(ActivityEventCandidateSchema).max(3),
+});
+
+export const ActivityWindowSummaryLLMProcessedSchema = ActivityWindowSummaryLLMSchema.transform(
+  (val) => ({
+    title: truncateTo(100)(val.title),
+    summary: val.summary,
+    highlights: val.highlights.map(truncateTo(100)),
+    stats: {
+      topApps: val.stats.top_apps,
+      topEntities: val.stats.top_entities,
+    },
+    events: val.events.map((event) => ({
+      title: truncateTo(100)(event.title),
+      kind: event.kind,
+      startOffsetMin: event.start_offset_min,
+      endOffsetMin: event.end_offset_min,
+      confidence: Math.max(0, Math.min(10, event.confidence)),
+      importance: Math.max(0, Math.min(10, event.importance)),
+      description: truncateTo(200)(event.description),
+      nodeIds: event.node_ids,
+      threadId: event.thread_id,
+    })),
+  })
+);
+
+export const ActivityEventDetailsLLMSchema = z.object({
+  details: z.string(),
+});
+
+export const ActivityEventDetailsLLMProcessedSchema = ActivityEventDetailsLLMSchema;
+
+// =========================================================================
 // Deep Search Schemas
 // =========================================================================
 

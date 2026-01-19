@@ -65,6 +65,7 @@ export const processingConfig = {
     windowMs: 20 * 60 * 1000, // 20 minutes
     /** Threshold for long event detection (ms) */
     longEventThresholdMs: 25 * 60 * 1000, // 25 minutes
+    summaryConcurrency: 2,
     /** Max context nodes to include in event details evidence */
     eventDetailsEvidenceMaxNodes: 50,
     /** Max characters for event details evidence text */

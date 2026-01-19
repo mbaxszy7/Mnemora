@@ -39,7 +39,6 @@ export class VectorDocumentService {
           .set({
             refId: nodeId,
             docType: "context_node",
-            textContent,
             metaPayload,
             updatedAt: now,
           })

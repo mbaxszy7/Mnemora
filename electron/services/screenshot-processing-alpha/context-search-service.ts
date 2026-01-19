@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, like, lte, or, sql } from "drizzle-orm";
 
 import { getDb } from "../../database";
 import {
@@ -212,6 +212,57 @@ export class ContextSearchService {
     }
 
     const limit = 30;
+    const termCandidates = new Set<string>();
+    termCandidates.add(trimmed);
+
+    for (const term of trimmed.split(/\s+/)) {
+      if (term.length > 1) {
+        termCandidates.add(term);
+      }
+    }
+
+    if (filters?.entities && filters.entities.length > 0) {
+      for (const entity of filters.entities) {
+        const normalized = entity.trim();
+        if (normalized) {
+          termCandidates.add(normalized);
+        }
+      }
+    }
+
+    const terms = Array.from(termCandidates).slice(0, 8);
+    const nodesById = new Map<number, ExpandedContextNode>();
+
+    if (terms.length > 0) {
+      const termConditions = terms.map((term) =>
+        or(
+          like(contextNodes.title, `%${term}%`),
+          like(contextNodes.summary, `%${term}%`),
+          like(contextNodes.keywords, `%${term}%`),
+          like(contextNodes.entities, `%${term}%`)
+        )
+      );
+
+      const directConditions = [or(...termConditions)];
+      if (filters?.timeRange) {
+        directConditions.push(gte(contextNodes.eventTime, filters.timeRange.start));
+        directConditions.push(lte(contextNodes.eventTime, filters.timeRange.end));
+      }
+      if (filters?.threadId) {
+        directConditions.push(eq(contextNodes.threadId, filters.threadId));
+      }
+
+      const directRecords = db
+        .select()
+        .from(contextNodes)
+        .where(and(...directConditions))
+        .limit(limit)
+        .all();
+
+      for (const record of directRecords) {
+        nodesById.set(record.id, this.recordToExpandedNode(record));
+      }
+    }
 
     const ftsRows = db
       .select({
@@ -224,33 +275,40 @@ export class ContextSearchService {
       .limit(limit)
       .all();
 
-    if (ftsRows.length === 0) {
+    if (ftsRows.length > 0) {
+      const screenshotIds = ftsRows
+        .map((r) => r.screenshotId)
+        .filter((id): id is number => typeof id === "number");
+
+      if (screenshotIds.length > 0) {
+        const nodeIds = db
+          .select({ nodeId: contextScreenshotLinks.nodeId })
+          .from(contextScreenshotLinks)
+          .where(inArray(contextScreenshotLinks.screenshotId, screenshotIds))
+          .all()
+          .map((r) => r.nodeId);
+
+        if (nodeIds.length > 0) {
+          const records = db
+            .select()
+            .from(contextNodes)
+            .where(inArray(contextNodes.id, Array.from(new Set(nodeIds))))
+            .all();
+
+          for (const record of records) {
+            if (!nodesById.has(record.id)) {
+              nodesById.set(record.id, this.recordToExpandedNode(record));
+            }
+          }
+        }
+      }
+    }
+
+    if (nodesById.size === 0) {
       return [];
     }
 
-    const screenshotIds = ftsRows
-      .map((r) => r.screenshotId)
-      .filter((id): id is number => typeof id === "number");
-
-    const nodeIds = db
-      .select({ nodeId: contextScreenshotLinks.nodeId })
-      .from(contextScreenshotLinks)
-      .where(inArray(contextScreenshotLinks.screenshotId, screenshotIds))
-      .all()
-      .map((r) => r.nodeId);
-
-    if (nodeIds.length === 0) {
-      return [];
-    }
-
-    const records = db
-      .select()
-      .from(contextNodes)
-      .where(inArray(contextNodes.id, Array.from(new Set(nodeIds))))
-      .all();
-
-    const nodes = records.map((r) => this.recordToExpandedNode(r));
-    return this.applyFilters(nodes, filters);
+    return this.applyFilters(Array.from(nodesById.values()), filters);
   }
 
   private async semanticSearch(

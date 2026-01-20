@@ -4,8 +4,8 @@ import { batches, contextNodes } from "../../../database/schema";
 import { getLogger } from "../../logger";
 import { BaseScheduler } from "./base-scheduler";
 import { processingConfig } from "../config";
-import { threadLlmService } from "../services/thread-llm-service";
-import { threadRepository } from "../services/thread-repository";
+import { threadLlmService } from "../thread-llm-service";
+import { threadRepository } from "../thread-repository";
 import { vectorDocumentScheduler } from "./vector-document-scheduler";
 import { vectorDocumentService } from "../vector-document-service";
 

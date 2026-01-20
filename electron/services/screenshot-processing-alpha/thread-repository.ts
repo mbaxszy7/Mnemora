@@ -2,13 +2,13 @@ import crypto from "node:crypto";
 
 import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 
-import { getDb } from "../../../database";
-import { batches, contextNodes, threads, type NewThreadRecord } from "../../../database/schema";
-import { getLogger } from "../../logger";
+import { getDb } from "../../database";
+import { batches, contextNodes, threads, type NewThreadRecord } from "../../database/schema";
+import { getLogger } from "../logger";
 
-import { processingConfig } from "../config";
-import type { ThreadLLMOutput } from "../schemas";
-import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "../types";
+import { processingConfig } from "./config";
+import type { ThreadLLMOutput } from "./schemas";
+import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "./types";
 
 const logger = getLogger("thread-repository");
 

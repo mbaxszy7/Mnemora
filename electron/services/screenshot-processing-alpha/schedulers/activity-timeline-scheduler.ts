@@ -194,8 +194,7 @@ export class ActivityTimelineScheduler extends BaseScheduler {
       .limit(1)
       .get();
 
-    const seedFrom =
-      latestWindow?.windowEnd ?? this.alignToWindowStart(this.appStartedAt ?? latestNode.eventTime);
+    const seedFrom = latestWindow?.windowEnd ?? this.alignToWindowStart(this.appStartedAt);
 
     let insertedCount = 0;
     for (

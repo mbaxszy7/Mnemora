@@ -1,22 +1,22 @@
 import { desc, eq, ne } from "drizzle-orm";
 import { generateObject } from "ai";
 
-import { getDb } from "../../../database";
-import { contextNodes, threads } from "../../../database/schema";
-import { getLogger } from "../../logger";
-import { aiRuntimeService } from "../../ai-runtime-service";
-import { AISDKService } from "../../ai-sdk-service";
-import { llmUsageService } from "../../llm-usage-service";
-import { aiRequestTraceBuffer } from "../../monitoring/ai-request-trace";
+import { getDb } from "../../database";
+import { contextNodes, threads } from "../../database/schema";
+import { getLogger } from "../logger";
+import { aiRuntimeService } from "../ai-runtime-service";
+import { AISDKService } from "../ai-sdk-service";
+import { llmUsageService } from "../llm-usage-service";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 
-import { processingConfig } from "../config";
-import { promptTemplates } from "../prompt-templates";
+import { processingConfig } from "./config";
+import { promptTemplates } from "./prompt-templates";
 import {
   ThreadLLMOutputSchema,
   ThreadLLMOutputProcessedSchema,
   type ThreadLLMOutput,
-} from "../schemas";
-import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "../types";
+} from "./schemas";
+import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "./types";
 
 const logger = getLogger("thread-llm-service");
 

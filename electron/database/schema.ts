@@ -442,6 +442,7 @@ export const activityEvents = sqliteTable(
     index("idx_ae_summary").on(table.summaryId),
     index("idx_ae_thread").on(table.threadId),
     index("idx_ae_time").on(table.startTs, table.endTs),
+    index("idx_ae_details_status").on(table.detailsStatus),
   ]
 );
 

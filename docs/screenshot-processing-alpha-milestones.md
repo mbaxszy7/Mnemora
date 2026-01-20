@@ -1577,6 +1577,8 @@ details 输出落库：
 
 把监控面板（Performance Monitor / AI Monitor）与 `QueueInspector` 适配到新状态机与队列结构，做到“出了问题能一眼看出卡在哪一段”。
 
+**尽量修改完整，不用考虑跟原来的实现兼容，彻底重构实现，可以考虑删除原有代码**
+
 - **[队列可见性]** 展示 pipeline 的关键 backlog：
   - `batches.vlm_status`（VLM 队列）
   - `screenshots.ocrStatus`（OCR 队列，M0 增加）
@@ -1671,7 +1673,6 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
 - `thread_assign`
 - `vlm_index`
 - `ocr_extract`
-- `text_expand`
 - `text_summary`
 - `activity_event_details`
 

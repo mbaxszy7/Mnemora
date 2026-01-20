@@ -36,15 +36,18 @@ export interface MetricsSnapshot {
 }
 
 /**
- * Queue status from reconcile loop and other background tasks
+ * Queue status for pipeline processing queues
+ * Used by MonitoringServer to track backlog and health
  */
 export interface QueueStatus {
   ts: number;
-  batches: {
-    pending: number;
-    running: number;
-    failed: number;
-  };
+  /** VLM processing queue (batches.vlmStatus) */
+  batchesVlm: { pending: number; running: number; failed: number };
+  /** OCR processing queue (screenshots.ocrStatus) */
+  screenshotsOcr: { pending: number; running: number; failed: number };
+  /** Thread LLM processing queue (batches.threadLlmStatus) */
+  batchesThreadLlm: { pending: number; running: number; failed: number };
+  /** Vector document queues (embedding + index) */
   vectorDocuments: {
     embeddingPending: number;
     embeddingRunning: number;
@@ -52,17 +55,10 @@ export interface QueueStatus {
     indexRunning: number;
     failed: number;
   };
-  activitySummaries: {
-    pending: number;
-    running: number;
-    failed: number;
-  };
-  contextNodes: {
-    mergePending: number;
-    mergeRunning: number;
-    embeddingPending: number;
-    embeddingRunning: number;
-  };
+  /** Activity summary generation queue */
+  activitySummaries: { pending: number; running: number; failed: number };
+  /** Activity event details generation queue (user-triggered) */
+  activityEventDetails: { pending: number; running: number; failed: number };
 }
 
 /**

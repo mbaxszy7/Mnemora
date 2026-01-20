@@ -17,6 +17,7 @@ import type {
   ActivityAlertEvent,
   HealthSummary,
   InitPayload,
+  QueueStatus,
 } from "./monitoring-types";
 import { DEFAULT_MONITORING_CONFIG, HEALTH_THRESHOLDS, getHealthLevel } from "./monitoring-types";
 
@@ -366,10 +367,9 @@ export class MonitoringServer {
 
   private async sendInitialData(client: SSEClient): Promise<void> {
     try {
-      const [queueStatus, healthSummary] = await Promise.all([
-        queueInspector.getQueueStatus(),
-        this.getFullHealthSummary(),
-      ]);
+      const queueStatus = await queueInspector.getQueueStatus();
+      const baseHealth = metricsCollector.getHealthSummary();
+      const healthSummary = this.withQueueBacklogHealth(baseHealth, queueStatus);
 
       const initPayload: InitPayload = {
         recentMetrics: metricsCollector.getRecentMetrics(),
@@ -388,18 +388,14 @@ export class MonitoringServer {
     }
   }
 
-  private async getFullHealthSummary(): Promise<HealthSummary> {
-    const baseSummary = metricsCollector.getHealthSummary();
-
-    // Add queue backlog health
-    const pendingCount = await queueInspector.getTotalPendingCount();
-    baseSummary.queueBacklog = {
+  private withQueueBacklogHealth(summary: HealthSummary, queueStatus: QueueStatus): HealthSummary {
+    const pendingCount = queueInspector.getTotalPendingCountFromStatus(queueStatus);
+    summary.queueBacklog = {
       level: getHealthLevel(pendingCount, HEALTH_THRESHOLDS.queueBacklog),
       value: pendingCount,
       threshold: HEALTH_THRESHOLDS.queueBacklog,
     };
-
-    return baseSummary;
+    return summary;
   }
 
   private broadcastMessage(message: SSEMessage): void {
@@ -513,7 +509,8 @@ export class MonitoringServer {
         this.broadcastMessage({ type: "queue", data: status });
 
         // Also send health update
-        const health = await this.getFullHealthSummary();
+        const baseHealth = metricsCollector.getHealthSummary();
+        const health = this.withQueueBacklogHealth(baseHealth, status);
         this.broadcastMessage({ type: "health", data: health });
       } catch (error) {
         logger.error(

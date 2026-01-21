@@ -63,7 +63,13 @@ export default defineConfig({
             target: "esnext",
             rollupOptions: {
               // Externalize native modules - they will be loaded at runtime
-              external: ["better-sqlite3", "node-screenshots", "sharp", "hnswlib-node"],
+              external: [
+                "better-sqlite3",
+                "node-screenshots",
+                "sharp",
+                "hnswlib-node",
+                "tesseract.js",
+              ],
             },
           },
           plugins: [copyMigrationsPlugin(), copyMonitoringStaticPlugin()],

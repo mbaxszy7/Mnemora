@@ -99,11 +99,12 @@ export const StateSnapshotSchema = z
     metrics: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
     issue: z
       .object({
-        detected: z.boolean(),
-        type: z.enum(["error", "bug", "blocker", "question", "warning"]),
-        description: z.string(),
-        severity: z.number(),
+        detected: z.boolean().optional(),
+        type: z.enum(["error", "bug", "blocker", "question", "warning"]).optional(),
+        description: z.string().optional(),
+        severity: z.number().optional(),
       })
+      .nullable()
       .optional(),
   })
   .nullable();

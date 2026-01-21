@@ -1,6 +1,7 @@
 import { app, BrowserWindow, nativeImage, screen } from "electron";
 import { createRequire } from "node:module";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
 import { AISDKService } from "./services/ai-sdk-service";
 import { LLMConfigService } from "./services/llm-config-service";
@@ -32,12 +33,18 @@ void createRequire(import.meta.url);
 process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
 
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.mnemora.app");
+}
+
 // App icon path (for BrowserWindow and Dock)
 // Windows requires .ico format for proper icon display
-const appIconPath = path.join(
-  app.isPackaged ? RENDERER_DIST : path.join(process.env.APP_ROOT, "public"),
-  process.platform === "win32" ? "logo.ico" : "logo.png"
-);
+const iconBase = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
+const appIconCandidates =
+  process.platform === "win32"
+    ? [path.join(iconBase, "logo.ico"), path.join(iconBase, "logo.png")]
+    : [path.join(iconBase, "logo.png")];
+const appIconPath = appIconCandidates.find((p) => existsSync(p)) ?? appIconCandidates[0];
 
 // ============================================================================
 // Single Instance Lock (production only)
@@ -150,7 +157,7 @@ class AppLifecycleController {
       width: windowWidth,
       height: windowHeight,
       show: true,
-      icon: appIcon,
+      icon: process.platform === "win32" ? appIconPath : appIcon,
       webPreferences: {
         preload: path.join(MAIN_DIST, "preload.mjs"),
       },

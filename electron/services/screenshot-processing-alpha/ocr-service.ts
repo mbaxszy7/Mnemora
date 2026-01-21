@@ -1,4 +1,4 @@
-import { createWorker, type Worker } from "tesseract.js";
+import type { Worker } from "tesseract.js";
 import sharp from "sharp";
 
 import { getLogger } from "../logger";
@@ -127,6 +127,7 @@ export class OcrService {
 
   private async createWorkerInstance(): Promise<Worker> {
     this.logger.debug({ languages: processingConfig.ocr.languages }, "Creating OCR worker");
+    const { createWorker } = await import("tesseract.js");
     const worker = await createWorker(processingConfig.ocr.languages, 1);
     return worker;
   }

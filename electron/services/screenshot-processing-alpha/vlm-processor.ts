@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 
 import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
@@ -67,6 +67,7 @@ class VLMProcessor {
       const { object, usage } = await generateObject({
         model: aiService.getVLMClient(),
         schema: VLMOutputSchema,
+        mode: "json",
         system: request.system,
         messages: [{ role: "user", content: request.userContent }],
         maxOutputTokens: processingConfig.ai.vlmMaxOutputTokens,
@@ -110,6 +111,27 @@ class VLMProcessor {
       return parsed.nodes;
     } catch (error) {
       const durationMs = Date.now() - startTime;
+
+      // Log detailed info for NoObjectGeneratedError
+      if (NoObjectGeneratedError.isInstance(error)) {
+        logger.error(
+          {
+            errorName: error.name,
+            rawText: error.text,
+            rawResponse: error.response,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+          },
+          "VLM NoObjectGeneratedError - raw response did not match schema"
+        );
+      } else {
+        logger.error(
+          {
+            errorName: error instanceof Error ? error.name : "UNKNOWN",
+            errorMessage: error instanceof Error ? error.message : String(error),
+          },
+          "VLM processBatch failed"
+        );
+      }
 
       aiRequestTraceBuffer.record({
         ts: Date.now(),

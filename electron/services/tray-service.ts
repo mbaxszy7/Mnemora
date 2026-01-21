@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage } from "electron";
 import path from "node:path";
+import { existsSync } from "node:fs";
 import { mainI18n } from "./i18n-service";
 import { getLogger } from "./logger";
 import { APP_ROOT, RENDERER_DIST } from "../env";
@@ -68,8 +69,7 @@ export class TrayService {
   }
 
   private getIconPath(): string {
-    const appRoot = process.env.APP_ROOT ?? APP_ROOT;
-    const base = app.isPackaged ? RENDERER_DIST : path.join(appRoot, "public");
+    const base = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
     // macOS tray uses Template images (monochrome)
     if (process.platform === "darwin") {
       return path.join(base, "trayTemplate@2x.png");
@@ -87,12 +87,38 @@ export class TrayService {
       return;
     }
 
-    const resolvedIconPath = path.resolve(this.getIconPath());
-    const icon = nativeImage.createFromPath(resolvedIconPath);
-    if (process.platform === "darwin") {
-      icon.setTemplateImage(true);
+    const base = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
+    const candidatePaths =
+      process.platform === "win32"
+        ? [path.resolve(path.join(base, "logo.ico")), path.resolve(path.join(base, "logo.png"))]
+        : [path.resolve(this.getIconPath())];
+
+    if (process.platform === "win32") {
+      const iconPath = candidatePaths.find((p) => existsSync(p));
+      if (!iconPath) {
+        this.logger.warn({ path: candidatePaths }, "Tray icon file not found");
+        return;
+      }
+      this.tray = new Tray(iconPath);
+    } else {
+      const resolvedIconPath = candidatePaths[0] ?? path.resolve(this.getIconPath());
+      const iconExists = existsSync(resolvedIconPath);
+      if (!iconExists) {
+        this.logger.warn({ path: resolvedIconPath }, "Tray icon file not found");
+      }
+      const icon = nativeImage.createFromPath(resolvedIconPath);
+      if (icon.isEmpty()) {
+        this.logger.warn(
+          { path: resolvedIconPath },
+          "Tray icon is empty (file may be invalid or not found)"
+        );
+        return;
+      }
+      if (process.platform === "darwin") {
+        icon.setTemplateImage(true);
+      }
+      this.tray = new Tray(icon);
     }
-    this.tray = new Tray(icon);
 
     // Snapshot initial status in case tray subscribes after scheduler already started.
     this.schedulerStatus = screenCaptureModule.getState().status;
@@ -115,7 +141,7 @@ export class TrayService {
       5 * 60 * 1000
     );
 
-    this.logger.info({ icon: resolvedIconPath }, "Tray initialized");
+    this.logger.info({ icon: this.getIconPath() }, "Tray initialized");
   }
 
   dispose(): void {

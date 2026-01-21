@@ -101,6 +101,10 @@ class DatabaseService {
       candidates.push(process.env.MIGRATIONS_DIR);
     }
 
+    candidates.push(
+      path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations")
+    );
+
     // Packaged app: prefer unpacked resources path
     candidates.push(
       path.join(process.resourcesPath, "app.asar.unpacked", "dist-electron", "migrations"),
@@ -108,11 +112,6 @@ class DatabaseService {
       path.join(app.getAppPath(), "dist-electron", "migrations"),
       // Inside asar archive (Vite copies migrations to dist-electron/migrations)
       path.join(process.resourcesPath, "app.asar", "dist-electron", "migrations")
-    );
-
-    // Dev paths (app.getAppPath points to project root/dist-electron)
-    candidates.push(
-      path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations")
     );
 
     const migrationsFolder = candidates.find((p) => fs.existsSync(p));

@@ -1,5 +1,6 @@
 import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
+import { and, eq, isNotNull, lt } from "drizzle-orm";
 import { getDb } from "../../database";
 import { screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
@@ -8,6 +9,7 @@ import { screenCaptureEventBus, type ScreenCaptureModuleType } from "../screen-c
 import { aiRuntimeService } from "../ai-runtime-service";
 
 import { batchBuilder } from "./batch-builder";
+import { processingConfig } from "./config";
 import type { AcceptedScreenshot, SourceKey } from "./types";
 import type { ScreenshotInput } from "./source-buffer-registry";
 import { sourceBufferRegistry } from "./source-buffer-registry";
@@ -27,6 +29,8 @@ type InitializeArgs = {
 export class ScreenshotProcessingModule {
   private readonly logger = getLogger("screenshot-processing-module");
   private initialized = false;
+  private fallbackCleanupTimer: NodeJS.Timeout | null = null;
+  private fallbackCleanupInProgress = false;
 
   initialize(options: InitializeArgs): void {
     if (this.initialized) {
@@ -56,6 +60,7 @@ export class ScreenshotProcessingModule {
     threadScheduler.start();
     activityTimelineScheduler.start();
     vectorDocumentScheduler.start();
+    this.startFallbackCleanup();
     this.initialized = true;
   }
 
@@ -76,8 +81,83 @@ export class ScreenshotProcessingModule {
     threadScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
+    this.stopFallbackCleanup();
 
     this.initialized = false;
+  }
+
+  private startFallbackCleanup(): void {
+    this.stopFallbackCleanup();
+    const intervalMs = processingConfig.cleanup.fallbackIntervalMs;
+    this.fallbackCleanupTimer = setInterval(() => {
+      void this.fallbackCleanup();
+    }, intervalMs);
+    void this.fallbackCleanup();
+  }
+
+  private stopFallbackCleanup(): void {
+    if (this.fallbackCleanupTimer) {
+      clearInterval(this.fallbackCleanupTimer);
+      this.fallbackCleanupTimer = null;
+    }
+  }
+
+  private async fallbackCleanup(): Promise<void> {
+    if (this.fallbackCleanupInProgress) {
+      return;
+    }
+    this.fallbackCleanupInProgress = true;
+    try {
+      const db = getDb();
+      const now = Date.now();
+      const cutoff = now - processingConfig.cleanup.fallbackEphemeralMaxAgeMs;
+      const batchSize = processingConfig.cleanup.fallbackBatchSize;
+
+      const candidates = db
+        .select({ id: screenshots.id, filePath: screenshots.filePath })
+        .from(screenshots)
+        .where(
+          and(
+            eq(screenshots.storageState, "ephemeral"),
+            lt(screenshots.createdAt, cutoff),
+            isNotNull(screenshots.filePath)
+          )
+        )
+        .limit(batchSize)
+        .all();
+
+      if (candidates.length === 0) {
+        return;
+      }
+
+      let deletedCount = 0;
+      for (const ss of candidates) {
+        const filePath = ss.filePath;
+        if (!filePath) {
+          continue;
+        }
+        const ok = await safeDeleteCaptureFile(filePath);
+        if (!ok) {
+          continue;
+        }
+        const res = db
+          .update(screenshots)
+          .set({ storageState: "deleted", updatedAt: now })
+          .where(and(eq(screenshots.id, ss.id), eq(screenshots.storageState, "ephemeral")))
+          .run();
+        if (res.changes > 0) {
+          deletedCount += 1;
+        }
+      }
+
+      if (deletedCount > 0) {
+        this.logger.info({ deletedCount }, "Fallback cleanup deleted stale ephemeral screenshots");
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Fallback cleanup failed");
+    } finally {
+      this.fallbackCleanupInProgress = false;
+    }
   }
 
   async ocrWarmup(): Promise<void> {

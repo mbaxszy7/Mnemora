@@ -21,7 +21,8 @@ export class BatchBuilder {
     const tsStart = sortedScreenshots[0].ts;
     const tsEnd = sortedScreenshots[sortedScreenshots.length - 1].ts;
 
-    const batchId = this.generateBatchId();
+    const screenshotIds = sortedScreenshots.map((s) => s.id);
+    const batchId = this.generateBatchId({ sourceKey, tsStart, tsEnd, screenshotIds });
 
     return {
       batchId,
@@ -119,11 +120,20 @@ export class BatchBuilder {
     return dbId;
   }
 
-  private generateBatchId(): string {
-    if (typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    return `batch_${Date.now()}_${crypto.randomBytes(16).toString("hex")}`;
+  private generateBatchId(input: {
+    sourceKey: SourceKey;
+    tsStart: number;
+    tsEnd: number;
+    screenshotIds: number[];
+  }): string {
+    const payload = JSON.stringify({
+      sourceKey: input.sourceKey,
+      tsStart: input.tsStart,
+      tsEnd: input.tsEnd,
+      screenshotIds: input.screenshotIds,
+    });
+    const hash = crypto.createHash("sha256").update(payload).digest("hex");
+    return `batch_${hash.slice(0, 24)}`;
   }
 }
 

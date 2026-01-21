@@ -1,5 +1,5 @@
 import { BrowserWindow } from "electron";
-import { and, desc, eq, gte, lt, lte, gt } from "drizzle-orm";
+import { and, desc, eq, gte, lt, lte, gt, isNull, or } from "drizzle-orm";
 import { generateObject } from "ai";
 import type {
   ActivityEvent,
@@ -883,17 +883,44 @@ class ActivityMonitorService {
       if (eventRows.length === 0) return false;
       const event = eventRows[0];
 
+      const now = Date.now();
+      const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
+
       if (!event.isLong || !event.threadId) {
         return false;
       }
 
       const currentAttempts = event.detailsAttempts ?? 0;
+
+      if (event.detailsStatus === "running") {
+        if (event.updatedAt < staleThreshold) {
+          await db
+            .update(activityEvents)
+            .set({
+              detailsStatus: "failed",
+              updatedAt: now,
+            })
+            .where(eq(activityEvents.id, eventId))
+            .run();
+
+          activityAlertBuffer.record({
+            ts: now,
+            kind: "activity_event_details_stuck_running",
+            message: `Event details was stuck running for >${processingConfig.scheduler.staleRunningThresholdMs}ms; reset to failed`,
+            eventId,
+            updatedAt: event.updatedAt,
+          });
+        } else {
+          return false;
+        }
+      }
+
       if (currentAttempts >= processingConfig.retry.maxAttempts) {
         await db
           .update(activityEvents)
           .set({
             detailsStatus: "failed_permanent",
-            updatedAt: Date.now(),
+            updatedAt: now,
           })
           .where(eq(activityEvents.id, eventId))
           .run();
@@ -902,16 +929,30 @@ class ActivityMonitorService {
 
       const nextAttempts = currentAttempts + 1;
 
-      await db
+      const claim = await db
         .update(activityEvents)
         .set({
           detailsStatus: "running",
           detailsAttempts: nextAttempts,
           detailsNextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
-        .where(eq(activityEvents.id, eventId))
+        .where(
+          and(
+            eq(activityEvents.id, eventId),
+            isNull(activityEvents.detailsText),
+            or(
+              eq(activityEvents.detailsStatus, "pending"),
+              eq(activityEvents.detailsStatus, "failed")
+            ),
+            eq(activityEvents.detailsAttempts, currentAttempts)
+          )
+        )
         .run();
+
+      if (claim.changes === 0) {
+        return false;
+      }
 
       const nodeIds = parseJsonSafe<number[]>(event.nodeIds, []);
       if (nodeIds.length === 0) {
@@ -1118,21 +1159,23 @@ class ActivityMonitorService {
       });
       aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
+      const row = await db
+        .select({ detailsAttempts: activityEvents.detailsAttempts })
+        .from(activityEvents)
+        .where(eq(activityEvents.id, eventId))
+        .limit(1);
+
+      const attempts = row[0]?.detailsAttempts ?? 0;
+      const exceeded = attempts >= processingConfig.retry.maxAttempts;
+      const status = exceeded ? "failed_permanent" : "failed";
+
       await db
         .update(activityEvents)
         .set({
-          detailsStatus:
-            (await db
-              .select({ detailsAttempts: activityEvents.detailsAttempts })
-              .from(activityEvents)
-              .where(eq(activityEvents.id, eventId))
-              .limit(1)
-              .then((rows) => rows[0]?.detailsAttempts ?? 0)) >= processingConfig.retry.maxAttempts
-              ? "failed_permanent"
-              : "failed",
+          detailsStatus: status,
           updatedAt: Date.now(),
         })
-        .where(eq(activityEvents.id, eventId))
+        .where(and(eq(activityEvents.id, eventId), eq(activityEvents.detailsStatus, "running")))
         .run();
 
       emitActivityTimelineChanged(Date.now() - 24 * 60 * 60 * 1000, Date.now());

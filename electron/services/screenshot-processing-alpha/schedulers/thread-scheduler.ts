@@ -1,4 +1,4 @@
-import { eq, and, lt, or, isNull, lte, asc, desc } from "drizzle-orm";
+import { eq, and, lt, or, isNull, lte, asc, desc, gte } from "drizzle-orm";
 import { getDb } from "../../../database";
 import { batches, contextNodes } from "../../../database/schema";
 import { getLogger } from "../../logger";
@@ -143,21 +143,50 @@ export class ThreadScheduler extends BaseScheduler {
 
   protected async recoverStaleStates(): Promise<void> {
     const db = getDb();
-    const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
+    const now = Date.now();
+    const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
 
     try {
-      const result = db
+      const maxAttempts = processingConfig.retry.maxAttempts;
+
+      const permanent = db
+        .update(batches)
+        .set({
+          threadLlmStatus: "failed_permanent",
+          threadLlmNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(batches.threadLlmStatus, "running"),
+            lt(batches.updatedAt, staleThreshold),
+            gte(batches.threadLlmAttempts, maxAttempts)
+          )
+        )
+        .run();
+
+      const recovered = db
         .update(batches)
         .set({
           threadLlmStatus: "pending",
           threadLlmNextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
-        .where(and(eq(batches.threadLlmStatus, "running"), lt(batches.updatedAt, staleThreshold)))
+        .where(
+          and(
+            eq(batches.threadLlmStatus, "running"),
+            lt(batches.updatedAt, staleThreshold),
+            lt(batches.threadLlmAttempts, maxAttempts)
+          )
+        )
         .run();
 
-      if (result.changes > 0) {
-        logger.info({ recovered: result.changes }, "Recovered stale thread assignments");
+      const changed = recovered.changes + permanent.changes;
+      if (changed > 0) {
+        logger.info(
+          { recovered: recovered.changes, permanent: permanent.changes },
+          "Recovered stale thread assignments"
+        );
       }
     } catch (error) {
       logger.error({ error }, "Failed to recover stale thread assignments");
@@ -167,7 +196,7 @@ export class ThreadScheduler extends BaseScheduler {
   private scanPendingRecords(): PendingThreadBatchRecord[] {
     const db = getDb();
     const now = Date.now();
-    const limit = 100;
+    const limit = processingConfig.scheduler.scanCap;
     const sliceLimit = Math.max(1, Math.ceil(limit / 2));
 
     const baseWhere = and(

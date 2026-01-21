@@ -1,4 +1,4 @@
-import { eq, and, or, lt, isNull, lte, asc, desc } from "drizzle-orm";
+import { eq, and, or, lt, isNull, lte, asc, desc, gte } from "drizzle-orm";
 import { getDb } from "../../../database";
 import { vectorDocuments } from "../../../database/schema";
 import { getLogger } from "../../logger";
@@ -176,6 +176,23 @@ export class VectorDocumentScheduler extends BaseScheduler {
     const now = Date.now();
 
     try {
+      const maxAttempts = processingConfig.retry.maxAttempts;
+
+      db.update(vectorDocuments)
+        .set({
+          embeddingStatus: "failed_permanent",
+          embeddingNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(vectorDocuments.embeddingStatus, "running"),
+            lt(vectorDocuments.updatedAt, staleThreshold),
+            gte(vectorDocuments.embeddingAttempts, maxAttempts)
+          )
+        )
+        .run();
+
       db.update(vectorDocuments)
         .set({
           embeddingStatus: "pending",
@@ -185,7 +202,24 @@ export class VectorDocumentScheduler extends BaseScheduler {
         .where(
           and(
             eq(vectorDocuments.embeddingStatus, "running"),
-            lt(vectorDocuments.updatedAt, staleThreshold)
+            lt(vectorDocuments.updatedAt, staleThreshold),
+            lt(vectorDocuments.embeddingAttempts, maxAttempts)
+          )
+        )
+        .run();
+
+      db.update(vectorDocuments)
+        .set({
+          indexStatus: "failed_permanent",
+          indexNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(vectorDocuments.indexStatus, "running"),
+            eq(vectorDocuments.embeddingStatus, "succeeded"),
+            lt(vectorDocuments.updatedAt, staleThreshold),
+            gte(vectorDocuments.indexAttempts, maxAttempts)
           )
         )
         .run();
@@ -200,7 +234,8 @@ export class VectorDocumentScheduler extends BaseScheduler {
           and(
             eq(vectorDocuments.indexStatus, "running"),
             eq(vectorDocuments.embeddingStatus, "succeeded"),
-            lt(vectorDocuments.updatedAt, staleThreshold)
+            lt(vectorDocuments.updatedAt, staleThreshold),
+            lt(vectorDocuments.indexAttempts, maxAttempts)
           )
         )
         .run();
@@ -212,7 +247,7 @@ export class VectorDocumentScheduler extends BaseScheduler {
   private scanPendingRecords(): PendingVectorRecord[] {
     const db = getDb();
     const now = Date.now();
-    const limit = 100;
+    const limit = processingConfig.scheduler.scanCap;
     const sliceLimit = Math.max(1, Math.ceil(limit / 2));
 
     const mergeUniqueById = <T extends { id: number }>(rows: T[]): T[] => {

@@ -104,6 +104,8 @@ export const processingConfig = {
     staleRunningThresholdMs: 5 * 60 * 1000, // 5 minutes
     /** Age after which a record is treated as "recovery" lane instead of "realtime" (ms) */
     laneRecoveryAgeMs: 10 * 1000 * 60, // 10 minutes
+    scanCap: 100,
+    activitySummaryScanCap: 10,
   },
 
   /**
@@ -114,6 +116,12 @@ export const processingConfig = {
     maxAttempts: 2,
     /** Delay before retry (ms) */
     delayMs: 60 * 1000, // 1 minute
+  },
+
+  cleanup: {
+    fallbackEphemeralMaxAgeMs: 24 * 60 * 60 * 1000,
+    fallbackBatchSize: 100,
+    fallbackIntervalMs: 30 * 60 * 1000,
   },
 
   /**

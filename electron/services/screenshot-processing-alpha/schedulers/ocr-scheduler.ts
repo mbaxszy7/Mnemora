@@ -1,4 +1,4 @@
-import { eq, and, lt, isNotNull, or, isNull, lte, asc, desc, ne } from "drizzle-orm";
+import { eq, and, lt, isNotNull, or, isNull, lte, asc, desc, ne, gte } from "drizzle-orm";
 import { getDb } from "../../../database";
 import { contextNodes, contextScreenshotLinks, screenshots } from "../../../database/schema";
 import { getLogger } from "../../logger";
@@ -138,28 +138,54 @@ export class OcrScheduler extends BaseScheduler {
 
   protected async recoverStaleStates(): Promise<void> {
     const db = getDb();
-    const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
+    const now = Date.now();
+    const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
 
     try {
-      const result = db
+      const maxAttempts = processingConfig.retry.maxAttempts;
+
+      const permanent = db
         .update(screenshots)
         .set({
-          ocrStatus: "pending",
+          ocrStatus: "failed_permanent",
           ocrNextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
         .where(
           and(
             eq(screenshots.ocrStatus, "running"),
             lt(screenshots.updatedAt, staleThreshold),
+            gte(screenshots.ocrAttempts, maxAttempts),
             isNotNull(screenshots.filePath),
             or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
           )
         )
         .run();
 
-      if (result.changes > 0) {
-        logger.info({ recovered: result.changes }, "Recovered stale OCR screenshots");
+      const recovered = db
+        .update(screenshots)
+        .set({
+          ocrStatus: "pending",
+          ocrNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(screenshots.ocrStatus, "running"),
+            lt(screenshots.updatedAt, staleThreshold),
+            lt(screenshots.ocrAttempts, maxAttempts),
+            isNotNull(screenshots.filePath),
+            or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
+          )
+        )
+        .run();
+
+      const changed = recovered.changes + permanent.changes;
+      if (changed > 0) {
+        logger.info(
+          { recovered: recovered.changes, permanent: permanent.changes },
+          "Recovered stale OCR screenshots"
+        );
       }
     } catch (error) {
       logger.error({ error }, "Failed to recover stale OCR screenshots");
@@ -169,7 +195,7 @@ export class OcrScheduler extends BaseScheduler {
   private scanPendingRecords(): PendingOcrRecord[] {
     const db = getDb();
     const now = Date.now();
-    const limit = 100;
+    const limit = processingConfig.scheduler.scanCap;
     const sliceLimit = Math.max(1, Math.ceil(limit / 2));
 
     const baseWhere = and(

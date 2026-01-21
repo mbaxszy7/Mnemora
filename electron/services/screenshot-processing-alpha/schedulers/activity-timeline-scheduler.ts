@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, isNull, lt, lte, or } from "drizzle-orm";
 import { getDb } from "../../../database";
-import { activityEvents, activitySummaries, contextNodes } from "../../../database/schema";
+import { activitySummaries, contextNodes } from "../../../database/schema";
 import { BaseScheduler } from "./base-scheduler";
 import { processingConfig } from "../config";
 import { getLogger } from "../../logger";
@@ -148,20 +148,6 @@ export class ActivityTimelineScheduler extends BaseScheduler {
         )
       )
       .run();
-
-    db.update(activityEvents)
-      .set({
-        detailsStatus: "pending",
-        detailsNextRunAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(activityEvents.detailsStatus, "running"),
-          lt(activityEvents.updatedAt, staleThreshold)
-        )
-      )
-      .run();
   }
 
   private async seedPendingWindows(): Promise<void> {
@@ -197,11 +183,13 @@ export class ActivityTimelineScheduler extends BaseScheduler {
     const seedFrom = latestWindow?.windowEnd ?? this.alignToWindowStart(this.appStartedAt);
 
     let insertedCount = 0;
+    const maxInserts = processingConfig.scheduler.activitySummaryScanCap;
     for (
       let windowStart = seedFrom;
       windowStart + windowMs <= lastCompleteWindowEnd;
       windowStart += windowMs
     ) {
+      if (insertedCount >= maxInserts) break;
       const windowEnd = windowStart + windowMs;
 
       const hasNodes = db
@@ -257,6 +245,7 @@ export class ActivityTimelineScheduler extends BaseScheduler {
       })
       .from(activitySummaries)
       .where(and(eq(activitySummaries.status, "no_data"), eq(activitySummaries.title, "No Data")))
+      .limit(processingConfig.scheduler.activitySummaryScanCap)
       .all();
 
     if (candidates.length === 0) return;
@@ -295,7 +284,7 @@ export class ActivityTimelineScheduler extends BaseScheduler {
   private async processPendingSummaries(): Promise<void> {
     const db = getDb();
     const now = Date.now();
-    const limit = 10;
+    const limit = processingConfig.scheduler.activitySummaryScanCap;
     const sliceLimit = Math.max(1, Math.ceil(limit / 2));
 
     const baseWhere = and(
@@ -358,11 +347,12 @@ export class ActivityTimelineScheduler extends BaseScheduler {
       concurrency,
       laneWeights: { realtime: 1, recovery: 1 },
       handler: async (row) => {
+        const attempts = row.attempts + 1;
         const updated = db
           .update(activitySummaries)
           .set({
             status: "running",
-            attempts: row.attempts + 1,
+            attempts,
             updatedAt: now,
             nextRunAt: null,
           })
@@ -381,10 +371,12 @@ export class ActivityTimelineScheduler extends BaseScheduler {
           row.windowEnd
         );
         if (!success) {
-          const nextRunAt = Date.now() + processingConfig.retry.delayMs;
+          const exceeded = attempts >= processingConfig.retry.maxAttempts;
+          const status = exceeded ? "failed_permanent" : "failed";
+          const nextRunAt = exceeded ? null : Date.now() + processingConfig.retry.delayMs;
           db.update(activitySummaries)
             .set({
-              status: "failed",
+              status,
               nextRunAt,
               updatedAt: Date.now(),
             })

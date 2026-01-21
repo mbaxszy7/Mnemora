@@ -1,4 +1,4 @@
-import { eq, and, lt, or, isNull, lte, asc, desc, inArray } from "drizzle-orm";
+import { eq, and, lt, or, isNull, lte, asc, desc, inArray, gte } from "drizzle-orm";
 import { getDb } from "../../../database";
 import { batches, screenshots } from "../../../database/schema";
 import { getLogger } from "../../logger";
@@ -142,21 +142,50 @@ export class BatchVlmScheduler extends BaseScheduler {
 
   protected async recoverStaleStates(): Promise<void> {
     const db = getDb();
-    const staleThreshold = Date.now() - processingConfig.scheduler.staleRunningThresholdMs;
+    const now = Date.now();
+    const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
 
     try {
-      const result = db
+      const maxAttempts = processingConfig.retry.maxAttempts;
+
+      const permanent = db
+        .update(batches)
+        .set({
+          vlmStatus: "failed_permanent",
+          vlmNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(batches.vlmStatus, "running"),
+            lt(batches.updatedAt, staleThreshold),
+            gte(batches.vlmAttempts, maxAttempts)
+          )
+        )
+        .run();
+
+      const recovered = db
         .update(batches)
         .set({
           vlmStatus: "pending",
           vlmNextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
-        .where(and(eq(batches.vlmStatus, "running"), lt(batches.updatedAt, staleThreshold)))
+        .where(
+          and(
+            eq(batches.vlmStatus, "running"),
+            lt(batches.updatedAt, staleThreshold),
+            lt(batches.vlmAttempts, maxAttempts)
+          )
+        )
         .run();
 
-      if (result.changes > 0) {
-        logger.info({ recovered: result.changes }, "Recovered stale VLM batches");
+      const changed = recovered.changes + permanent.changes;
+      if (changed > 0) {
+        logger.info(
+          { recovered: recovered.changes, permanent: permanent.changes },
+          "Recovered stale VLM batches"
+        );
       }
     } catch (error) {
       logger.error({ error }, "Failed to recover stale VLM batches");
@@ -166,7 +195,7 @@ export class BatchVlmScheduler extends BaseScheduler {
   private async scanPendingRecords(): Promise<PendingBatchRecord[]> {
     const db = getDb();
     const now = Date.now();
-    const limit = 100;
+    const limit = processingConfig.scheduler.scanCap;
     const sliceLimit = Math.max(1, Math.ceil(limit / 2));
 
     const baseWhere = and(

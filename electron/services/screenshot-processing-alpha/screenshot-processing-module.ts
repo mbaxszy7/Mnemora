@@ -1,8 +1,8 @@
 import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
-import { and, eq, isNotNull, lt } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "../../database";
-import { screenshots } from "../../database/schema";
+import { batches, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
 import { screenCaptureEventBus, type ScreenCaptureModuleType } from "../screen-capture";
@@ -116,11 +116,17 @@ export class ScreenshotProcessingModule {
       const candidates = db
         .select({ id: screenshots.id, filePath: screenshots.filePath })
         .from(screenshots)
+        .innerJoin(batches, eq(screenshots.batchId, batches.id))
         .where(
           and(
             eq(screenshots.storageState, "ephemeral"),
             lt(screenshots.createdAt, cutoff),
-            isNotNull(screenshots.filePath)
+            isNotNull(screenshots.filePath),
+            eq(batches.vlmStatus, "succeeded"),
+            or(
+              isNull(screenshots.ocrStatus),
+              inArray(screenshots.ocrStatus, ["succeeded", "failed_permanent"])
+            )
           )
         )
         .limit(batchSize)

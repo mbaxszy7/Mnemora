@@ -171,7 +171,10 @@ export class ActivityTimelineScheduler extends BaseScheduler {
       return;
     }
 
-    const lastCompleteWindowEnd = this.alignToWindowStart(latestNode.eventTime + windowMs);
+    const lastCompleteWindowEnd = Math.min(
+      this.alignToWindowStart(latestNode.eventTime + windowMs),
+      this.alignToWindowStart(now)
+    );
 
     const latestWindow = db
       .select({ windowEnd: activitySummaries.windowEnd })

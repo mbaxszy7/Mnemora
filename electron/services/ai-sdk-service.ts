@@ -2,6 +2,7 @@ import { createOpenAICompatible, type OpenAICompatibleProvider } from "@ai-sdk/o
 import type { LanguageModel, EmbeddingModel } from "ai";
 import { ServiceError, ErrorCode } from "@shared/errors";
 import type { LLMConfig, LLMEndpointConfig } from "@shared/llm-config-types";
+import { getLogger } from "./logger";
 
 /**
  * Internal client state for each client type
@@ -9,6 +10,18 @@ import type { LLMConfig, LLMEndpointConfig } from "@shared/llm-config-types";
 interface ClientState {
   provider: OpenAICompatibleProvider;
   model: string;
+}
+
+const logger = getLogger("ai-sdk-service");
+
+type ReadBodyFailedError = {
+  kind: "read_body_failed";
+  error: unknown;
+};
+
+function isReadBodyFailedError(value: unknown): value is ReadBodyFailedError {
+  if (!value || typeof value !== "object") return false;
+  return "kind" in value && (value as { kind?: unknown }).kind === "read_body_failed";
 }
 
 /**
@@ -85,12 +98,118 @@ export class AISDKService {
    */
   private createClientState(endpoint: LLMEndpointConfig): ClientState {
     this.validateEndpoint(endpoint);
+
+    const baseUrlLower = endpoint.baseUrl.toLowerCase();
+    const shouldDisableCompression = baseUrlLower.includes("deepseek.com");
+
+    const deepSeekFetch: typeof fetch = async (input, init) => {
+      const getUrlString = () => {
+        if (typeof input === "string") return input;
+        if (input instanceof URL) return input.toString();
+        const anyInput = input as unknown as { url?: string };
+        return anyInput?.url ?? "unknown";
+      };
+
+      const isStreamingRequest = () => {
+        const headers = new Headers((init?.headers as HeadersInit | undefined) ?? undefined);
+        const accept = headers.get("accept") ?? "";
+        if (accept.toLowerCase().includes("text/event-stream")) return true;
+
+        const body = init?.body;
+        if (typeof body !== "string") return false;
+        return body.includes('"stream":true') || body.includes('"stream": true');
+      };
+
+      const tryBufferJsonResponse = async (res: Response) => {
+        const contentType = res.headers.get("content-type") ?? "";
+        const isJsonLike =
+          contentType.toLowerCase().includes("application/json") ||
+          contentType.toLowerCase().includes("+json") ||
+          contentType.toLowerCase().includes("text/json") ||
+          contentType.trim() === "";
+
+        if (!res.ok || !isJsonLike || isStreamingRequest()) {
+          return res;
+        }
+
+        let text: string;
+        try {
+          text = await res.text();
+        } catch (error) {
+          throw { kind: "read_body_failed", error };
+        }
+
+        const trimmed = text.trim();
+        try {
+          JSON.parse(trimmed);
+        } catch (error) {
+          const url = getUrlString();
+          const textSnippet = trimmed.slice(0, 800);
+          logger.error(
+            {
+              url,
+              status: res.status,
+              contentType,
+              dsTraceId: res.headers.get("x-ds-trace-id"),
+              cfId: res.headers.get("x-amz-cf-id"),
+              textSnippet,
+              error,
+            },
+            "DeepSeek returned non-JSON response body"
+          );
+        }
+
+        const headers = new Headers(res.headers);
+        return new Response(text, { status: res.status, statusText: res.statusText, headers });
+      };
+
+      const doFetch = async (override?: { connectionClose?: boolean }) => {
+        if (!override?.connectionClose) {
+          return fetch(input, init);
+        }
+
+        const nextHeaders = new Headers((init?.headers as HeadersInit | undefined) ?? undefined);
+        nextHeaders.set("connection", "close");
+        if (shouldDisableCompression) {
+          nextHeaders.set("accept-encoding", "identity");
+        }
+
+        const nextInit: RequestInit = { ...init, headers: nextHeaders };
+        return fetch(input, nextInit);
+      };
+
+      try {
+        const res = await doFetch();
+        return await tryBufferJsonResponse(res);
+      } catch (err) {
+        const url = getUrlString();
+        if (isReadBodyFailedError(err)) {
+          logger.warn(
+            {
+              url,
+              error: err.error,
+            },
+            "DeepSeek response body read failed; retrying once with connection: close"
+          );
+
+          const res = await doFetch({ connectionClose: true });
+          return await tryBufferJsonResponse(res);
+        }
+
+        logger.error({ url, error: err }, "DeepSeek fetch failed");
+        throw err;
+      }
+    };
+
     const provider = createOpenAICompatible({
       name: "mnemora",
       baseURL: endpoint.baseUrl,
       apiKey: endpoint.apiKey,
+      fetch: shouldDisableCompression ? deepSeekFetch : undefined,
       headers: {
         authorization: `Bearer ${endpoint.apiKey}`,
+
+        ...(shouldDisableCompression ? { "accept-encoding": "identity" } : {}),
       },
     });
     return { provider, model: endpoint.model };

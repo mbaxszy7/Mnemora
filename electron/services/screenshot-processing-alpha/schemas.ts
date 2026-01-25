@@ -11,7 +11,12 @@ function truncateTo(maxLen: number) {
   return (s: string) => (s.length > maxLen ? s.slice(0, maxLen) : s);
 }
 
-export const EntityTypeSchema = z.enum(ENTITY_TYPE_VALUES);
+export const EntityTypeSchema = z.preprocess((val) => {
+  if (typeof val === "string" && (ENTITY_TYPE_VALUES as readonly string[]).includes(val)) {
+    return val;
+  }
+  return "other";
+}, z.enum(ENTITY_TYPE_VALUES));
 
 export const EntityRefSchema: z.ZodType<EntityRef> = z.object({
   name: z.string(),
@@ -67,40 +72,74 @@ const normalizeEntityNames = (entities?: string[], limit = 20): string[] | undef
   return normalized.length > 0 ? normalized : undefined;
 };
 
-const CANONICAL_APP_CANDIDATES = Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
+export const CANONICAL_APP_CANDIDATES = Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
 
 export const KnowledgeSchema = z
   .object({
-    content_type: z.string(),
+    content_type: z.string().default("general"),
     source_url: z.string().optional(),
     project_or_library: z.string().optional(),
     key_insights: z.array(z.string()).default([]),
-    language: z.enum(["en", "zh", "other"]),
+    language: z.preprocess(
+      (val) => {
+        if (typeof val !== "string") return "other";
+        const s = val.toLowerCase();
+        if (s.includes("en")) return "en";
+        if (s.includes("zh") || s.includes("cn") || s.includes("中文")) return "zh";
+        return "other";
+      },
+      z.enum(["en", "zh", "other"])
+    ),
     text_region: z
-      .object({
-        box: z.object({
-          top: z.number(),
-          left: z.number(),
-          width: z.number(),
-          height: z.number(),
-        }),
-        description: z.string().optional(),
-        confidence: z.number(),
-      })
+      .preprocess(
+        (val) => {
+          if (typeof val === "string") {
+            return {
+              description: val,
+              box: { top: 0, left: 0, width: 0, height: 0 },
+              confidence: 0,
+            };
+          }
+          return val;
+        },
+        z.object({
+          box: z
+            .object({
+              top: z.number().default(0),
+              left: z.number().default(0),
+              width: z.number().default(0),
+              height: z.number().default(0),
+            })
+            .default({ top: 0, left: 0, width: 0, height: 0 }),
+          description: z.string().optional(),
+          confidence: z.number().default(0),
+        })
+      )
       .optional(),
   })
   .nullable();
 
 export const StateSnapshotSchema = z
   .object({
-    subject_type: z.string(),
-    subject: z.string(),
-    current_state: z.string(),
+    subject_type: z.string().default("general"),
+    subject: z.string().default("unknown"),
+    current_state: z.string().default("active"),
     metrics: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
     issue: z
       .object({
         detected: z.boolean().optional(),
-        type: z.enum(["error", "bug", "blocker", "question", "warning"]).optional(),
+        type: z
+          .preprocess(
+            (val) => {
+              if (typeof val !== "string") return "warning";
+              const s = val.toLowerCase();
+              if (["error", "bug", "blocker", "question", "warning"].includes(s)) return s;
+              if (s.includes("fail") || s.includes("err")) return "error";
+              return "warning";
+            },
+            z.enum(["error", "bug", "blocker", "question", "warning"])
+          )
+          .optional(),
         description: z.string().optional(),
         severity: z.number().optional(),
       })
@@ -111,8 +150,27 @@ export const StateSnapshotSchema = z
 
 export const ActionItemSchema = z.object({
   action: z.string(),
-  priority: z.enum(["high", "medium", "low"]).optional(),
-  source: z.enum(["explicit", "inferred"]),
+  priority: z
+    .preprocess(
+      (val) => {
+        if (typeof val !== "string") return "medium";
+        const s = val.toLowerCase();
+        if (["high", "medium", "low"].includes(s)) return s;
+        if (s.includes("urgent") || s.includes("critical")) return "high";
+        return "medium";
+      },
+      z.enum(["high", "medium", "low"])
+    )
+    .optional(),
+  source: z.preprocess(
+    (val) => {
+      if (typeof val !== "string") return "inferred";
+      const s = val.toLowerCase();
+      if (["explicit", "inferred"].includes(s)) return s;
+      return "inferred";
+    },
+    z.enum(["explicit", "inferred"])
+  ),
 });
 
 export const VLMContextNodeSchema = z.object({
@@ -120,8 +178,17 @@ export const VLMContextNodeSchema = z.object({
   title: z.string(),
   summary: z.string(),
   app_context: z.object({
-    app_hint: z.string().nullable(),
-    window_title: z.string().nullable(),
+    app_hint: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      if (!s || s.toLowerCase() === "null") return null;
+      return s;
+    }, z.string().nullable()),
+    window_title: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      return s || null;
+    }, z.string().nullable()),
     source_key: z.string(),
   }),
   knowledge: KnowledgeSchema,
@@ -144,7 +211,15 @@ export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
     title: truncateTo(100)(node.title),
     summary: truncateTo(500)(node.summary),
     appContext: {
-      appHint: node.app_context.app_hint,
+      appHint: (() => {
+        const hint = node.app_context.app_hint;
+        if (!hint) return null;
+        const lowerHint = hint.toLowerCase();
+        for (const canonical of CANONICAL_APP_CANDIDATES) {
+          if (canonical.toLowerCase() === lowerHint) return canonical;
+        }
+        return hint;
+      })(),
       windowTitle: node.app_context.window_title,
       sourceKey: node.app_context.source_key,
     },
@@ -216,9 +291,13 @@ const ThreadUpdateSchema = z.object({
   current_phase: z.string().optional(),
   current_focus: z.string().optional(),
   new_milestone: z
-    .object({
-      description: z.string(),
-    })
+    .preprocess(
+      (val) => {
+        if (typeof val === "string") return { description: val };
+        return val;
+      },
+      z.object({ description: z.string() })
+    )
     .optional(),
 });
 
@@ -268,16 +347,21 @@ export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;
 // =========================================================================
 // Activity Monitor LLM Output Schemas
 // =========================================================================
-
-const ActivityEventKindSchema = z.enum([
-  "focus",
-  "work",
-  "meeting",
-  "break",
-  "browse",
-  "coding",
-  "debugging",
-]);
+const ActivityEventKindSchema = z.preprocess(
+  (val) => {
+    if (typeof val !== "string") return "work";
+    const s = val.toLowerCase();
+    const allowed = ["focus", "work", "meeting", "break", "browse", "coding", "debugging"];
+    if (allowed.includes(s)) return s;
+    if (s.includes("code") || s.includes("dev")) return "coding";
+    if (s.includes("debug") || s.includes("test")) return "debugging";
+    if (s.includes("meet") || s.includes("call")) return "meeting";
+    if (s.includes("rest") || s.includes("pause")) return "break";
+    if (s.includes("surf") || s.includes("web")) return "browse";
+    return "work";
+  },
+  z.enum(["focus", "work", "meeting", "break", "browse", "coding", "debugging"])
+);
 
 const ActivityEventCandidateSchema = z.object({
   title: z.string(),

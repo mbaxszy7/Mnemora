@@ -315,6 +315,18 @@
     "summary": {
       "selectWindow": "Select a time window",
       "selectWindowDescription": "Select a 20-minute window from the timeline to view detailed summary",
+      "processingTitle": "Processing",
+      "processingDescription": "This window is still being processed. Please check back later.",
+      "failedTitle": "Summary generation failed",
+      "failedDescription": "This window could not be summarized. It will retry automatically.",
+      "failedPermanentTitle": "Summary generation stopped",
+      "failedPermanentDescription": "This window reached the maximum retry attempts and will not retry automatically.",
+      "regenerateButton": "Generate now",
+      "regeneratingButton": "Generating…",
+      "regeneratingToast": "Generating summary…",
+      "regenerateSuccessToast": "Summary generated",
+      "regenerateFailedToast": "Failed to generate summary",
+      "regenerateNotInitializedToast": "LLM is not configured. Please check LLM configuration.",
       "nodes": "{{count}} nodes",
       "screenshots": "{{count}} screenshots",
       "relatedEvents": "Related Events"

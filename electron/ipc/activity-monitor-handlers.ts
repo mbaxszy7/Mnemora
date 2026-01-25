@@ -18,6 +18,8 @@ import type {
   SummaryResponse,
   EventDetailsRequest,
   EventDetailsResponse,
+  RegenerateSummaryRequest,
+  RegenerateSummaryResponse,
 } from "@shared/activity-types";
 import { getLogger } from "../services/logger";
 
@@ -35,6 +37,22 @@ async function handleGetTimeline(
     return { success: true, data: result };
   } catch (error) {
     logger.error({ error, request }, "IPC handleGetTimeline failed");
+    return { success: false, error: toIPCError(error) };
+  }
+}
+
+async function handleRegenerateSummary(
+  _event: IpcMainInvokeEvent,
+  request: RegenerateSummaryRequest
+): Promise<IPCResult<RegenerateSummaryResponse>> {
+  try {
+    const result = await activityMonitorService.regenerateSummary(
+      request.windowStart,
+      request.windowEnd
+    );
+    return { success: true, data: result };
+  } catch (error) {
+    logger.error({ error, request }, "IPC handleRegenerateSummary failed");
     return { success: false, error: toIPCError(error) };
   }
 }
@@ -79,4 +97,5 @@ export function registerActivityMonitorHandlers(): void {
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_GET_TIMELINE, handleGetTimeline);
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_GET_SUMMARY, handleGetSummary);
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_GET_EVENT_DETAILS, handleGetEventDetails);
+  registry.registerHandler(IPC_CHANNELS.ACTIVITY_REGENERATE_SUMMARY, handleRegenerateSummary);
 }

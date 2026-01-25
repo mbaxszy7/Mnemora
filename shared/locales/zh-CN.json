@@ -316,6 +316,18 @@
     "summary": {
       "selectWindow": "选择一个时间窗口",
       "selectWindowDescription": "从左侧时间线选择一个 20 分钟窗口查看详细摘要",
+      "processingTitle": "正在生成",
+      "processingDescription": "该时间窗口还在处理中，请稍后再查看。",
+      "failedTitle": "生成失败",
+      "failedDescription": "该时间窗口的摘要生成失败，将自动重试。",
+      "failedPermanentTitle": "已停止重试",
+      "failedPermanentDescription": "该时间窗口已达到最大重试次数，将不会自动重试。",
+      "regenerateButton": "立即生成",
+      "regeneratingButton": "生成中…",
+      "regeneratingToast": "正在生成摘要…",
+      "regenerateSuccessToast": "摘要已生成",
+      "regenerateFailedToast": "摘要生成失败",
+      "regenerateNotInitializedToast": "尚未配置 LLM，请先检查 LLM 配置。",
       "nodes": "{{count}} 个节点",
       "screenshots": "{{count}} 张截图",
       "relatedEvents": "相关事件"

@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { sql, eq, type SQL } from "drizzle-orm";
 import { getDb } from "../../database";
 import {
   batches,
@@ -56,7 +56,12 @@ export class QueueInspector {
       const screenshotOcrCounts = await this.countByStatus(db, screenshots, "ocrStatus");
 
       // Batches Thread LLM status counts
-      const batchThreadLlmCounts = await this.countByStatus(db, batches, "threadLlmStatus");
+      const batchThreadLlmCounts = await this.countByStatus(
+        db,
+        batches,
+        "threadLlmStatus",
+        eq(batches.vlmStatus, "succeeded")
+      );
 
       // Vector documents - embedding status
       const vectorEmbeddingCounts = await this.countByStatus(
@@ -186,19 +191,30 @@ export class QueueInspector {
     db: ReturnType<typeof getDb>,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     table: any,
-    statusColumn: string
+    statusColumn: string,
+    where?: SQL
   ): Promise<Map<string, number>> {
     const result = new Map<string, number>();
 
     try {
-      const rows = await db
-        .select({
-          status: table[statusColumn],
-          count: sql<number>`count(*)`,
-        })
-        .from(table)
-        .groupBy(table[statusColumn])
-        .all();
+      const rows = await (where
+        ? db
+            .select({
+              status: table[statusColumn],
+              count: sql<number>`count(*)`,
+            })
+            .from(table)
+            .where(where)
+            .groupBy(table[statusColumn])
+            .all()
+        : db
+            .select({
+              status: table[statusColumn],
+              count: sql<number>`count(*)`,
+            })
+            .from(table)
+            .groupBy(table[statusColumn])
+            .all());
 
       for (const row of rows) {
         if (row.status) {

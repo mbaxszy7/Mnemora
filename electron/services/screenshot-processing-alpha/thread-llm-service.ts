@@ -1,5 +1,5 @@
 import { desc, eq, ne } from "drizzle-orm";
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 
 import { getDb } from "../../database";
 import { contextNodes, threads } from "../../database/schema";
@@ -154,13 +154,12 @@ export class ThreadLlmService {
       const { object, usage } = await generateObject({
         model: aiService.getTextClient(),
         schema: ThreadLLMOutputSchema,
+        mode: "json",
         system: promptTemplates.getThreadLlmSystemPrompt(),
         messages: [{ role: "user", content: [{ type: "text", text: userPrompt }] }],
         abortSignal: controller.signal,
         providerOptions: {
-          mnemora: {
-            thinking: { type: "disabled" },
-          },
+          mnemora: {},
         },
       });
 
@@ -194,6 +193,20 @@ export class ThreadLlmService {
     } catch (error) {
       const durationMs = Date.now() - startTime;
 
+      if (NoObjectGeneratedError.isInstance(error)) {
+        logger.error(
+          {
+            errorName: error.name,
+            rawText: error.text,
+            rawResponse: error.response,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+          },
+          "Thread LLM NoObjectGeneratedError - raw response did not match schema"
+        );
+      } else {
+        logger.error({ error }, "Thread LLM request failed");
+      }
+
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
@@ -216,7 +229,6 @@ export class ThreadLlmService {
       });
 
       aiRuntimeService.recordFailure("text", error);
-      logger.error({ error }, "Thread LLM request failed");
       throw error;
     } finally {
       clearTimeout(timeoutId);

@@ -27,6 +27,8 @@ import type {
   SummaryResponse,
   EventDetailsRequest,
   EventDetailsResponse,
+  RegenerateSummaryRequest,
+  RegenerateSummaryResponse,
   ActivityTimelineChangedPayload,
 } from "@shared/activity-types";
 
@@ -307,6 +309,9 @@ export interface ActivityMonitorApi {
   getTimeline(request: TimelineRequest): Promise<IPCResult<TimelineResponse>>;
   getSummary(request: SummaryRequest): Promise<IPCResult<SummaryResponse | null>>;
   getEventDetails(request: EventDetailsRequest): Promise<IPCResult<EventDetailsResponse>>;
+  regenerateSummary(
+    request: RegenerateSummaryRequest
+  ): Promise<IPCResult<RegenerateSummaryResponse>>;
   onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void): () => void;
 }
 
@@ -321,6 +326,12 @@ const activityMonitorApi: ActivityMonitorApi = {
 
   async getEventDetails(request: EventDetailsRequest): Promise<IPCResult<EventDetailsResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_EVENT_DETAILS, request);
+  },
+
+  async regenerateSummary(
+    request: RegenerateSummaryRequest
+  ): Promise<IPCResult<RegenerateSummaryResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_REGENERATE_SUMMARY, request);
   },
 
   onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void) {

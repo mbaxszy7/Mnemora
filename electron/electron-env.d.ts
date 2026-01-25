@@ -175,6 +175,14 @@ interface Window {
     }): Promise<
       import("../shared/ipc-types").IPCResult<import("../shared/activity-types").ActivityEvent>
     >;
+    regenerateSummary(req: {
+      windowStart: number;
+      windowEnd: number;
+    }): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/activity-types").RegenerateSummaryResponse
+      >
+    >;
   };
   monitoringApi: {
     openDashboard(): Promise<

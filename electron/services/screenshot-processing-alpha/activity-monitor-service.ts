@@ -1,12 +1,13 @@
 import { BrowserWindow } from "electron";
 import { and, desc, eq, gte, lt, lte, gt, isNull, or } from "drizzle-orm";
-import { generateObject } from "ai";
+import { generateObject, NoObjectGeneratedError } from "ai";
 import type {
   ActivityEvent,
   ActivityEventKind,
   ActivityStats,
   EventDetailsResponse,
   LongEventMarker,
+  RegenerateSummaryResponse,
   SummaryResponse,
   TimelineResponse,
   TimeWindow,
@@ -144,9 +145,11 @@ function buildEmptyWindowSummary(): string {
   ].join("\n");
 }
 
-function normalizeSummaryStatus(status: string): "pending" | "succeeded" | "failed" {
+function normalizeSummaryStatus(
+  status: string
+): "pending" | "succeeded" | "failed" | "failed_permanent" {
   if (status === "running") return "pending";
-  if (status === "failed_permanent") return "failed";
+  if (status === "failed_permanent") return "failed_permanent";
   if (status === "failed") return "failed";
   if (status === "no_data") return "succeeded";
   if (status === "succeeded") return "succeeded";
@@ -338,6 +341,89 @@ class ActivityMonitorService {
     return response;
   }
 
+  async regenerateSummary(
+    windowStart: number,
+    windowEnd: number
+  ): Promise<RegenerateSummaryResponse> {
+    const db = getDb();
+    const aiService = AISDKService.getInstance();
+    const now = Date.now();
+
+    const row = db
+      .select({
+        status: activitySummaries.status,
+      })
+      .from(activitySummaries)
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd)
+        )
+      )
+      .limit(1)
+      .get();
+
+    if (!row) {
+      return { ok: false, reason: "not_found" };
+    }
+
+    if (row.status !== "failed_permanent") {
+      return { ok: false, reason: "not_failed_permanent" };
+    }
+
+    if (!aiService.isInitialized()) {
+      return { ok: false, reason: "not_initialized" };
+    }
+
+    const claimed = db
+      .update(activitySummaries)
+      .set({
+        status: "running",
+        nextRunAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd),
+          eq(activitySummaries.status, "failed_permanent")
+        )
+      )
+      .run();
+
+    if (claimed.changes === 0) {
+      return { ok: false, reason: "already_running" };
+    }
+
+    emitActivityTimelineChanged(windowStart, windowEnd);
+
+    const success = await this.generateWindowSummary(windowStart, windowEnd, {
+      failureStatus: "failed_permanent",
+    });
+
+    if (success) {
+      return { ok: true };
+    }
+
+    await db
+      .update(activitySummaries)
+      .set({
+        status: "failed_permanent",
+        nextRunAt: null,
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd)
+        )
+      )
+      .run();
+
+    emitActivityTimelineChanged(windowStart, windowEnd);
+    return { ok: false, reason: "failed" };
+  }
+
   async getEventDetails(eventId: number): Promise<EventDetailsResponse> {
     const db = getDb();
     const row = await db
@@ -447,9 +533,15 @@ class ActivityMonitorService {
     }
   }
 
-  async generateWindowSummary(windowStart: number, windowEnd: number): Promise<boolean> {
+  async generateWindowSummary(
+    windowStart: number,
+    windowEnd: number,
+    opts?: { failureStatus?: "failed" | "failed_permanent" }
+  ): Promise<boolean> {
     const db = getDb();
     const aiService = AISDKService.getInstance();
+
+    const startTime = Date.now();
 
     if (!aiService.isInitialized()) {
       logger.warn("AI service not initialized, skipping summary generation");
@@ -648,14 +740,11 @@ class ActivityMonitorService {
           model: aiService.getTextClient(),
           system: promptTemplates.getActivitySummarySystemPrompt(),
           schema: ActivityWindowSummaryLLMSchema,
+          mode: "json",
           prompt: userPrompt,
           abortSignal: controller.signal,
           providerOptions: {
-            mnemora: {
-              thinking: {
-                type: "disabled",
-              },
-            },
+            mnemora: {},
           },
         });
       } finally {
@@ -682,7 +771,7 @@ class ActivityMonitorService {
         capability: "text",
         operation: "text_summary",
         model: aiService.getTextModelName(),
-        durationMs: Date.now() - windowStart,
+        durationMs: Date.now() - startTime,
         status: "succeeded",
         responsePreview: JSON.stringify(data, null, 2),
       });
@@ -810,18 +899,36 @@ class ActivityMonitorService {
 
       return true;
     } catch (error) {
-      logger.error({ error, windowStart }, "Failed to generate window summary");
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const durationMs = Date.now() - startTime;
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
-      if (error instanceof Error && error.name === "AbortError") {
-        activityAlertBuffer.record({
-          ts: Date.now(),
-          kind: "activity_summary_timeout",
-          message: `Activity summary timed out after ${processingConfig.ai.textTimeoutMs}ms`,
+      if (NoObjectGeneratedError.isInstance(error)) {
+        logger.error(
+          {
+            errorName: error.name,
+            rawText: error.text,
+            rawResponse: error.response,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+            windowStart,
+            windowEnd,
+            durationMs,
+          },
+          "Activity summary NoObjectGeneratedError - raw response did not match schema"
+        );
+      }
+
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          stack: error instanceof Error ? error.stack : undefined,
+          fullError: error,
           windowStart,
           windowEnd,
-        });
-      }
+          durationMs,
+        },
+        "Activity summary generation failed"
+      );
 
       llmUsageService.logEvent({
         ts: Date.now(),
@@ -832,23 +939,23 @@ class ActivityMonitorService {
         provider: "openai_compatible",
         totalTokens: 0,
         usageStatus: "missing",
-        errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+        errorCode: error instanceof Error ? error.name : "unknown",
       });
+
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
         operation: "text_summary",
         model: aiService.getTextModelName(),
-        durationMs: 0,
+        durationMs,
         status: "failed",
-        errorPreview: errorMessage,
+        errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
-      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
       await db
         .update(activitySummaries)
         .set({
-          status: "failed",
+          status: opts?.failureStatus ?? "failed",
           updatedAt: Date.now(),
         })
         .where(
@@ -1077,11 +1184,7 @@ class ActivityMonitorService {
           prompt: userPrompt,
           abortSignal: controller.signal,
           providerOptions: {
-            mnemora: {
-              thinking: {
-                type: "disabled",
-              },
-            },
+            mnemora: {},
           },
         });
       } finally {

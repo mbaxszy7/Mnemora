@@ -23,7 +23,7 @@ export interface TimeWindow {
   windowStart: number; // timestamp ms
   windowEnd: number;
   title: string | null;
-  status: "pending" | "succeeded" | "failed";
+  status: "pending" | "succeeded" | "failed" | "failed_permanent";
   stats: ActivityStats | null;
 }
 
@@ -136,3 +136,19 @@ export interface EventDetailsRequest {
  * Response payload for activity:get-event-details
  */
 export type EventDetailsResponse = ActivityEvent;
+
+/**
+ * Request payload for activity:regenerate-summary
+ */
+export interface RegenerateSummaryRequest {
+  windowStart: number;
+  windowEnd: number;
+}
+
+/**
+ * Response payload for activity:regenerate-summary
+ */
+export interface RegenerateSummaryResponse {
+  ok: boolean;
+  reason?: "not_found" | "not_failed_permanent" | "not_initialized" | "already_running" | "failed";
+}

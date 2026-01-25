@@ -63,11 +63,11 @@ export interface StateSnapshotPayload {
   currentState: string;
   metrics?: Record<string, string | number>;
   issue?: {
-    detected: boolean;
-    type: "error" | "bug" | "blocker" | "question" | "warning";
-    description: string;
-    severity: number;
-  };
+    detected?: boolean;
+    type?: "error" | "bug" | "blocker" | "question" | "warning";
+    description?: string;
+    severity?: number;
+  } | null;
 }
 
 export interface ThreadSnapshot {

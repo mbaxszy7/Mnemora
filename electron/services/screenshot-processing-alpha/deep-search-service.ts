@@ -148,14 +148,11 @@ export class DeepSearchService {
         model: aiService.getTextClient(),
         system: promptTemplates.getQueryUnderstandingSystemPrompt(),
         schema: SearchQueryPlanSchema,
+        mode: "json",
         prompt,
         abortSignal: controller.signal,
         providerOptions: {
-          mnemora: {
-            thinking: {
-              type: "disabled",
-            },
-          },
+          mnemora: {},
         },
       });
 
@@ -290,13 +287,14 @@ export class DeepSearchService {
         model: aiService.getTextClient(),
         system: promptTemplates.getAnswerSynthesisSystemPrompt(),
         schema: SearchAnswerSchema,
+        mode: "json",
         prompt,
         abortSignal: controller.signal,
         providerOptions: {
           mnemora: {
-            thinking: {
-              type: "enabled",
-            },
+            // thinking: {
+            //   type: "enabled",
+            // },
           },
         },
       });
@@ -367,9 +365,15 @@ export class DeepSearchService {
         // Ignore usage recording errors
       }
 
-      logger.warn(
-        { error: error instanceof Error ? error.message : String(error), durationMs },
-        "Answer synthesis failed"
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          stack: error instanceof Error ? error.stack : undefined,
+          fullError: error,
+          durationMs,
+        },
+        "Answer synthesis failed with detailed error"
       );
       return null;
     } finally {

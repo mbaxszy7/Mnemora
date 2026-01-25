@@ -1,7 +1,17 @@
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, PauseCircle, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  Camera,
+  Loader2,
+  PauseCircle,
+  RotateCcw,
+  Settings,
+  ShieldCheck,
+  Sparkles,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { SearchBar, Timeline, SummaryPanel } from "@/components/core/activity-monitor";
 import { useViewTransition } from "@/components/core/view-transition";
 import { useActivityMonitor } from "@/hooks/use-activity-monitor";
@@ -73,10 +83,67 @@ export default function HomePage() {
   const [selectedWindowId, setSelectedWindowId] = useState<number | string | null>(null);
   const [selectedSummary, setSelectedSummary] = useState<WindowSummary | null>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [regeneratingWindowId, setRegeneratingWindowId] = useState<number | string | null>(null);
 
   const [permissionStatus, setPermissionStatus] = useState<PermissionCheckResult | null>(null);
   const [captureState, setCaptureState] = useState<SchedulerStatePayload | null>(null);
   const [isPreparingCapture, setIsPreparingCapture] = useState(false);
+
+  const selectedWindow =
+    selectedWindowId === null
+      ? null
+      : (timeline.find((w) => Number(w.id) === Number(selectedWindowId)) ?? null);
+
+  const isRegeneratingSelectedWindow =
+    selectedWindow != null && regeneratingWindowId != null
+      ? Number(regeneratingWindowId) === Number(selectedWindow.id)
+      : false;
+
+  const handleRegenerateSummary = useCallback(async () => {
+    if (!selectedWindow) return;
+    if (selectedWindow.status !== "failed_permanent") return;
+
+    const windowId = selectedWindow.id;
+    const toastId = `activity-regenerate-${selectedWindow.windowStart}-${selectedWindow.windowEnd}`;
+
+    setRegeneratingWindowId(windowId);
+    toast(t("activityMonitor.summary.regeneratingToast"), { id: toastId });
+
+    try {
+      const res = await window.activityMonitorApi.regenerateSummary({
+        windowStart: selectedWindow.windowStart,
+        windowEnd: selectedWindow.windowEnd,
+      });
+
+      if (!res.success) {
+        toast.error(res.error?.message ?? t("activityMonitor.summary.regenerateFailedToast"), {
+          id: toastId,
+        });
+        return;
+      }
+
+      if (res.data?.ok) {
+        toast.success(t("activityMonitor.summary.regenerateSuccessToast"), { id: toastId });
+        return;
+      }
+
+      if (res.data?.reason === "not_initialized") {
+        toast.error(t("activityMonitor.summary.regenerateNotInitializedToast"), { id: toastId });
+        return;
+      }
+
+      toast.error(t("activityMonitor.summary.regenerateFailedToast"), { id: toastId });
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : t("activityMonitor.summary.regenerateFailedToast"),
+        {
+          id: toastId,
+        }
+      );
+    } finally {
+      setRegeneratingWindowId((prev) => (Number(prev) === Number(windowId) ? null : prev));
+    }
+  }, [selectedWindow, t]);
 
   const hasActivityData =
     timeline.some((w) => {
@@ -146,17 +213,34 @@ export default function HomePage() {
     const window = timeline.find((w) => w.id === selectedWindowId);
     if (!window) return;
 
+    if (window.status !== "succeeded") {
+      setSelectedSummary(null);
+      setIsLoadingSummary(false);
+      return;
+    }
+
+    let cancelled = false;
+
     const fetchSummary = async () => {
       setIsLoadingSummary(true);
+      setSelectedSummary(null);
       try {
         const summary = await getSummary(window.windowStart, window.windowEnd);
-        setSelectedSummary(summary);
+        if (!cancelled) {
+          setSelectedSummary(summary);
+        }
       } finally {
-        setIsLoadingSummary(false);
+        if (!cancelled) {
+          setIsLoadingSummary(false);
+        }
       }
     };
 
-    fetchSummary();
+    void fetchSummary();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedWindowId, timeline, getSummary, showTimelineEmptyState]);
 
   const handleSearchStart = useCallback((query: string) => {
@@ -407,12 +491,68 @@ export default function HomePage() {
                           </Alert>
                         </div>
                       ) : null}
-                      <SummaryPanel
-                        summary={selectedSummary}
-                        isLoading={isLoadingSummary}
-                        onFetchDetails={getEventDetails}
-                        variants={itemVariants}
-                      />
+                      {selectedWindow && selectedWindow.status !== "succeeded" ? (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-8 bg-card/50 rounded-xl border border-border/50">
+                          {selectedWindow.status === "pending" ||
+                          (selectedWindow.status === "failed_permanent" &&
+                            isRegeneratingSelectedWindow) ? (
+                            <>
+                              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mb-4" />
+                              <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                                {t("activityMonitor.summary.processingTitle")}
+                              </h3>
+                              <p className="text-sm text-muted-foreground/70">
+                                {t("activityMonitor.summary.processingDescription")}
+                              </p>
+                            </>
+                          ) : selectedWindow.status === "failed_permanent" ? (
+                            <>
+                              <AlertTriangle className="h-16 w-16 text-muted-foreground/30 mb-4" />
+                              <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                                {t("activityMonitor.summary.failedPermanentTitle")}
+                              </h3>
+                              <p className="text-sm text-muted-foreground/70">
+                                {t("activityMonitor.summary.failedPermanentDescription")}
+                              </p>
+                              <div className="mt-5">
+                                <Button
+                                  onClick={handleRegenerateSummary}
+                                  disabled={isRegeneratingSelectedWindow}
+                                >
+                                  {isRegeneratingSelectedWindow ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      {t("activityMonitor.summary.regeneratingButton")}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <RotateCcw className="mr-2 h-4 w-4" />
+                                      {t("activityMonitor.summary.regenerateButton")}
+                                    </>
+                                  )}
+                                </Button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <AlertTriangle className="h-16 w-16 text-muted-foreground/30 mb-4" />
+                              <h3 className="text-lg font-medium text-muted-foreground mb-2">
+                                {t("activityMonitor.summary.failedTitle")}
+                              </h3>
+                              <p className="text-sm text-muted-foreground/70">
+                                {t("activityMonitor.summary.failedDescription")}
+                              </p>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <SummaryPanel
+                          summary={selectedSummary}
+                          isLoading={isLoadingSummary}
+                          onFetchDetails={getEventDetails}
+                          variants={itemVariants}
+                        />
+                      )}
                     </motion.div>
                   </div>
                 )}

@@ -153,6 +153,8 @@ export class BatchVlmScheduler extends BaseScheduler {
         .set({
           vlmStatus: "failed_permanent",
           vlmNextRunAt: null,
+          threadLlmStatus: "failed_permanent",
+          threadLlmNextRunAt: null,
           updatedAt: now,
         })
         .where(
@@ -180,10 +182,26 @@ export class BatchVlmScheduler extends BaseScheduler {
         )
         .run();
 
-      const changed = recovered.changes + permanent.changes;
+      const cleanedUpstreamTerminal = db
+        .update(batches)
+        .set({
+          threadLlmStatus: "failed_permanent",
+          threadLlmNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(eq(batches.vlmStatus, "failed_permanent"), eq(batches.threadLlmStatus, "pending"))
+        )
+        .run();
+
+      const changed = recovered.changes + permanent.changes + cleanedUpstreamTerminal.changes;
       if (changed > 0) {
         logger.info(
-          { recovered: recovered.changes, permanent: permanent.changes },
+          {
+            recovered: recovered.changes,
+            permanent: permanent.changes,
+            cleanedUpstreamTerminal: cleanedUpstreamTerminal.changes,
+          },
           "Recovered stale VLM batches"
         );
       }
@@ -440,6 +458,12 @@ export class BatchVlmScheduler extends BaseScheduler {
         vlmStatus: status,
         vlmErrorMessage: errorMessage.slice(0, 500),
         vlmNextRunAt: nextRunAt,
+        ...(exceeded
+          ? {
+              threadLlmStatus: "failed_permanent",
+              threadLlmNextRunAt: null,
+            }
+          : {}),
         updatedAt: now,
       })
       .where(eq(batches.id, batchId))

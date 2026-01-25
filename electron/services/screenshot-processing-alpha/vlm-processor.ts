@@ -8,6 +8,7 @@ import { promptTemplates } from "./prompt-templates";
 import {
   VLMOutputProcessedSchema,
   VLMOutputSchema,
+  CANONICAL_APP_CANDIDATES,
   type VLMContextNode,
   type VLMScreenshotMeta,
 } from "./schemas";
@@ -73,9 +74,7 @@ class VLMProcessor {
         maxOutputTokens: processingConfig.ai.vlmMaxOutputTokens,
         abortSignal: controller.signal,
         providerOptions: {
-          mnemora: {
-            thinking: { type: "disabled" },
-          },
+          mnemora: {},
         },
       });
 
@@ -241,6 +240,7 @@ class VLMProcessor {
       yesterdayEnd: yesterdayEnd.getTime(),
       weekAgo,
       screenshotMetaJson: JSON.stringify(screenshotMeta, null, 2),
+      appCandidatesJson: JSON.stringify(CANONICAL_APP_CANDIDATES, null, 2),
     });
   }
 }

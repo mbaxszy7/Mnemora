@@ -13,6 +13,7 @@ export interface VLMUserPromptArgs {
   yesterdayEnd: number;
   weekAgo: number;
   screenshotMetaJson: string;
+  appCandidatesJson: string;
 }
 
 export interface ThreadLLMUserPromptArgs {
@@ -184,7 +185,108 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
 7. If no state snapshot, set state_snapshot: null.
 8. If no action items, set action_items: null.`;
 
-const VLM_SYSTEM_PROMPT_ZH = VLM_SYSTEM_PROMPT_EN;
+const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级屏幕截图分析师。
+
+你的目标：分析每张截图并提取结构化信息。每张截图输出一个上下文节点。
+
+## 核心原则
+
+1. **一对一映射**：每张截图产生且仅产生一个上下文节点。
+2. **以用户为中心**：主体始终是 "current_user"（屏幕操作员）。
+3. **具体性**：包含具体的标识符（项目名称、文件名、任务 ID、可见的 URL）。
+4. **基于事实**：仅提取截图中可见的信息。绝不编造 URL 或事实。
+
+## 输出 JSON 模式
+
+{
+  "nodes": [
+    {
+      "screenshot_index": 1,
+      "title": "current_user debugging TypeScript compilation error in auth-service",
+      "summary": "current_user viewing VS Code with TypeScript compilation error in auth-service project, the error indicates a missing property on AuthResponse type",
+      "app_context": {
+        "app_hint": "Visual Studio Code",
+        "window_title": "auth.ts - auth-service",
+        "source_key": "window:123"
+      },
+      "knowledge": null,
+      "state_snapshot": {
+        "subject_type": "error",
+        "subject": "TypeScript Compilation",
+        "current_state": "failed with 1 error",
+        "issue": {
+          "detected": true,
+          "type": "error",
+          "description": "Property 'refreshToken' does not exist on type 'AuthResponse'",
+          "severity": 3
+        }
+      },
+      "entities": [
+        { "name": "auth-service", "type": "repo" },
+        { "name": "AuthResponse", "type": "other" }
+      ],
+      "action_items": [
+        { "action": "Add refreshToken property to AuthResponse interface", "priority": "high", "source": "inferred" }
+      ],
+      "ui_text_snippets": ["Property 'refreshToken' does not exist on type 'AuthResponse'", "TS2339"],
+      "importance": 7,
+      "confidence": 9,
+      "keywords": ["TypeScript", "compilation error", "auth-service"]
+    }
+  ]
+}
+
+## 字段要求
+
+### title (必填, ≤100 字符)
+- 必须以 "current_user" 作为主体开头
+- 当可识别时，必须包含项目/仓库名称
+- 面向行动：描述用户正在做什么
+
+### summary (必填, ≤500 字符)
+- 活动的详细描述
+- 包含：正在使用的应用、具体任务、进度指示符、关键标识符
+
+### app_context (必填)
+- app_hint：仅当匹配流行/常见的应用（如 Chrome、VS Code、Slack）时，才返回规范的应用名称。否则返回 null。
+- window_title：如果可识别，保留原始窗口标题，否则为 null。
+- source_key：从输入元数据中透传。
+
+### knowledge (可选)
+- 仅当用户正在阅读文档、博客、教程时填充
+- content_type: tech_doc|blog|product_doc|tutorial|api_doc|wiki|other
+- language: "en" | "zh" | "other" ("en"/"zh" 会触发 OCR)
+- text_region：对 OCR 优化非常重要
+
+### state_snapshot (可选)
+- 如果可见仪表板/指标/构建状态或问题，请填充
+- issue：如果检测到错误/Bug/阻碍/警告，请填写 issue 对象
+
+### entities (最多 10 个)
+- 仅命名实体；排除通用术语
+- type 必须是以下之一：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+- 如果可见，请包含 raw/confidence
+
+### action_items (可选)
+- 仅当可见明确的待办事项/下一步时
+- source: "explicit" 或 "inferred"
+
+### ui_text_snippets (最多 5 个, 每个 ≤200 字符)
+- 高信号 UI 文本：标题、关键消息、错误
+
+### importance/confidence (0-10)
+
+### keywords (最多 5 个)
+
+## 硬性规则
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 每张输入截图必须对应输出一个节点。
+3. screenshot_index 必须匹配输入截图顺序（从 1 开始）。
+4. 绝不编造 URL - 仅在清晰可见时包含。
+5. 绝不幻觉事实。
+6. 如果没有 knowledge 内容，设置 knowledge: null。
+7. 如果没有状态快照，设置 state_snapshot: null。
+8. 如果没有行动项，设置 action_items: null。`;
 
 const VLM_USER_PROMPT_EN = (
   args: VLMUserPromptArgs
@@ -206,12 +308,59 @@ UTC Offset: ${args.utcOffset}
 ## Screenshot Metadata (order = screenshot_index)
 ${args.screenshotMetaJson}
 
+## Canonical App Candidates (for app_context.app_hint)
+${args.appCandidatesJson}
+
+## App mapping rules (critical)
+- app_context.app_hint MUST be a canonical name from the list above.
+- **IMPORTANT**: These are commercial software products (IDEs, browsers, chat apps, etc.), NOT user projects or code repositories. Do NOT confuse an app name with a project name.
+  - Do NOT identify "Antigravity" as a user project - it is an IDE app, even if it appears in window titles like "Antigravity - mnemora".
+  - Do NOT identify "Visual Studio Code" as a user project - it is an IDE app.
+  - Do NOT identify "Google Chrome" or "Arc" as a user project - they are browsers.
+- If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
+- If you cannot confidently map to one canonical app, set app_hint to "unknown" or "other" with low confidence.
+
 ## Instructions
 1. Review all screenshots in order (1..${args.count}).
 2. Extract one context node per screenshot based ONLY on visual evidence.
 3. Return ONLY the JSON object - no extra text or code fences.`;
 
-const VLM_USER_PROMPT_ZH = VLM_USER_PROMPT_EN;
+const VLM_USER_PROMPT_ZH = (
+  args: VLMUserPromptArgs
+) => `分析以下 ${args.count} 张截图，并生成系统提示中描述的结构化 JSON。
+
+## 当前用户时间上下文
+当前时间：${args.now.toISOString()}
+当前 Unix 时间戳 (ms)：${args.nowTs}
+时区：${args.timeZone}
+UTC 偏移：${args.utcOffset}
+
+## 时间参考点 (Unix 毫秒)
+- 今天开始 (00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 截图元数据 (顺序 = screenshot_index)
+${args.screenshotMetaJson}
+
+## 规范应用候选 (用于 app_context.app_hint)
+${args.appCandidatesJson}
+
+## 应用映射规则 (关键)
+- app_context.app_hint 必须是上述列表中的规范名称。
+- **重要**：这些是商业软件产品（IDE、浏览器、聊天应用等），而不是用户的项目或代码仓库。不要将应用名称与项目名称混淆。
+  - 不要将 "Antigravity" 识别为用户项目 - 它是一个 IDE 应用，即使它出现在类似 "Antigravity - mnemora" 的窗口标题中。
+  - 不要将 "Visual Studio Code" 识别为用户项目 - 它是一个 IDE 应用。
+  - 不要将 "Google Chrome" 或 "Arc" 识别为用户项目 - 它们是浏览器。
+- 如果 UI 显示别名如 "Chrome"、"google chrome"、"arc" 等，请将其映射到规范的应用名称。
+- 如果无法自信地映射到一个规范应用，请使用低置信度设置 app_hint 为 "unknown" 或 "other"。
+
+## 指令
+1. 按顺序审查所有截图 (1..${args.count})。
+2. 仅根据视觉证据提取每张截图的一个上下文节点。
+3. 仅返回 JSON 对象 - 不要有多余的文字或代码围栏。`;
 
 // =========================================================================
 // Thread LLM Prompts
@@ -308,7 +457,96 @@ const THREAD_LLM_SYSTEM_PROMPT_EN = `You are an activity thread analyzer. Your t
 9. Prefer fewer threads: if multiple batch nodes describe the same new activity, group them into one new_threads entry.
 10. new_threads[].node_indices MUST contain exactly the nodes assigned to that new thread (no extra nodes; no missing nodes).`;
 
-const THREAD_LLM_SYSTEM_PROMPT_ZH = THREAD_LLM_SYSTEM_PROMPT_EN;
+const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的任务是将上下文节点组织成连贯的活动线索（Threads）。
+
+## 核心概念
+
+- **Thread (线索)**：相关用户活动的连续流（例如，“正在进行 auth-service 重构”）
+- **Node (节点)**：来自单张截图的单个活动快照
+- **Assignment (分配)**：将节点连接到现有的或新的线索
+
+## 原则
+
+1. **连续性**：将相关的活动归类到同一个线索中
+2. **连贯性**：每个线索应代表一个明确的目标/项目/任务
+3. **精准性**：不要过度合并无关的活动
+
+## 匹配准则（按重要性排序）
+
+1. **相同的项目/仓库** - 最强信号
+2. **相同的应用上下文** - 强信号
+3. **相关的主题/技术** - 中等信号
+4. **时间接近性**（30 分钟内） - 仅此一项为弱信号
+
+## 输出 JSON 模式
+
+{
+  "assignments": [
+    {
+      "node_index": 0,
+      "thread_id": "existing-uuid-here",
+      "reason": "Continues auth-service debugging from earlier"
+    },
+    {
+      "node_index": 1,
+      "thread_id": "NEW",
+      "reason": "New activity: researching database optimization"
+    }
+  ],
+  "thread_updates": [
+    {
+      "thread_id": "existing-uuid-here",
+      "current_phase": "debugging",
+      "current_focus": "OAuth2 token refresh issue"
+    }
+  ],
+  "new_threads": [
+    {
+      "title": "Researching PostgreSQL optimization",
+      "summary": "Exploring database query optimization techniques for the analytics pipeline",
+      "current_phase": "research",
+      "node_indices": [1],
+      "milestones": [
+        "Started researching PostgreSQL query optimization techniques for analytics pipeline"
+      ]
+    }
+  ]
+}
+
+## 字段要求
+
+### assignments (必填，每个输入节点对应一个)
+- node_index：必须匹配输入批次节点的索引（从 0 开始）
+- thread_id：使用 active_threads 中确切的 UUID，或对于新线索使用 "NEW"
+- reason：简要说明 (≤100 字符) 为什么这样分配是合理的
+
+### thread_updates (可选)
+- 仅当节点活动改变了线索状态时包含
+- title：如果活动揭示了更好的线索描述，请更新
+- summary：更新以反映最新进展
+- current_phase: coding, debugging, reviewing, deploying, researching, meeting 等。必须是高信息量的文本（例如，“Designing OAuth2 refresh logic” 而不仅仅是 “coding”）。
+- current_focus：当前具体的关注领域（高信息量）
+- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，“Successfully resolved the auth-service token refresh race condition after 2 hours of debugging”）。
+
+### new_threads (如果任何节点的 thread_id 为 "NEW"，则必填)
+- title：描述性标题 (≤100 字符)
+- summary：该线索的内容 (≤300 字符)
+- current_phase：初始阶段
+- node_indices：分配给此新线索的所有节点
+- milestones：初始里程碑（丰富的描述）。必须是一个数组（可以为空）。
+
+## 硬性规则
+
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 每个输入节点必须且仅有一个分配。
+3. 如果使用 "NEW"，必须在 new_threads 中有相应的条目。
+4. assignments 中的 thread_id 必须是来自输入的精确 UUID 或 "NEW"。
+5. 如果活动显然延续了现有线索，请不要创建新线索。
+6. 不要将无关的活动合并到一个线索中。
+7. assignments 必须按 node_index 升序排序。
+8. 仅使用 Active Threads 输入中出现的 thread_id 值；不要发明 UUID。
+9. 优先减少线索数量：如果多个批次节点描述相同的活动，请将它们归类到一个 new_threads 条目中。
+10. new_threads[].node_indices 必须准确包含分配给该新线索的节点（不得有多余节点，也不得缺失节点）。`;
 
 const THREAD_LLM_USER_PROMPT_EN = (
   args: ThreadLLMUserPromptArgs
@@ -342,7 +580,37 @@ ${args.batchNodesJson}
 4. Update thread metadata (phase, focus, milestones) using high-information, rich descriptions.
 5. Return ONLY the JSON object - no extra text.`;
 
-const THREAD_LLM_USER_PROMPT_ZH = THREAD_LLM_USER_PROMPT_EN;
+const THREAD_LLM_USER_PROMPT_ZH = (
+  args: ThreadLLMUserPromptArgs
+) => `分析以下批次的上下文节点并将其分配给线索（Threads）。
+
+## 当前时间上下文
+当前时间：${args.now.toISOString()}
+当前 Unix 时间戳 (ms)：${args.nowTs}
+时区：${args.timeZone}
+
+## 时间参考点 (Unix 毫秒，请使用这些进行时间计算！)
+- 今天开始 (00:00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 活跃线索 (按最近排序)
+${args.activeThreadsJson}
+
+## 每个线索的最近节点 (忠实上下文)
+${args.threadRecentNodesJson}
+
+## 本批次的新节点 (待分配)
+${args.batchNodesJson}
+
+## 指令
+1. 对于每个新节点，确定最佳的线索分配。
+2. 如果活动延续了该线索，请使用现有的 thread_id。
+3. 如果这显然是一个不同的活动，请使用 "NEW"。
+4. 使用高信息量、丰富的描述更新线索元数据（阶段、关注点、里程碑）。
+5. 仅返回 JSON 对象 - 不要有多余的文字。`;
 
 // =========================================================================
 // Deep Search Prompts
@@ -706,7 +974,99 @@ MUST contain exactly these 4 sections in order:
 5. NEVER invent URLs not visible in evidence.
 6. **CRITICAL**: For each thread in \`long_threads\` input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.`;
 
-const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在 20 分钟时间窗口内的活动。
+
+## 分析维度
+
+- **应用使用**：使用了哪些应用/工具
+- **内容交互**：查看/编辑/决定了什么
+- **目标行为**：追求了什么目标
+- **活动模式**：专注的还是多任务的
+
+## 输出 JSON 模式
+
+{
+  "title": "Debugging auth-service OAuth implementation",
+  "summary": "## 核心任务与项目\\n- Debugging OAuth2 token refresh in auth-service...",
+  "highlights": [
+    "Fixed OAuth token refresh bug",
+    "Updated API documentation"
+  ],
+  "stats": {
+    "top_apps": ["Visual Studio Code", "Google Chrome"],
+    "top_entities": ["auth-service", "OAuth2"]
+  },
+  "events": [
+    {
+      "title": "Debugging OAuth2 implementation",
+      "kind": "debugging",
+      "start_offset_min": 0,
+      "end_offset_min": 15,
+      "confidence": 8,
+      "importance": 7,
+      "description": "Investigating and fixing OAuth2 token refresh issue in auth-service",
+      "node_ids": [123, 124, 125],
+      "thread_id": "uuid-of-long-thread-if-applicable"
+    }
+  ]
+}
+
+## 字段要求
+
+### title (必填, ≤100 字符)
+- 对最重要的活动进行一行总结
+- 包含可识别的项目/任务名称
+
+### summary (必填, Markdown 格式)
+必须按顺序准确包含这 4 个部分：
+
+#### ## 核心任务与项目
+- 包含项目名称的主要工作活动
+- 提取自：文件路径、Git 操作、IDE 标题
+- 如果没有，输出："- 无"
+
+#### ## 关键讨论与决定
+- 协作：Jira, Slack, Teams, PR 审查, 会议
+- 总结关键点和结果
+- 如果没有，输出："- 无"
+
+#### ## 文档
+- Wiki, 文档, Confluence, README, API 文档。
+- **关键点**：如果上下文节点有非空的 \`knowledge_json\`，请使用其特定字段总结其内容：\`content_type\`、\`source_url\`、\`project_or_library\` 和 \`key_insights\`。提供对所学或所引用内容连贯的总结。
+- 排除源代码文件（.ts, .js 等）。
+- 仅在可见时包含 URL。
+- 如果没有，输出："- 无"
+
+#### ## 后续步骤
+- 计划的行动、待办事项
+- 如果没有，输出："- 无"
+
+### highlights (最多 5 个)
+- 关键成就或活动
+- 短字符串 (每个 ≤80 字符)
+
+### stats
+- 输入的 \`stats\` 对象可能包含额外的数字键（例如 \`thread_count\`, \`node_count\`）。
+- 你必须将 \`stats.top_apps\` 和 \`stats.top_entities\` 设置为与输入数组完全匹配。
+- 不要引入新的应用/实体。
+- 不要添加 \`top_apps\` 和 \`top_entities\` 之外的键。
+
+### events (1-3 个候选)
+- 识别时间窗口内不同的活动阶段
+- kind：匹配活动类型
+- start_offset_min / end_offset_min：距离窗口开始的分钟数 (0-20)
+- node_ids：属于此事件的上下文节点 ID
+- **强制性**：对于输入中 \`long_threads\` 的每个线索，你必须使用其 \`thread_id\` 生成一个事件。使用该线索的标题、总结和上下文来生成准确的事件标题和描述。
+- 对于非长线索事件，可以省略 \`thread_id\`
+
+## 硬性规则
+
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 所有声明必须基于提供的上下文节点。
+3. summary 必须以指定的顺序包含准确的 4 个部分。
+4. stats 必须匹配输入 - 不要编造应用/实体。
+5. 绝不编造证据中不可见的 URL。
+6. **关键点**：对于输入中 \`long_threads\` 的每个线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。`;
 
 const ACTIVITY_SUMMARY_USER_PROMPT_EN = (
   args: ActivitySummaryUserPromptArgs
@@ -742,7 +1102,39 @@ ${args.statsJson}
 4. Identify additional distinct activity events (total 1-3 events including long thread events).
 5. Return ONLY the JSON object.`;
 
-const ACTIVITY_SUMMARY_USER_PROMPT_ZH = ACTIVITY_SUMMARY_USER_PROMPT_EN;
+const ACTIVITY_SUMMARY_USER_PROMPT_ZH = (
+  args: ActivitySummaryUserPromptArgs
+) => `总结此 20 分钟窗口内的用户活动。
+
+## 当前时间上下文
+当前 Unix 时间戳 (ms)：${args.nowTs}
+
+## 时间参考点 (Unix 毫秒，请使用这些进行时间计算！)
+- 今天开始 (00:00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 时间窗口
+- 开始：${args.windowStart} (${args.windowStartLocal})
+- 结束：${args.windowEnd} (${args.windowEndLocal})
+
+## 此窗口内的上下文节点
+${args.contextNodesJson}
+
+## 长线索 (必须为这些生成事件)
+${args.longThreadsJson}
+
+## 统计数据
+${args.statsJson}
+
+## 指令
+1. 分析此窗口内的所有上下文节点。
+2. 生成包含准确 4 个部分的综合总结。
+3. **强制性**：对于 “长线索” 中的每个线索，生成一个带有其 thread_id 的事件。
+4. 识别额外的不同活动事件（总计 1-3 个事件，包含长线索事件）。
+5. 仅返回 JSON 对象。`;
 
 const EVENT_DETAILS_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant specializing in long-running task context synthesis.
 
@@ -780,11 +1172,45 @@ The \`details\` field MUST contain exactly these three sections in order:
 3. Use Markdown headings (###) for sections.
 4. Output JSON only. No markdown fences for the JSON itself.`;
 
-const EVENT_DETAILS_SYSTEM_PROMPT_ZH = EVENT_DETAILS_SYSTEM_PROMPT_EN;
+const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手，擅长长时间运行任务的上下文合成。
+
+你的工作：为一个 JSON 对象中封装的长事件（持续时间 ≥ 25 分钟）生成结构化的 Markdown 报告。
+
+## Markdown 结构要求
+
+\`details\` 字段必须按顺序准确包含这三个部分：
+
+### 1. 本阶段工作 (Session Activity)
+- **范围**：仅关注 \`window_nodes\` 中捕捉到的活动（此特定时间窗口）。
+- **内容**：总结用户在本阶段取得的成就、修改的具体文件、做出的关键决定以及遇到的技术问题。
+- **风格**：建议使用列表（Bullet points）。
+
+### 2. 当前最新进度 (Current Status & Progress)
+- **范围**：使用 \`thread_latest_nodes\` 和 \`thread\` 上下文来确定绝对的最新状态。
+- **内容**：此任务/项目的确定性当前状态是什么？总体上已经达到了哪些里程碑？是否存在活跃的阻碍因素或待处理的审查？
+- **风格**：描述性总结。
+
+### 3. 后续关注 (Future Focus & Next Steps)
+- **范围**：基于 \`action_items_json\` 和整体线索轨迹进行推断。
+- **内容**：明确列出用户下一步应该关注的内容。包含帮助用户快速“重拾进度”的上下文。
+- **风格**：可操作的任务列表。
+
+## 质量要求
+
+- **忠实度**：不要编造事实。仅使用提供的上下文节点。
+- **简洁性**：使用高信息密度的语言。避免使用空洞的短语。
+- **上下文感知**：清晰区分“现在”发生的活动与“整体”进度。
+
+## 硬性输出要求
+
+1. 输出必须是一个有效的 JSON 对象：{ "details": "<markdown_内容>" }。
+2. 内部的 Markdown 必须遵循上述三部分大纲。
+3. 对各部分使用 Markdown 标题 (###)。
+4. 仅输出 JSON。不要为 JSON 自身使用 markdown 围栏。`;
 
 const EVENT_DETAILS_USER_PROMPT_EN = (args: EventDetailsUserPromptArgs) => `${args.userPromptJson}`;
 
-const EVENT_DETAILS_USER_PROMPT_ZH = EVENT_DETAILS_USER_PROMPT_EN;
+const EVENT_DETAILS_USER_PROMPT_ZH = (args: EventDetailsUserPromptArgs) => `${args.userPromptJson}`;
 
 export const promptTemplates = {
   getVLMSystemPrompt(): string {

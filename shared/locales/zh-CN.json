@@ -131,11 +131,34 @@
   "captureSourceSettings": {
     "title": "捕获源设置",
     "description": "配置要捕获的屏幕和应用程序",
+    "behavior": {
+      "title": "采集行为",
+      "primaryOnly": {
+        "label": "仅采集主屏",
+        "description": "在采集屏幕模式下只采集主显示器"
+      },
+      "scheduleEnabled": {
+        "label": "启用采集时间表",
+        "description": "在允许时间窗口之外自动暂停采集"
+      },
+      "allowedWindows": {
+        "title": "允许时间窗口",
+        "description": "启用时间表后，仅在这些时间段内运行采集",
+        "start": "开始",
+        "end": "结束",
+        "add": "添加时间段",
+        "remove": "移除",
+        "save": "保存",
+        "invalid": "结束时间必须晚于开始时间"
+      }
+    },
     "screens": {
       "title": "屏幕",
       "selectAll": "全选",
       "deselectAll": "全不选",
       "allScreensHint": "将捕获所有屏幕",
+      "primaryOnlyHint": "已启用仅采集主屏，屏幕选择已禁用",
+      "primaryOnlyTooltip": "已启用仅采集主屏；屏幕选择将被忽略",
       "primary": "主显示器",
       "resolution": "分辨率",
       "noScreens": "没有可用的屏幕"
@@ -291,6 +314,7 @@
       "starting": "正在启动…",
       "resume": "继续采集",
       "start": "开始采集",
+      "stop": "停止采集",
       "openSettings": "打开设置"
     },
     "settings": {

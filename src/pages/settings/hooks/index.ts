@@ -8,3 +8,4 @@
 export { useCaptureScreens } from "./useCaptureScreens";
 export { useCaptureApps } from "./useCaptureApps";
 export { useCapturePreferences } from "./useCapturePreferences";
+export { useUserSettings } from "./useUserSettings";

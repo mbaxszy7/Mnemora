@@ -54,6 +54,10 @@ export const IPC_CHANNELS = {
   CAPTURE_SOURCES_GET_APPS: "capture-sources:get-apps",
   CAPTURE_SOURCES_GET_PREFERENCES: "capture-sources:get-preferences",
   CAPTURE_SOURCES_SET_PREFERENCES: "capture-sources:set-preferences",
+  // User Settings channels
+  USER_SETTINGS_GET: "user-settings:get",
+  USER_SETTINGS_UPDATE: "user-settings:update",
+  USER_SETTINGS_SET_CAPTURE_OVERRIDE: "user-settings:set-capture-override",
   // Context Graph channels
   CONTEXT_SEARCH: "context:search",
   CONTEXT_SEARCH_CANCEL: "context:search:cancel",

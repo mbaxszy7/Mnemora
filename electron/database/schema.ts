@@ -78,6 +78,29 @@ export const llmConfig = sqliteTable("llm_config", {
     .$defaultFn(() => new Date()),
 });
 
+export const userSetting = sqliteTable("user_setting", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+
+  capturePrimaryScreenOnly: integer("capture_primary_screen_only", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  captureScheduleEnabled: integer("capture_schedule_enabled", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  captureAllowedWindowsJson: text("capture_allowed_windows_json")
+    .notNull()
+    .default('[{"start":"10:00","end":"12:00"},{"start":"14:00","end":"18:00"}]'),
+  captureManualOverride: text("capture_manual_override", {
+    enum: ["none", "force_on", "force_off"],
+  })
+    .notNull()
+    .default("none"),
+  captureManualOverrideUpdatedAt: integer("capture_manual_override_updated_at"),
+
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 // ============================================================================
 // Screenshot Processing Tables
 // ============================================================================
@@ -515,6 +538,9 @@ export const llmUsageDailyRollups = sqliteTable(
 // LLM Config types
 export type LLMConfigRecord = typeof llmConfig.$inferSelect;
 export type NewLLMConfigRecord = typeof llmConfig.$inferInsert;
+
+export type UserSettingRecord = typeof userSetting.$inferSelect;
+export type NewUserSettingRecord = typeof userSetting.$inferInsert;
 
 // Screenshot types
 export type ScreenshotRecord = typeof screenshots.$inferSelect;

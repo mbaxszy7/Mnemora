@@ -6,6 +6,7 @@ import {
   Loader2,
   PauseCircle,
   RotateCcw,
+  Square,
   Settings,
   ShieldCheck,
   Sparkles,
@@ -299,6 +300,17 @@ export default function HomePage() {
     }
   }, []);
 
+  const handleStopCapture = useCallback(async () => {
+    setIsPreparingCapture(true);
+    try {
+      await window.screenCaptureApi.stop();
+      const sched = await window.screenCaptureApi.getState();
+      if (sched.success && sched.data) setCaptureState(sched.data);
+    } finally {
+      setIsPreparingCapture(false);
+    }
+  }, []);
+
   const handleRequestPermissions = useCallback(async () => {
     setIsPreparingCapture(true);
     try {
@@ -452,6 +464,16 @@ export default function HomePage() {
                                   : captureStatus === "paused"
                                     ? t("activityMonitor.empty.resume")
                                     : t("activityMonitor.empty.start")}
+                            </Button>
+                          )}
+                          {(captureStatus === "running" || captureStatus === "paused") && (
+                            <Button
+                              variant="destructive"
+                              onClick={handleStopCapture}
+                              disabled={isPreparingCapture}
+                            >
+                              <Square className="h-4 w-4 mr-2" />
+                              {t("activityMonitor.empty.stop", "Stop capture")}
                             </Button>
                           )}
                           <Button variant="outline" onClick={handleOpenSettings}>

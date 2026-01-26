@@ -19,7 +19,7 @@ import { ScreenCaptureScheduler } from "./capture-scheduler";
 import { screenCaptureEventBus } from "./event-bus";
 
 import { saveCaptureToFile, cleanupOldCaptures } from "./capture-storage";
-import { BrowserWindow } from "electron";
+import { BrowserWindow, screen } from "electron";
 import type {
   SchedulerConfig,
   CaptureSchedulerState,
@@ -35,12 +35,15 @@ import { powerMonitorService } from "../power-monitor";
 import { permissionService } from "../permission-service";
 import { llmConfigService } from "../llm-config-service";
 import { CapturePreferencesService } from "../capture-preferences-service";
+import { userSettingService } from "../user-setting-service";
 import type { CapturePreferences } from "@shared/capture-source-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { screenshotProcessingModule } from "../screenshot-processing-alpha/screenshot-processing-module";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { backpressureMonitor } from "./backpressure-monitor";
 import type { BackpressureLevelChangedEvent } from "./types";
+import { shouldCaptureNow } from "@shared/user-settings-utils";
+import { captureScheduleController } from "./capture-schedule-controller";
 
 // const isDev = !!process.env["VITE_DEV_SERVER_URL"];
 
@@ -87,8 +90,35 @@ class ScreenCaptureModule {
       this.logger.info("Screen capture module not prepared, skipping initialization");
       return false;
     }
+
     try {
-      this.start();
+      const settings = await userSettingService.getSettings();
+      const shouldCapture = shouldCaptureNow(settings, new Date());
+      if (!shouldCapture) {
+        this.logger.info(
+          {
+            captureScheduleEnabled: settings.captureScheduleEnabled,
+            captureAllowedWindows: settings.captureAllowedWindows,
+            manualOverride: settings.captureManualOverride,
+          },
+          "Capture schedule disallows capture; skipping initialization"
+        );
+        return false;
+      }
+    } catch (error) {
+      this.logger.warn(
+        { error },
+        "Failed to load user settings for capture gating; proceeding without gating"
+      );
+    }
+
+    try {
+      const state = this.getState();
+      if (state.status === "paused") {
+        this.resume();
+      } else if (state.status !== "running") {
+        this.start();
+      }
       this.logger.info("Screen capture module initialized and started");
       return true;
     } catch (error) {
@@ -132,8 +162,8 @@ class ScreenCaptureModule {
 
     powerMonitorService.registerResumeCallback(() => {
       if (this.getState().status === "paused") {
-        this.resume();
-        this.logger.info("Screen capture resumed on system resume");
+        void captureScheduleController.evaluateNow();
+        this.logger.info("Evaluating capture schedule on system resume");
       }
     });
 
@@ -146,8 +176,8 @@ class ScreenCaptureModule {
 
     powerMonitorService.registerUnlockScreenCallback(() => {
       if (this.getState().status === "paused") {
-        this.resume();
-        this.logger.info("Screen capture resumed on screen unlock");
+        void captureScheduleController.evaluateNow();
+        this.logger.info("Evaluating capture schedule on screen unlock");
       }
     });
 
@@ -198,9 +228,22 @@ class ScreenCaptureModule {
         };
       });
     } else {
+      const settings = await userSettingService.getSettings();
+
+      let selectedScreenIds = effectiveSources.selectedScreens.map(
+        (screenInfo) => screenInfo.displayId
+      );
+      if (settings.capturePrimaryScreenOnly) {
+        try {
+          selectedScreenIds = [screen.getPrimaryDisplay().id.toString()];
+        } catch {
+          // Ignore if screen API not available
+        }
+      }
+
       results = await this.captureService.captureScreens({
         ...this.captureOptions,
-        selectedScreenIds: effectiveSources.selectedScreens.map((screen) => screen.displayId),
+        selectedScreenIds,
       });
     }
 

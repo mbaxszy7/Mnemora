@@ -1,6 +1,16 @@
-import { Suspense, useCallback, useMemo } from "react";
+import { Suspense, useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowLeft, Loader2, RotateCw } from "lucide-react";
@@ -12,7 +22,41 @@ import {
   CAPTURE_PREFERENCES_QUERY_KEY,
   useCapturePreferences,
 } from "./hooks/useCapturePreferences";
+import { USER_SETTINGS_QUERY_KEY, useUserSettings } from "./hooks/useUserSettings";
 import { useQueryClient } from "@tanstack/react-query";
+import type { CaptureAllowedWindow } from "@shared/user-settings-types";
+import { timeStringToMinutes } from "@shared/user-settings-utils";
+
+const TIME_STEP_MINUTES = 5;
+
+const TIME_OPTIONS: string[] = (() => {
+  const times: string[] = [];
+  for (let minutes = 0; minutes < 24 * 60; minutes += TIME_STEP_MINUTES) {
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    times.push(`${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`);
+  }
+  return times;
+})();
+
+const TIME_OPTIONS_WITH_MINUTES = TIME_OPTIONS.map((time) => ({
+  time,
+  minutes: timeStringToMinutes(time) ?? 0,
+}));
+
+const TIME_INDEX = new Map<string, number>(TIME_OPTIONS.map((time, idx) => [time, idx]));
+
+function getNextTime(value: string): string | null {
+  const idx = TIME_INDEX.get(value);
+  if (idx == null) return null;
+  return TIME_OPTIONS[idx + 1] ?? null;
+}
+
+function getPrevTime(value: string): string | null {
+  const idx = TIME_INDEX.get(value);
+  if (idx == null) return null;
+  return TIME_OPTIONS[idx - 1] ?? null;
+}
 
 /**
  * Loading skeleton for the capture source settings page
@@ -61,9 +105,15 @@ function CaptureSourceSettingsSkeleton() {
  * Inner content component that uses Suspense-enabled hooks
  */
 function CaptureSourceSettingsContent() {
+  const { t } = useTranslation();
   const screensQuery = useCaptureScreens();
   const appsQuery = useCaptureApps();
   const { preferences, updatePreferences } = useCapturePreferences();
+  const { settings, updateSettings, isUpdating } = useUserSettings();
+
+  const [draftAllowedWindows, setDraftAllowedWindows] = useState<CaptureAllowedWindow[] | null>(
+    null
+  );
 
   const screens = useMemo(
     () => screensQuery.data?.data?.screens ?? [],
@@ -76,6 +126,95 @@ function CaptureSourceSettingsContent() {
     [preferences?.selectedScreens]
   );
   const selectedApps = useMemo(() => preferences?.selectedApps ?? [], [preferences?.selectedApps]);
+
+  const allowedWindows = useMemo(
+    () => draftAllowedWindows ?? settings.captureAllowedWindows,
+    [draftAllowedWindows, settings.captureAllowedWindows]
+  );
+
+  const isAllowedWindowsValid = useMemo(() => {
+    for (const w of allowedWindows) {
+      const start = timeStringToMinutes(w.start);
+      const end = timeStringToMinutes(w.end);
+      if (start == null || end == null) return false;
+      if (end <= start) return false;
+    }
+    return true;
+  }, [allowedWindows]);
+
+  const handleTogglePrimaryOnly = useCallback(
+    (checked: boolean) => {
+      updateSettings({ capturePrimaryScreenOnly: checked });
+    },
+    [updateSettings]
+  );
+
+  const handleToggleScheduleEnabled = useCallback(
+    (checked: boolean) => {
+      updateSettings({ captureScheduleEnabled: checked });
+    },
+    [updateSettings]
+  );
+
+  const handleAddAllowedWindow = useCallback(() => {
+    setDraftAllowedWindows((prev) => {
+      const base = prev ?? settings.captureAllowedWindows;
+      return [...base, { start: "10:00", end: "12:00" }];
+    });
+  }, [settings.captureAllowedWindows]);
+
+  const handleRemoveAllowedWindow = useCallback(
+    (index: number) => {
+      setDraftAllowedWindows((prev) => {
+        const base = prev ?? settings.captureAllowedWindows;
+        return base.filter((_w, i) => i !== index);
+      });
+    },
+    [settings.captureAllowedWindows]
+  );
+
+  const handleChangeAllowedWindow = useCallback(
+    (index: number, patch: Partial<CaptureAllowedWindow>) => {
+      setDraftAllowedWindows((prev) => {
+        const base = prev ?? settings.captureAllowedWindows;
+        return base.map((w, i) => {
+          if (i !== index) return w;
+
+          const updated: CaptureAllowedWindow = { ...w, ...patch };
+          const startMinutes = timeStringToMinutes(updated.start);
+          const endMinutes = timeStringToMinutes(updated.end);
+          if (startMinutes == null || endMinutes == null) return updated;
+          if (endMinutes > startMinutes) return updated;
+
+          if (patch.start != null) {
+            const nextEnd = getNextTime(updated.start);
+            return nextEnd ? { ...updated, end: nextEnd } : updated;
+          }
+
+          if (patch.end != null) {
+            const prevStart = getPrevTime(updated.end);
+            return prevStart ? { ...updated, start: prevStart } : updated;
+          }
+
+          return updated;
+        });
+      });
+    },
+    [settings.captureAllowedWindows]
+  );
+
+  const handleSaveAllowedWindows = useCallback(() => {
+    if (!settings.captureScheduleEnabled) return;
+    if (!isAllowedWindowsValid) return;
+    updateSettings(
+      { captureAllowedWindows: allowedWindows },
+      {
+        onSuccess: () => {
+          setDraftAllowedWindows(null);
+        },
+      }
+    );
+  }, [allowedWindows, isAllowedWindowsValid, settings.captureScheduleEnabled, updateSettings]);
 
   // Screen selection handlers
   const handleToggleScreen = useCallback(
@@ -136,6 +275,185 @@ function CaptureSourceSettingsContent() {
 
   return (
     <div className="space-y-8">
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("captureSourceSettings.behavior.title", "Capture behavior")}</CardTitle>
+          <CardDescription>
+            {t(
+              "captureSourceSettings.behavior.allowedWindows.description",
+              "Capture will run only during these times when schedule is enabled"
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label className="leading-none">
+                {t(
+                  "captureSourceSettings.behavior.primaryOnly.label",
+                  "Capture primary screen only"
+                )}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  "captureSourceSettings.behavior.primaryOnly.description",
+                  "Only capture the primary display when capturing screens"
+                )}
+              </p>
+            </div>
+            <Switch
+              checked={settings.capturePrimaryScreenOnly}
+              onCheckedChange={handleTogglePrimaryOnly}
+              disabled={isUpdating}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label className="leading-none">
+                {t("captureSourceSettings.behavior.scheduleEnabled.label", "Use capture schedule")}
+              </Label>
+              <p className="text-sm text-muted-foreground">
+                {t(
+                  "captureSourceSettings.behavior.scheduleEnabled.description",
+                  "Automatically pause capture outside your allowed time windows"
+                )}
+              </p>
+            </div>
+            <Switch
+              checked={settings.captureScheduleEnabled}
+              onCheckedChange={handleToggleScheduleEnabled}
+              disabled={isUpdating}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <div className="space-y-1">
+              <Label className="leading-none">
+                {t("captureSourceSettings.behavior.allowedWindows.title", "Allowed time windows")}
+              </Label>
+            </div>
+
+            <div className="space-y-2">
+              {allowedWindows.map((w, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  {(() => {
+                    const startMinutes = timeStringToMinutes(w.start);
+                    const endMinutes = timeStringToMinutes(w.end);
+
+                    const startCandidates = TIME_OPTIONS_WITH_MINUTES.slice(0, -1);
+                    const endCandidates = TIME_OPTIONS_WITH_MINUTES.slice(1);
+
+                    const startOptions = startCandidates
+                      .filter(({ minutes }) => (endMinutes == null ? true : minutes < endMinutes))
+                      .map(({ time }) => time);
+
+                    const endOptions = endCandidates
+                      .filter(({ minutes }) =>
+                        startMinutes == null ? true : minutes > startMinutes
+                      )
+                      .map(({ time }) => time);
+
+                    return (
+                      <div className="grid grid-cols-2 gap-2 flex-1">
+                        <Select
+                          value={w.start}
+                          onValueChange={(value) =>
+                            handleChangeAllowedWindow(idx, { start: value })
+                          }
+                          disabled={!settings.captureScheduleEnabled || isUpdating}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={t(
+                                "captureSourceSettings.behavior.allowedWindows.start",
+                                "Start"
+                              )}
+                            />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[260px]">
+                            {startOptions.map((time) => (
+                              <SelectItem key={time} value={time}>
+                                {time}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Select
+                          value={w.end}
+                          onValueChange={(value) => handleChangeAllowedWindow(idx, { end: value })}
+                          disabled={!settings.captureScheduleEnabled || isUpdating}
+                        >
+                          <SelectTrigger>
+                            <SelectValue
+                              placeholder={t(
+                                "captureSourceSettings.behavior.allowedWindows.end",
+                                "End"
+                              )}
+                            />
+                          </SelectTrigger>
+                          <SelectContent className="max-h-[260px]">
+                            {endOptions.map((time) => (
+                              <SelectItem key={time} value={time}>
+                                {time}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    );
+                  })()}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRemoveAllowedWindow(idx)}
+                    disabled={!settings.captureScheduleEnabled || isUpdating}
+                  >
+                    {t("captureSourceSettings.behavior.allowedWindows.remove", "Remove")}
+                  </Button>
+                </div>
+              ))}
+            </div>
+
+            {!isAllowedWindowsValid && settings.captureScheduleEnabled ? (
+              <div className="text-sm text-destructive">
+                {t(
+                  "captureSourceSettings.behavior.allowedWindows.invalid",
+                  "End time must be later than start time"
+                )}
+              </div>
+            ) : null}
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleAddAllowedWindow}
+                disabled={!settings.captureScheduleEnabled || isUpdating}
+              >
+                {t("captureSourceSettings.behavior.allowedWindows.add", "Add window")}
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveAllowedWindows}
+                disabled={
+                  !settings.captureScheduleEnabled ||
+                  draftAllowedWindows == null ||
+                  !isAllowedWindowsValid ||
+                  isUpdating
+                }
+              >
+                {t("captureSourceSettings.behavior.allowedWindows.save", "Save")}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Separator />
+
       {/* Screen Selector */}
       <ScreenSelector
         screens={screens}
@@ -143,6 +461,7 @@ function CaptureSourceSettingsContent() {
         onToggleScreen={handleToggleScreen}
         onSelectAll={handleSelectAllScreens}
         onDeselectAll={handleDeselectAllScreens}
+        selectionDisabled={settings.capturePrimaryScreenOnly}
       />
 
       <Separator />
@@ -181,6 +500,7 @@ export default function CaptureSourceSettings() {
       queryClient.invalidateQueries({ queryKey: CAPTURE_SCREENS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: CAPTURE_APPS_QUERY_KEY }),
       queryClient.invalidateQueries({ queryKey: CAPTURE_PREFERENCES_QUERY_KEY }),
+      queryClient.invalidateQueries({ queryKey: USER_SETTINGS_QUERY_KEY }),
     ]);
   }, [queryClient]);
 

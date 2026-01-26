@@ -9,20 +9,23 @@ export interface ScreenCardProps {
   screen: ScreenInfo;
   isSelected: boolean;
   onToggle: (screenId: string) => void;
+  disabled?: boolean;
 }
 
 /**
  * ScreenCard component displays a screen with thumbnail, name, resolution,
  * and primary display indicator. Supports selection interaction.
  */
-export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
+export function ScreenCard({ screen, isSelected, onToggle, disabled = false }: ScreenCardProps) {
   const { t } = useTranslation();
 
   const handleClick = () => {
+    if (disabled) return;
     onToggle(screen.id);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (disabled) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onToggle(screen.id);
@@ -32,12 +35,13 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
   return (
     <Card
       role="button"
-      tabIndex={0}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : 0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
       className={cn(
         "relative overflow-hidden cursor-pointer transition-all border-2",
-        "hover:border-primary/50 hover:shadow-md",
+        disabled ? "cursor-not-allowed opacity-60" : "hover:border-primary/50 hover:shadow-md",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
         isSelected ? "border-primary bg-primary/5" : "border-border"
       )}
@@ -58,7 +62,11 @@ export function ScreenCard({ screen, isSelected, onToggle }: ScreenCardProps) {
             checked={isSelected}
             className="bg-background/80 backdrop-blur-sm border-primary"
             onClick={(e) => e.stopPropagation()}
-            onCheckedChange={() => onToggle(screen.id)}
+            onCheckedChange={() => {
+              if (disabled) return;
+              onToggle(screen.id);
+            }}
+            disabled={disabled}
           />
         </div>
 

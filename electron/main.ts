@@ -10,6 +10,7 @@ import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
 import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
 import { registerPermissionHandlers } from "./ipc/permission-handlers";
 import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
+import { registerUserSettingsHandlers } from "./ipc/user-settings-handlers";
 import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
 import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
@@ -18,7 +19,7 @@ import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
-import { screenCaptureModule } from "./services/screen-capture";
+import { captureScheduleController, screenCaptureModule } from "./services/screen-capture";
 import { screenshotProcessingModule } from "./services/screenshot-processing-alpha/screenshot-processing-module";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
@@ -250,6 +251,7 @@ class AppLifecycleController {
     registerScreenCaptureHandlers();
     registerPermissionHandlers();
     registerCaptureSourceSettingsHandlers();
+    registerUserSettingsHandlers();
     registerContextGraphHandlers();
     registerUsageHandlers();
     registerActivityMonitorHandlers();
@@ -284,6 +286,8 @@ class AppLifecycleController {
     this.registerIPCHandlers();
     // 2. Initialize database (critical, must succeed)
     this.initDatabaseService();
+    captureScheduleController.initialize({ screenCapture: screenCaptureModule });
+    captureScheduleController.start();
     // 3. Initialize i18n (required before UI)
     await this.initI18nService();
     // 4. Initialize AI service from database (non-critical, can fail gracefully)
@@ -301,6 +305,7 @@ class AppLifecycleController {
     this.disposed = true;
 
     TrayService.resetInstance();
+    captureScheduleController.stop();
     screenCaptureModule.dispose();
     powerMonitorService.dispose();
     monitoringServer.stop();

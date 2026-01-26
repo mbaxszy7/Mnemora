@@ -6,7 +6,9 @@ import { getLogger } from "./logger";
 import { APP_ROOT, RENDERER_DIST } from "../env";
 import { llmUsageService } from "./llm-usage-service";
 import { IPC_CHANNELS } from "@shared/ipc-types";
+import { userSettingService } from "./user-setting-service";
 import {
+  captureScheduleController,
   screenCaptureEventBus,
   screenCaptureModule,
   type CaptureSchedulerState,
@@ -219,13 +221,25 @@ export class TrayService {
   }
 
   private handleToggleRecording(): void {
+    void this.handleToggleRecordingAsync();
+  }
+
+  private async handleToggleRecordingAsync(): Promise<void> {
     const isRunning = this.schedulerStatus === "running";
-    if (isRunning) {
-      this.logger.info("Stopping screen capture from tray");
-      screenCaptureModule.stop();
-    } else {
+
+    try {
+      if (isRunning) {
+        this.logger.info("Stopping screen capture from tray");
+        await userSettingService.setCaptureManualOverride("force_off");
+        screenCaptureModule.stop();
+        return;
+      }
+
       this.logger.info("Starting screen capture from tray");
-      screenCaptureModule.tryInitialize();
+      await userSettingService.setCaptureManualOverride("force_on");
+      await captureScheduleController.evaluateNow();
+    } catch (error) {
+      this.logger.error({ error }, "Failed to toggle screen capture from tray");
     }
   }
 

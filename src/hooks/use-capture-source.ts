@@ -11,7 +11,7 @@ export function useInitServices() {
     if (captureServicesInitialized) return;
     try {
       const result = await window.captureSourceApi.initServices();
-      if (result.success) {
+      if (result.success && result.data === true) {
         captureServicesInitialized = true;
         console.log("Capture services initialized");
       }

@@ -10,7 +10,8 @@
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { SchedulerConfigPayload, SchedulerStatePayload } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { screenCaptureModule } from "../services/screen-capture";
+import { captureScheduleController, screenCaptureModule } from "../services/screen-capture";
+import { userSettingService } from "../services/user-setting-service";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("screen-capture-handlers");
@@ -27,8 +28,8 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<void>> => {
       try {
         logger.info("IPC: Starting screen capture scheduler");
-        const module = screenCaptureModule;
-        module.start();
+        await userSettingService.setCaptureManualOverride("force_on");
+        await captureScheduleController.evaluateNow();
         return { success: true };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to start screen capture scheduler");
@@ -42,6 +43,7 @@ export function registerScreenCaptureHandlers(): void {
     try {
       logger.info("IPC: Stopping screen capture scheduler");
       const module = screenCaptureModule;
+      await userSettingService.setCaptureManualOverride("force_off");
       module.stop();
       return { success: true };
     } catch (error) {
@@ -72,8 +74,8 @@ export function registerScreenCaptureHandlers(): void {
     async (): Promise<IPCResult<void>> => {
       try {
         logger.info("IPC: Resuming screen capture scheduler");
-        const module = screenCaptureModule;
-        module.resume();
+        await userSettingService.setCaptureManualOverride("force_on");
+        await captureScheduleController.evaluateNow();
         return { success: true };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to resume screen capture scheduler");

@@ -14,6 +14,11 @@ import type {
 } from "@shared/capture-source-types";
 import type { PermissionCheckResult } from "@shared/ipc-types";
 import type {
+  CaptureManualOverride,
+  UpdateUserSettingsRequest,
+  UserSettingsResponse,
+} from "@shared/user-settings-types";
+import type {
   SearchQuery,
   SearchResult,
   ExpandedContextNode,
@@ -193,6 +198,30 @@ const screenCaptureApi: ScreenCaptureApi = {
 };
 
 contextBridge.exposeInMainWorld("screenCaptureApi", screenCaptureApi);
+
+export interface UserSettingsApi {
+  get(): Promise<IPCResult<UserSettingsResponse>>;
+  update(settings: UpdateUserSettingsRequest["settings"]): Promise<IPCResult<UserSettingsResponse>>;
+  setCaptureOverride(mode: CaptureManualOverride): Promise<IPCResult<UserSettingsResponse>>;
+}
+
+const userSettingsApi: UserSettingsApi = {
+  async get(): Promise<IPCResult<UserSettingsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USER_SETTINGS_GET);
+  },
+
+  async update(
+    settings: UpdateUserSettingsRequest["settings"]
+  ): Promise<IPCResult<UserSettingsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USER_SETTINGS_UPDATE, { settings });
+  },
+
+  async setCaptureOverride(mode: CaptureManualOverride): Promise<IPCResult<UserSettingsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USER_SETTINGS_SET_CAPTURE_OVERRIDE, { mode });
+  },
+};
+
+contextBridge.exposeInMainWorld("userSettingsApi", userSettingsApi);
 
 // --------- Expose Capture Source Settings API to the Renderer process ---------
 export interface CaptureSourceApi {

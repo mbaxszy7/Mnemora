@@ -85,6 +85,27 @@ interface Window {
       callback: (payload: import("../shared/ipc-types").SchedulerStatePayload) => void
     ): () => void;
   };
+  userSettingsApi: {
+    get(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/user-settings-types").UserSettingsResponse
+      >
+    >;
+    update(
+      settings: import("../shared/user-settings-types").UpdateUserSettingsRequest["settings"]
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/user-settings-types").UserSettingsResponse
+      >
+    >;
+    setCaptureOverride(
+      mode: import("../shared/user-settings-types").CaptureManualOverride
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/user-settings-types").UserSettingsResponse
+      >
+    >;
+  };
   captureSourceApi: {
     initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     getScreens(): Promise<

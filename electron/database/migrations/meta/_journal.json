@@ -57,6 +57,13 @@
       "when": 1768924468715,
       "tag": "0007_milky_thaddeus_ross",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1769358378315,
+      "tag": "0008_equal_brother_voodoo",
+      "breakpoints": true
     }
   ]
 }

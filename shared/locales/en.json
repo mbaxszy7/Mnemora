@@ -131,11 +131,34 @@
   "captureSourceSettings": {
     "title": "Capture Source Settings",
     "description": "Configure which screens and applications to capture",
+    "behavior": {
+      "title": "Capture behavior",
+      "primaryOnly": {
+        "label": "Capture primary screen only",
+        "description": "Only capture the primary display when capturing screens"
+      },
+      "scheduleEnabled": {
+        "label": "Use capture schedule",
+        "description": "Automatically pause capture outside your allowed time windows"
+      },
+      "allowedWindows": {
+        "title": "Allowed time windows",
+        "description": "Capture will run only during these times when schedule is enabled",
+        "start": "Start",
+        "end": "End",
+        "add": "Add window",
+        "remove": "Remove",
+        "save": "Save",
+        "invalid": "End time must be later than start time"
+      }
+    },
     "screens": {
       "title": "Screens",
       "selectAll": "Select All",
       "deselectAll": "Deselect All",
       "allScreensHint": "All screens will be captured",
+      "primaryOnlyHint": "Primary screen only is enabled; screen selection is disabled",
+      "primaryOnlyTooltip": "Primary screen only is enabled; screen selection will be ignored",
       "primary": "Primary",
       "resolution": "Resolution",
       "noScreens": "No screens available"
@@ -290,6 +313,7 @@
       "starting": "Starting…",
       "resume": "Resume capture",
       "start": "Start capture",
+      "stop": "Stop capture",
       "openSettings": "Open Settings"
     },
     "settings": {

@@ -3,6 +3,7 @@ import type {
   AppContextPayload,
   KnowledgePayload,
   StateSnapshotPayload,
+  ActionItemPayload,
   EntityRef,
 } from "@shared/context-types";
 
@@ -112,6 +113,7 @@ export interface UpsertNodeInput {
   appContext: AppContextPayload;
   knowledge: KnowledgePayload | null;
   stateSnapshot: StateSnapshotPayload | null;
+  actionItems: ActionItemPayload[] | null;
   uiTextSnippets: string[];
   keywords: string[];
   entities: EntityRef[];

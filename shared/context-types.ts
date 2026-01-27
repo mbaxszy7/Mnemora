@@ -63,11 +63,24 @@ export interface StateSnapshotPayload {
   currentState: string;
   metrics?: Record<string, string | number>;
   issue?: {
-    detected?: boolean;
-    type?: "error" | "bug" | "blocker" | "question" | "warning";
-    description?: string;
-    severity?: number;
+    detected?: boolean | null;
+    type?: "error" | "bug" | "blocker" | "question" | "warning" | null;
+    description?: string | null;
+    severity?: number | null;
   } | null;
+}
+
+/**
+ * Action item extracted from screenshot
+ * VLM identifies TODOs or next steps visible on screen
+ */
+export interface ActionItemPayload {
+  /** The action to be taken */
+  action: string;
+  /** Priority level */
+  priority?: "high" | "medium" | "low";
+  /** Whether explicitly shown or inferred from context */
+  source: "explicit" | "inferred";
 }
 
 export interface ThreadSnapshot {

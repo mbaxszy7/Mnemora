@@ -1,0 +1,1 @@
+ALTER TABLE `context_nodes` ADD `action_items_json` text;

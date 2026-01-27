@@ -137,9 +137,20 @@
   --sidebar-ring: hsl(217.2 91.2% 59.8%);
 }
 
+/* Electron dragging utilities */
+.drag-region {
+  -webkit-app-region: drag;
+}
+
+.no-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* Base styles */
-* {
-  border-color: hsl(var(--border));
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
 }
 
 body {

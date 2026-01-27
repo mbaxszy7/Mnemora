@@ -403,6 +403,7 @@ export class BatchVlmScheduler extends BaseScheduler {
         appContext: node.appContext,
         knowledge: node.knowledge,
         stateSnapshot: node.stateSnapshot,
+        actionItems: node.actionItems,
         uiTextSnippets: node.uiTextSnippets,
         keywords: node.keywords,
         entities: node.entities,

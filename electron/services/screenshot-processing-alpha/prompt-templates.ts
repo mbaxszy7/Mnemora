@@ -166,7 +166,9 @@ Your goal: Analyze each screenshot and extract structured information. Output ON
 
 ### action_items (optional)
 - Only if explicit TODOs/next steps are visible
+- priority: "high" | "medium" | "low"
 - source: "explicit" or "inferred"
+- action: Action description
 
 ### ui_text_snippets (max 5, each ≤200 chars)
 - High-signal UI text: headers, key messages, errors
@@ -189,6 +191,8 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
 
 你的目标：分析每张截图并提取结构化信息。每张截图输出一个上下文节点。
 
+**重要：你必须使用中文回复所有文本字段（title、summary、description 等）。**
+
 ## 核心原则
 
 1. **一对一映射**：每张截图产生且仅产生一个上下文节点。
@@ -202,8 +206,8 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
   "nodes": [
     {
       "screenshot_index": 1,
-      "title": "current_user debugging TypeScript compilation error in auth-service",
-      "summary": "current_user viewing VS Code with TypeScript compilation error in auth-service project, the error indicates a missing property on AuthResponse type",
+      "title": "current_user 正在调试 auth-service 中的 TypeScript 编译错误",
+      "summary": "current_user 正在查看 VS Code 中 auth-service 项目的 TypeScript 编译错误，错误提示 AuthResponse 类型缺少属性",
       "app_context": {
         "app_hint": "Visual Studio Code",
         "window_title": "auth.ts - auth-service",
@@ -212,12 +216,12 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
       "knowledge": null,
       "state_snapshot": {
         "subject_type": "error",
-        "subject": "TypeScript Compilation",
-        "current_state": "failed with 1 error",
+        "subject": "TypeScript 编译",
+        "current_state": "失败，1 个错误",
         "issue": {
           "detected": true,
           "type": "error",
-          "description": "Property 'refreshToken' does not exist on type 'AuthResponse'",
+          "description": "类型 'AuthResponse' 上不存在属性 'refreshToken'",
           "severity": 3
         }
       },
@@ -226,24 +230,24 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
         { "name": "AuthResponse", "type": "other" }
       ],
       "action_items": [
-        { "action": "Add refreshToken property to AuthResponse interface", "priority": "high", "source": "inferred" }
+        { "action": "在 AuthResponse 接口中添加 refreshToken 属性", "priority": "high", "source": "inferred" }
       ],
       "ui_text_snippets": ["Property 'refreshToken' does not exist on type 'AuthResponse'", "TS2339"],
       "importance": 7,
       "confidence": 9,
-      "keywords": ["TypeScript", "compilation error", "auth-service"]
+      "keywords": ["TypeScript", "编译错误", "auth-service"]
     }
   ]
 }
 
 ## 字段要求
 
-### title (必填, ≤100 字符)
+### title (必填, ≤100 字符, 中文)
 - 必须以 "current_user" 作为主体开头
 - 当可识别时，必须包含项目/仓库名称
 - 面向行动：描述用户正在做什么
 
-### summary (必填, ≤500 字符)
+### summary (必填, ≤500 字符, 中文)
 - 活动的详细描述
 - 包含：正在使用的应用、具体任务、进度指示符、关键标识符
 
@@ -260,23 +264,25 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
 
 ### state_snapshot (可选)
 - 如果可见仪表板/指标/构建状态或问题，请填充
-- issue：如果检测到错误/Bug/阻碍/警告，请填写 issue 对象
+- issue：如果检测到错误/Bug/阻碍/警告，请填写 issue 对象（description 用中文）
 
 ### entities (最多 10 个)
 - 仅命名实体；排除通用术语
 - type 必须是以下之一：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
 - 如果可见，请包含 raw/confidence
 
-### action_items (可选)
+### action_items (可选, 中文)
 - 仅当可见明确的待办事项/下一步时
+- priority: "high" | "medium" | "low"
 - source: "explicit" 或 "inferred"
+- action 字段使用中文描述
 
 ### ui_text_snippets (最多 5 个, 每个 ≤200 字符)
-- 高信号 UI 文本：标题、关键消息、错误
+- 高信号 UI 文本：标题、关键消息、错误（保留原始语言）
 
 ### importance/confidence (0-10)
 
-### keywords (最多 5 个)
+### keywords (最多 5 个, 可中英混合)
 
 ## 硬性规则
 1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
@@ -286,7 +292,8 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
 5. 绝不幻觉事实。
 6. 如果没有 knowledge 内容，设置 knowledge: null。
 7. 如果没有状态快照，设置 state_snapshot: null。
-8. 如果没有行动项，设置 action_items: null。`;
+8. 如果没有行动项，设置 action_items: null。
+9. **所有描述性文本字段必须使用中文。**`;
 
 const VLM_USER_PROMPT_EN = (
   args: VLMUserPromptArgs
@@ -318,7 +325,7 @@ ${args.appCandidatesJson}
   - Do NOT identify "Visual Studio Code" as a user project - it is an IDE app.
   - Do NOT identify "Google Chrome" or "Arc" as a user project - they are browsers.
 - If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
-- If you cannot confidently map to one canonical app, set app_hint to "unknown" or "other" with low confidence.
+- If you cannot confidently map to one canonical app, set app_hint to null.
 
 ## Instructions
 1. Review all screenshots in order (1..${args.count}).
@@ -355,7 +362,7 @@ ${args.appCandidatesJson}
   - 不要将 "Visual Studio Code" 识别为用户项目 - 它是一个 IDE 应用。
   - 不要将 "Google Chrome" 或 "Arc" 识别为用户项目 - 它们是浏览器。
 - 如果 UI 显示别名如 "Chrome"、"google chrome"、"arc" 等，请将其映射到规范的应用名称。
-- 如果无法自信地映射到一个规范应用，请使用低置信度设置 app_hint 为 "unknown" 或 "other"。
+- 如果无法自信地映射到一个规范应用，请将 app_hint 设置为 null。
 
 ## 指令
 1. 按顺序审查所有截图 (1..${args.count})。
@@ -459,9 +466,11 @@ const THREAD_LLM_SYSTEM_PROMPT_EN = `You are an activity thread analyzer. Your t
 
 const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的任务是将上下文节点组织成连贯的活动线索（Threads）。
 
+**重要：你必须使用中文回复所有文本字段（title、summary、reason、current_phase、current_focus、milestones 等）。**
+
 ## 核心概念
 
-- **Thread (线索)**：相关用户活动的连续流（例如，“正在进行 auth-service 重构”）
+- **Thread (线索)**：相关用户活动的连续流（例如，"正在进行 auth-service 重构"）
 - **Node (节点)**：来自单张截图的单个活动快照
 - **Assignment (分配)**：将节点连接到现有的或新的线索
 
@@ -485,29 +494,29 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
     {
       "node_index": 0,
       "thread_id": "existing-uuid-here",
-      "reason": "Continues auth-service debugging from earlier"
+      "reason": "延续之前的 auth-service 调试工作"
     },
     {
       "node_index": 1,
       "thread_id": "NEW",
-      "reason": "New activity: researching database optimization"
+      "reason": "新活动：研究数据库优化方案"
     }
   ],
   "thread_updates": [
     {
       "thread_id": "existing-uuid-here",
-      "current_phase": "debugging",
-      "current_focus": "OAuth2 token refresh issue"
+      "current_phase": "正在调试 OAuth2 token 刷新逻辑",
+      "current_focus": "解决 token 刷新时的竞态条件问题"
     }
   ],
   "new_threads": [
     {
-      "title": "Researching PostgreSQL optimization",
-      "summary": "Exploring database query optimization techniques for the analytics pipeline",
-      "current_phase": "research",
+      "title": "研究 PostgreSQL 查询优化",
+      "summary": "探索分析管道的数据库查询优化技术，提升查询性能",
+      "current_phase": "技术调研阶段",
       "node_indices": [1],
       "milestones": [
-        "Started researching PostgreSQL query optimization techniques for analytics pipeline"
+        "开始研究 PostgreSQL 查询优化技术以改进分析管道性能"
       ]
     }
   ]
@@ -518,22 +527,22 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 ### assignments (必填，每个输入节点对应一个)
 - node_index：必须匹配输入批次节点的索引（从 0 开始）
 - thread_id：使用 active_threads 中确切的 UUID，或对于新线索使用 "NEW"
-- reason：简要说明 (≤100 字符) 为什么这样分配是合理的
+- reason：简要说明为什么这样分配是合理的（**用中文**）
 
-### thread_updates (可选)
+### thread_updates (可选, 所有文本字段用中文)
 - 仅当节点活动改变了线索状态时包含
-- title：如果活动揭示了更好的线索描述，请更新
-- summary：更新以反映最新进展
-- current_phase: coding, debugging, reviewing, deploying, researching, meeting 等。必须是高信息量的文本（例如，“Designing OAuth2 refresh logic” 而不仅仅是 “coding”）。
-- current_focus：当前具体的关注领域（高信息量）
-- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，“Successfully resolved the auth-service token refresh race condition after 2 hours of debugging”）。
+- title：如果活动揭示了更好的线索描述，请更新（中文）
+- summary：更新以反映最新进展（中文）
+- current_phase：必须是高信息量的文本（例如，"正在设计 OAuth2 刷新逻辑" 而不仅仅是 "编码"）
+- current_focus：当前具体的关注领域（高信息量，中文）
+- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，"经过 2 小时的调试，成功解决了 auth-service 的 token 刷新竞态条件"）
 
 ### new_threads (如果任何节点的 thread_id 为 "NEW"，则必填)
-- title：描述性标题 (≤100 字符)
-- summary：该线索的内容 (≤300 字符)
-- current_phase：初始阶段
+- title：描述性标题（中文）
+- summary：该线索的内容（中文）
+- current_phase：初始阶段（中文）
 - node_indices：分配给此新线索的所有节点
-- milestones：初始里程碑（丰富的描述）。必须是一个数组（可以为空）。
+- milestones：初始里程碑（丰富的描述，中文）。必须是一个数组（可以为空）。
 
 ## 硬性规则
 
@@ -546,7 +555,8 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 7. assignments 必须按 node_index 升序排序。
 8. 仅使用 Active Threads 输入中出现的 thread_id 值；不要发明 UUID。
 9. 优先减少线索数量：如果多个批次节点描述相同的活动，请将它们归类到一个 new_threads 条目中。
-10. new_threads[].node_indices 必须准确包含分配给该新线索的节点（不得有多余节点，也不得缺失节点）。`;
+10. new_threads[].node_indices 必须准确包含分配给该新线索的节点（不得有多余节点，也不得缺失节点）。
+11. **所有描述性文本字段必须使用中文。**`;
 
 const THREAD_LLM_USER_PROMPT_EN = (
   args: ThreadLLMUserPromptArgs
@@ -657,6 +667,8 @@ const QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN = `You are a search query analyzer. Y
 
 const QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH = `你是一个搜索查询分析器。你的任务是解析用户的自然语言查询并提取结构化的搜索参数。
 
+**重要：embedding_text 和 time_range_reasoning 字段必须使用中文。**
+
 ## 输出模式 (仅 JSON)
 
 {
@@ -733,6 +745,8 @@ You will receive:
 - If no relevant information is found, set confidence to 0.1 and explain in the answer.`;
 
 const ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH = `你是一个上下文感知的答案合成器。你的任务是根据搜索结果生成简洁、准确的答案。
+
+**重要：你必须使用中文回复所有文本字段（answer_title、answer、bullets、quote 等）。**
 
 ## 输入
 
@@ -976,6 +990,8 @@ MUST contain exactly these 4 sections in order:
 
 const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在 20 分钟时间窗口内的活动。
 
+**重要：你必须使用中文回复所有文本字段（title、summary、highlights、description 等）。**
+
 ## 分析维度
 
 - **应用使用**：使用了哪些应用/工具
@@ -986,11 +1002,11 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 ## 输出 JSON 模式
 
 {
-  "title": "Debugging auth-service OAuth implementation",
-  "summary": "## 核心任务与项目\\n- Debugging OAuth2 token refresh in auth-service...",
+  "title": "调试 auth-service 的 OAuth 实现",
+  "summary": "## 核心任务与项目\\n- 在 auth-service 中调试 OAuth2 token 刷新问题...",
   "highlights": [
-    "Fixed OAuth token refresh bug",
-    "Updated API documentation"
+    "修复了 OAuth token 刷新 bug",
+    "更新了 API 文档"
   ],
   "stats": {
     "top_apps": ["Visual Studio Code", "Google Chrome"],
@@ -998,13 +1014,13 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
   },
   "events": [
     {
-      "title": "Debugging OAuth2 implementation",
+      "title": "调试 OAuth2 实现",
       "kind": "debugging",
       "start_offset_min": 0,
       "end_offset_min": 15,
       "confidence": 8,
       "importance": 7,
-      "description": "Investigating and fixing OAuth2 token refresh issue in auth-service",
+      "description": "调查并修复 auth-service 中的 OAuth2 token 刷新问题",
       "node_ids": [123, 124, 125],
       "thread_id": "uuid-of-long-thread-if-applicable"
     }
@@ -1173,6 +1189,8 @@ The \`details\` field MUST contain exactly these three sections in order:
 4. Output JSON only. No markdown fences for the JSON itself.`;
 
 const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手，擅长长时间运行任务的上下文合成。
+
+**重要：你必须使用中文撰写 Markdown 报告内容。**
 
 你的工作：为一个 JSON 对象中封装的长事件（持续时间 ≥ 25 分钟）生成结构化的 Markdown 报告。
 

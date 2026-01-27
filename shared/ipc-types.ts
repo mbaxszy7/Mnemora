@@ -78,6 +78,11 @@ export const IPC_CHANNELS = {
   // AI Failure Circuit Breaker
   AI_FAILURE_FUSE_TRIPPED: "ai:fuse-tripped",
   MONITORING_OPEN_DASHBOARD: "monitoring:open-dashboard",
+  // App channels
+  APP_UPDATE_TITLE_BAR: "app:update-title-bar",
+  // Screen Capture Real-time events
+  SCREEN_CAPTURE_CAPTURING_STARTED: "screen-capture:capturing-started",
+  SCREEN_CAPTURE_CAPTURING_FINISHED: "screen-capture:capturing-finished",
 } as const;
 
 /**
@@ -156,6 +161,14 @@ export interface PermissionCheckResult {
 
 export interface MonitoringOpenDashboardResult {
   url: string;
+}
+
+/**
+ * App Title Bar Payload
+ */
+export interface AppUpdateTitleBarPayload {
+  backgroundColor: string;
+  symbolColor: string;
 }
 
 export type IPCChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];

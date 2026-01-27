@@ -1,4 +1,4 @@
-import { app, BrowserWindow, nativeImage, screen } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, screen } from "electron";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { existsSync } from "node:fs";
@@ -15,6 +15,7 @@ import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
 import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
 import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
+import { registerAppHandlers } from "./ipc/app-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -104,6 +105,7 @@ class AppLifecycleController {
     });
 
     await app.whenReady();
+    Menu.setApplicationMenu(null);
 
     initializeLogger();
     this.logger = getLogger("main");
@@ -162,6 +164,16 @@ class AppLifecycleController {
       webPreferences: {
         preload: path.join(MAIN_DIST, "preload.mjs"),
       },
+      autoHideMenuBar: true,
+      titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+      titleBarOverlay:
+        process.platform === "win32"
+          ? {
+              color: "#00000000",
+              symbolColor: "#999999",
+              height: 36,
+            }
+          : false,
     });
 
     // Set dock icon on macOS (persistent)
@@ -256,6 +268,7 @@ class AppLifecycleController {
     registerUsageHandlers();
     registerActivityMonitorHandlers();
     registerMonitoringHandlers();
+    registerAppHandlers();
     this.logger.info("IPC handlers registered");
   }
   private initPowerMonitor(): void {

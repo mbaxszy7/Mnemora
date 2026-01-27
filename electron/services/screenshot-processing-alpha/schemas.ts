@@ -127,21 +127,22 @@ export const StateSnapshotSchema = z
     metrics: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
     issue: z
       .object({
-        detected: z.boolean().optional(),
+        detected: z.boolean().nullable().optional(),
         type: z
           .preprocess(
             (val) => {
+              if (val === null || val === undefined) return null;
               if (typeof val !== "string") return "warning";
               const s = val.toLowerCase();
               if (["error", "bug", "blocker", "question", "warning"].includes(s)) return s;
               if (s.includes("fail") || s.includes("err")) return "error";
               return "warning";
             },
-            z.enum(["error", "bug", "blocker", "question", "warning"])
+            z.enum(["error", "bug", "blocker", "question", "warning"]).nullable()
           )
           .optional(),
-        description: z.string().optional(),
-        severity: z.number().optional(),
+        description: z.string().nullable().optional(),
+        severity: z.number().nullable().optional(),
       })
       .nullable()
       .optional(),
@@ -281,13 +282,13 @@ export type VLMScreenshotMeta = {
 const ThreadAssignmentSchema = z.object({
   node_index: z.number().int().nonnegative(),
   thread_id: z.string().min(1),
-  reason: z.string().max(100),
+  reason: z.string(),
 });
 
 const ThreadUpdateSchema = z.object({
   thread_id: z.string().min(1),
-  title: z.string().max(100).optional(),
-  summary: z.string().max(300).optional(),
+  title: z.string().optional(),
+  summary: z.string().optional(),
   current_phase: z.string().optional(),
   current_focus: z.string().optional(),
   new_milestone: z
@@ -302,8 +303,8 @@ const ThreadUpdateSchema = z.object({
 });
 
 const NewThreadSchema = z.object({
-  title: z.string().max(100),
-  summary: z.string().max(300),
+  title: z.string(),
+  summary: z.string(),
   current_phase: z.string().optional(),
   node_indices: z.array(z.number().int().nonnegative()),
   milestones: z.array(z.string()),
@@ -372,7 +373,7 @@ const ActivityEventCandidateSchema = z.object({
   importance: z.number(),
   description: z.string(),
   node_ids: z.array(z.number().int().positive()),
-  thread_id: z.string().optional(),
+  thread_id: z.string().nullable().optional(),
 });
 
 export const ActivityWindowSummaryLLMSchema = z.object({
@@ -428,15 +429,17 @@ export const SearchQueryPlanSchema = z.object({
           start: z.number(),
           end: z.number(),
         })
+        .nullable()
         .optional(),
-      app_hint: z.string().optional(),
-      entities: z.array(z.string()).optional(),
+      app_hint: z.string().nullable().optional(),
+      entities: z.array(z.string()).nullable().optional(),
     })
+    .nullable()
     .optional(),
-  kind_hint: z.enum(CONTEXT_KIND_VALUES).optional(),
-  extracted_entities: z.array(EntityRefSchema).optional(),
-  keywords: z.array(z.string()).optional(),
-  time_range_reasoning: z.string().optional(),
+  kind_hint: z.enum(CONTEXT_KIND_VALUES).nullable().optional(),
+  extracted_entities: z.array(EntityRefSchema).nullable().optional(),
+  keywords: z.array(z.string()).nullable().optional(),
+  time_range_reasoning: z.string().nullable().optional(),
   confidence: z.number(),
 });
 
@@ -460,9 +463,9 @@ export const SearchQueryPlanProcessedSchema = SearchQueryPlanSchema.transform((v
 
   if (val.filters_patch) {
     result.filtersPatch = {
-      timeRange: val.filters_patch.time_range,
-      appHint: val.filters_patch.app_hint,
-      entities: normalizeEntityNames(val.filters_patch.entities),
+      timeRange: val.filters_patch.time_range ?? undefined,
+      appHint: val.filters_patch.app_hint ?? undefined,
+      entities: normalizeEntityNames(val.filters_patch.entities ?? undefined),
     };
     if (
       result.filtersPatch.appHint &&
@@ -492,28 +495,28 @@ export const SearchQueryPlanProcessedSchema = SearchQueryPlanSchema.transform((v
 });
 
 const SearchAnswerCitationSchema = z.object({
-  node_id: z.number().int().positive().optional(),
-  screenshot_id: z.number().int().positive().optional(),
-  quote: z.string().optional(),
+  node_id: z.number().int().positive().nullable().optional(),
+  screenshot_id: z.number().int().positive().nullable().optional(),
+  quote: z.string().nullable().optional(),
 });
 
 export const SearchAnswerSchema = z.object({
-  answer_title: z.string().optional(),
+  answer_title: z.string().nullable().optional(),
   answer: z.string().min(1),
-  bullets: z.array(z.string()).optional(),
+  bullets: z.array(z.string()).nullable().optional(),
   citations: z.array(SearchAnswerCitationSchema).default([]),
   confidence: z.number(),
 });
 
 export const SearchAnswerProcessedSchema = SearchAnswerSchema.transform((val) => {
   const result = {
-    answerTitle: val.answer_title,
+    answerTitle: val.answer_title ?? undefined,
     answer: val.answer,
     bullets: val.bullets ? val.bullets.slice(0, 8) : undefined,
     citations: val.citations.map((citation) => ({
-      nodeId: citation.node_id,
-      screenshotId: citation.screenshot_id,
-      quote: citation.quote,
+      nodeId: citation.node_id ?? undefined,
+      screenshotId: citation.screenshot_id ?? undefined,
+      quote: citation.quote ?? undefined,
     })),
     confidence: Math.max(0, Math.min(1, val.confidence)),
   };

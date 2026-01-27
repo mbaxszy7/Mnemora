@@ -78,7 +78,7 @@ export function TimelineBlock({
       </div>
 
       {/* Title */}
-      <h4 className="text-sm font-medium mb-2 line-clamp-1">{window.title}</h4>
+      <h4 className="text-sm font-medium mb-2 line-clamp-2">{window.title}</h4>
 
       {/* App indicators */}
       <div className="flex items-center gap-1.5 min-h-[20px]">

@@ -272,6 +272,8 @@ export const contextNodes = sqliteTable(
     stateSnapshot: text("state_snapshot_json"),
     //  string[]
     uiTextSnippets: text("ui_text_snippets_json"),
+    //  ActionItemPayload[] - VLM-extracted action items (TODOs, next steps)
+    actionItems: text("action_items_json"),
 
     // Scoring
     importance: integer("importance").notNull().default(5), // 0-10 scale

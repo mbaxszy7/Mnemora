@@ -1,6 +1,7 @@
 import { useNavigate, Outlet } from "react-router-dom";
 import { useEffect } from "react";
 import { useAiFuseToast } from "@/hooks/use-ai-fuse-toast";
+import { TitleBar } from "@/components/core/TitleBar";
 
 export default function RootLayout() {
   const navigate = useNavigate();
@@ -14,9 +15,14 @@ export default function RootLayout() {
     });
     return cleanup;
   }, [navigate]);
+
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <main className="container mx-auto px-4 py-6" style={{ viewTransitionName: "main-content" }}>
+    <div className="min-h-screen bg-background text-foreground flex flex-col">
+      <TitleBar />
+      <main
+        className="flex-1 container mx-auto px-4 pt-[62px] pb-6 overflow-auto"
+        style={{ viewTransitionName: "main-content" }}
+      >
         <Outlet />
       </main>
     </div>

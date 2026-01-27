@@ -165,6 +165,8 @@ export interface ScreenCaptureApi {
   resume(): Promise<IPCResult<void>>;
   getState(): Promise<IPCResult<SchedulerStatePayload>>;
   onStateChanged(callback: (payload: SchedulerStatePayload) => void): () => void;
+  onCapturingStarted(callback: () => void): () => void;
+  onCapturingFinished(callback: () => void): () => void;
 }
 
 const screenCaptureApi: ScreenCaptureApi = {
@@ -193,6 +195,22 @@ const screenCaptureApi: ScreenCaptureApi = {
     ipcRenderer.on(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, subscription);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.SCREEN_CAPTURE_STATE_CHANGED, subscription);
+    };
+  },
+
+  onCapturingStarted(callback: () => void) {
+    const subscription = () => callback();
+    ipcRenderer.on(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_STARTED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_STARTED, subscription);
+    };
+  },
+
+  onCapturingFinished(callback: () => void) {
+    const subscription = () => callback();
+    ipcRenderer.on(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_FINISHED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_FINISHED, subscription);
     };
   },
 };
@@ -318,6 +336,7 @@ const usageApi: UsageApi = {
 
 export interface AppApi {
   onNavigate(callback: (path: string) => void): () => void;
+  updateTitleBar(payload: import("@shared/ipc-types").AppUpdateTitleBarPayload): Promise<void>;
 }
 
 const appApi: AppApi = {
@@ -327,6 +346,11 @@ const appApi: AppApi = {
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.APP_NAVIGATE, subscription);
     };
+  },
+  async updateTitleBar(
+    payload: import("@shared/ipc-types").AppUpdateTitleBarPayload
+  ): Promise<void> {
+    await ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_TITLE_BAR, payload);
   },
 };
 

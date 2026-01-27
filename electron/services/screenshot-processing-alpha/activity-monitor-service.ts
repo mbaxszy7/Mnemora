@@ -166,7 +166,12 @@ function normalizeDetailsStatus(status: string): "pending" | "succeeded" | "fail
 
 function parseAppHint(node: ContextNodeRecord): string | null {
   const appContext = parseJsonSafe<{ appHint?: string } | null>(node.appContext, null);
-  return typeof appContext?.appHint === "string" ? appContext.appHint : null;
+  const hint = typeof appContext?.appHint === "string" ? appContext.appHint.trim() : null;
+  // Filter out placeholder values from VLM - these shouldn't be shown in UI
+  if (!hint || hint.toLowerCase() === "unknown" || hint.toLowerCase() === "other") {
+    return null;
+  }
+  return hint;
 }
 
 function toSnakeCaseKnowledgePayload(raw: unknown): unknown {

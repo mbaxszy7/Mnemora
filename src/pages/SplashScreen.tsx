@@ -105,7 +105,7 @@ export default function SplashScreen() {
       initial={{ opacity: 1 }}
       exit={{ opacity: prefersReducedMotion ? 1 : 0 }}
       transition={{ duration: prefersReducedMotion ? 0 : 0.5 }}
-      className="fixed inset-0 flex flex-col items-center justify-start bg-[#F8FAFC] pt-[120px]"
+      className="fixed inset-0 flex flex-col items-center justify-start bg-background pt-[120px]"
     >
       {/* Logo with animation */}
       <motion.div
@@ -142,7 +142,7 @@ export default function SplashScreen() {
       </motion.div>
 
       {/* Brand Name */}
-      <h1 className="text-[#0F172A] text-[64px] font-bold tracking-tight text-center font-sans">
+      <h1 className="text-foreground text-[64px] font-bold tracking-tight text-center font-sans">
         Mnemora
       </h1>
 
@@ -155,7 +155,7 @@ export default function SplashScreen() {
             animate={{ opacity: 1, y: 0 }}
             exit={prefersReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
             transition={{ duration: prefersReducedMotion ? 0 : 0.6 }}
-            className="absolute text-[#64748B] text-base  text-center whitespace-nowrap"
+            className="absolute text-muted-foreground text-base  text-center whitespace-nowrap"
           >
             {SLOGANS[currentSloganIndex]}
           </motion.p>

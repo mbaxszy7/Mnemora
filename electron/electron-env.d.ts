@@ -84,6 +84,8 @@ interface Window {
     onStateChanged(
       callback: (payload: import("../shared/ipc-types").SchedulerStatePayload) => void
     ): () => void;
+    onCapturingStarted(callback: () => void): () => void;
+    onCapturingFinished(callback: () => void): () => void;
   };
   userSettingsApi: {
     get(): Promise<
@@ -172,6 +174,7 @@ interface Window {
   };
   appApi: {
     onNavigate(callback: (path: string) => void): () => void;
+    updateTitleBar(payload: import("../shared/ipc-types").AppUpdateTitleBarPayload): Promise<void>;
   };
   activityMonitorApi: {
     getTimeline(req: {

@@ -25,7 +25,8 @@
   "nav": {
     "home": "Home",
     "settings": "Settings",
-    "about": "About"
+    "about": "About",
+    "recording": "Recording"
   },
   "settings": {
     "title": "Settings",

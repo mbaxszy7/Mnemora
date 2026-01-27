@@ -71,6 +71,9 @@ class ScreenCaptureModule {
     );
 
     screenCaptureEventBus.on("capture-scheduler:state", this.onSchedulerStateChanged);
+    screenCaptureEventBus.on("capture:start", this.onCaptureStarted);
+    screenCaptureEventBus.on("capture:complete", this.onCaptureFinished);
+    screenCaptureEventBus.on("capture:error", this.onCaptureFinished);
     screenCaptureEventBus.on("backpressure:level-changed", this.onBackpressureLevelChanged);
     this.setupPowerMonitorCallbacks();
     this.logger.info("ScreenCaptureModule initialized");
@@ -138,6 +141,26 @@ class ScreenCaptureModule {
         // Ignore if BrowserWindow is not available (e.g. tests)
       }
     };
+
+  private readonly onCaptureStarted = () => {
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_STARTED);
+      }
+    } catch {
+      // Ignore
+    }
+  };
+
+  private readonly onCaptureFinished = () => {
+    try {
+      for (const win of BrowserWindow.getAllWindows()) {
+        win.webContents.send(IPC_CHANNELS.SCREEN_CAPTURE_CAPTURING_FINISHED);
+      }
+    } catch {
+      // Ignore
+    }
+  };
 
   private async isCapturePrepared(): Promise<boolean> {
     const llmConfig = await llmConfigService.loadConfiguration();
@@ -409,6 +432,9 @@ class ScreenCaptureModule {
     this.disposed = true;
 
     screenCaptureEventBus.off("capture-scheduler:state", this.onSchedulerStateChanged);
+    screenCaptureEventBus.off("capture:start", this.onCaptureStarted);
+    screenCaptureEventBus.off("capture:complete", this.onCaptureFinished);
+    screenCaptureEventBus.off("capture:error", this.onCaptureFinished);
     screenCaptureEventBus.off("backpressure:level-changed", this.onBackpressureLevelChanged);
     this.captureScheduler.stop();
     backpressureMonitor.stop();

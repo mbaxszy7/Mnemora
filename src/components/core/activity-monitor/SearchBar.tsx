@@ -136,7 +136,7 @@ export function SearchBar({
             onBlur={() => setIsFocused(false)}
             disabled={isSearching}
             placeholder={t("activityMonitor.search.placeholder")}
-            className="pl-14 pr-12 h-10 bg-secondary/30 border-0 focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:ring-offset-0 disabled:opacity-70 disabled:cursor-not-allowed placeholder:italic"
+            className="pl-14 pr-12 h-10 bg-secondary/80 border-0 focus-visible:ring-1 focus-visible:ring-primary/20 focus-visible:ring-offset-0 disabled:opacity-70 disabled:cursor-not-allowed placeholder:italic"
           />
           {/* Search/Cancel Button */}
           <AnimatePresence mode="wait">

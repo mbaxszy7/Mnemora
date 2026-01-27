@@ -1915,3 +1915,9 @@ AI Monitor 主要依赖 `llm_usage_events` 与 `aiRequestTraceBuffer` 的 `opera
   - **Concern**：崩溃恢复场景下，如果 `SourceBufferRegistry` buffer 已 drain 但 `persistBatch` 未完成，重启后可能产生重复 batch（新 UUID ≠ 旧 UUID）
   - **当前保护**：`screenshots.batchId` 检查可防止同一 screenshot 被分配到多个 batch，但无法防止创建空 batch 或部分重叠的 batch
   - **建议**：评估是否需要恢复 content-based idempotencyKey（例如基于 screenshotIds hash），或确认 buffer drain + screenshot 检查组合足够
+
+---
+
+## 待解决的问题 / 技术债 (Pending Issues)
+
+- (暂无)

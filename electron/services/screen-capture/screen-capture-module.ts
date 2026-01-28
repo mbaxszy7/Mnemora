@@ -38,7 +38,7 @@ import { CapturePreferencesService } from "../capture-preferences-service";
 import { userSettingService } from "../user-setting-service";
 import type { CapturePreferences } from "@shared/capture-source-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
-import { screenshotProcessingModule } from "../screenshot-processing-alpha/screenshot-processing-module";
+import { screenshotProcessingModule } from "../screenshot-processing/screenshot-processing-module";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { backpressureMonitor } from "./backpressure-monitor";
 import type { BackpressureLevelChangedEvent } from "./types";

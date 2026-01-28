@@ -52,6 +52,7 @@ type ThreadStatAggregate = {
   durationMs: number;
   nodeCount: number;
   apps: string[];
+  mainProject: string | null;
   keyEntities: string[];
 };
 
@@ -141,6 +142,18 @@ function extractAppsFromNode(node: ThreadAggregateNodeRow): string[] {
   const hint = app.appHint?.trim();
   return hint ? [hint] : [];
 }
+function extractProjectKeysFromNode(node: ThreadAggregateNodeRow): string[] {
+  const app = safeJsonParse<AppContextPayload>(node.appContext, {
+    appHint: null,
+    windowTitle: null,
+    sourceKey: "",
+    projectName: null,
+    projectKey: null,
+  });
+
+  const key = (app.projectKey ?? app.projectName ?? "").trim();
+  return key ? [key] : [];
+}
 
 /**
  * 计算 threads 聚合统计：
@@ -159,6 +172,7 @@ function computeThreadAggregatesFromEventTimesAndRecentNodes(args: {
       durationMs: 0,
       nodeCount: 0,
       apps: [],
+      mainProject: null,
       keyEntities: [],
     };
   }
@@ -169,15 +183,26 @@ function computeThreadAggregatesFromEventTimesAndRecentNodes(args: {
 
   const apps = new Set<string>();
   const entities = new Map<string, number>();
+  const projects = new Map<string, number>();
 
   for (const node of args.recentNodes) {
     for (const a of extractAppsFromNode(node)) {
       apps.add(a);
     }
+    for (const p of extractProjectKeysFromNode(node)) {
+      projects.set(p, (projects.get(p) ?? 0) + 1);
+    }
     for (const e of extractEntitiesFromNode(node)) {
       entities.set(e, (entities.get(e) ?? 0) + 1);
     }
   }
+
+  const mainProject = (() => {
+    const sorted = Array.from(projects.entries()).sort(
+      (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+    );
+    return sorted.length > 0 ? sorted[0][0] : null;
+  })();
 
   const keyEntities = Array.from(entities.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
@@ -190,6 +215,7 @@ function computeThreadAggregatesFromEventTimesAndRecentNodes(args: {
     durationMs,
     nodeCount: times.length,
     apps: Array.from(apps).slice(0, 20),
+    mainProject,
     keyEntities,
   };
 }
@@ -362,6 +388,28 @@ export class ThreadRepository {
           description: m,
         }));
 
+        const projectCounts = new Map<string, number>();
+        for (const idx of output.newThreads[i].nodeIndices) {
+          const node = batchNodes[idx];
+          if (!node) continue;
+          const app = safeJsonParse<AppContextPayload>(node.appContext, {
+            appHint: null,
+            windowTitle: null,
+            sourceKey: "",
+            projectName: null,
+            projectKey: null,
+          });
+          const key = (app.projectKey ?? app.projectName ?? "").trim();
+          if (!key) continue;
+          projectCounts.set(key, (projectCounts.get(key) ?? 0) + 1);
+        }
+        const mainProject = (() => {
+          const sorted = Array.from(projectCounts.entries()).sort(
+            (a, b) => b[1] - a[1] || a[0].localeCompare(b[0])
+          );
+          return sorted.length > 0 ? sorted[0][0] : null;
+        })();
+
         const record: NewThreadRecord = {
           id: newThreadId,
           originKey,
@@ -375,7 +423,7 @@ export class ThreadRepository {
           durationMs: 0,
           nodeCount: 0,
           apps: "[]",
-          mainProject: null,
+          mainProject,
           keyEntities: "[]",
           milestones: JSON.stringify(milestonesPayload),
           createdAt: now,
@@ -596,6 +644,7 @@ export class ThreadRepository {
           durationMs: agg.durationMs,
           nodeCount: agg.nodeCount,
           apps: JSON.stringify(agg.apps),
+          mainProject: agg.mainProject,
           keyEntities: JSON.stringify(agg.keyEntities),
           status: "active",
           updatedAt: args.now,

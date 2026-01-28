@@ -6,8 +6,8 @@ import type {
   SearchResult,
   ExpandedContextNode,
   ScreenshotEvidence,
-} from "../services/screenshot-processing-alpha/types";
-import { contextSearchService } from "../services/screenshot-processing-alpha/context-search-service";
+} from "../services/screenshot-processing/types";
+import { contextSearchService } from "../services/screenshot-processing/context-search-service";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("context-graph-handlers");

@@ -1,112 +1,231 @@
-/**
- * Screenshot Processing Configuration
- *
- * Centralized configuration for the screenshot processing pipeline.
- */
-
 import os from "node:os";
 import path from "node:path";
 
 /**
- * Source buffer configuration for per-source screenshot buffering
- */
-const sourceBufferConfig = {
-  /** Grace period before removing inactive source buffers in milliseconds (default: 60000 = 60s) */
-  gracePeriodMs: 60000,
-};
-
-const vlmConfig = {
-  /** Number of screenshots per shard (default: 2) */
-  vlmShardSize: 2,
-  /** Maximum segments per batch (default: 4) */
-  maxSegmentsPerBatch: 4,
-  /** Maximum entities per batch (default: 20) */
-  maxEntitiesPerBatch: 20,
-  /** Maximum output tokens for VLM response (default: 8192) */
-  maxTokens: 8192,
-  evidenceConfig: {
-    maxOcrTextLength: 8192,
-    maxUiTextSnippets: 20,
-  },
-};
-
-const historyPackConfig = {
-  /** Number of recent threads to include (default: 3) */
-  recentThreadsLimit: 3,
-  /** Number of recent entities to include (default: 10) */
-  recentEntitiesLimit: 10,
-  /** Time window for open segments in milliseconds (default: 900000 = 15min) */
-  openSegmentWindowMs: 900000, // 15 minutes
-  /** Maximum characters for summary fields (default: 200) */
-  summaryCharLimit: 200,
-};
-
-const batchConfig = {
-  /** Number of screenshots per batch (default: 4) */
-  batchSize: 4,
-  /** Timeout to trigger batch even if not full in milliseconds (default: 70000) */
-  batchTimeoutMs: 70000,
-  HistoryPack: historyPackConfig,
-};
-
-/**
- * AI concurrency and timeout configuration
+ * Screenshot Processing Pipeline Configuration
  *
- * Controls global concurrency limits for AI API calls to prevent
- * overwhelming the provider with too many concurrent requests.
+ * This configuration aligns with docs/alpha-implementation-plan.md.
+ * Key design principles:
+ * - Each screenshot produces exactly one Context Node
+ * - Threads replace context_edges for continuity tracking
+ * - Hybrid OCR: VLM decides if OCR is needed, local Tesseract.js executes
+ *
+ * @see docs/alpha-implementation-plan.md for full design documentation
  */
-const aiConcurrencyConfig = {
-  vlmGlobalConcurrency: 10,
-  textGlobalConcurrency: 10,
-  embeddingGlobalConcurrency: 10,
-  vlmTimeoutMs: 120000, // 2 minutes
-  textTimeoutMs: 120000, // 2 minutes
-  embeddingTimeoutMs: 60000, // 60 seconds
-
-  adaptiveEnabled: true,
-  adaptiveMinConcurrency: 1,
-  adaptiveWindowSize: 20,
-  adaptiveFailureRateThreshold: 0.2,
-  adaptiveConsecutiveFailureThreshold: 2,
-  adaptiveCooldownMs: 30000,
-  adaptiveRecoveryStep: 1,
-  adaptiveRecoverySuccessThreshold: 20,
-};
-
-const schedulerConfig = {
-  scanIntervalMs: 30000,
-  staleRunningThresholdMs: 600000,
-  laneRecoveryAgeMs: 600000,
-  retryConfig: {
-    maxAttempts: 2,
-    /** Backoff schedule in milliseconds */
-    backoffScheduleMs: [10000, 30000, 120000, 300000], // 10s, 30s, 2m, 5m, 10m
-    /** Random jitter to add to backoff in milliseconds (default: 5000) */
-    jitterMs: 5000,
-  },
-};
-
-const activitySummaryConfig = {
-  generationIntervalMs: 1200000, // 20 minutes
-  longEventThresholdMs: 25 * 60 * 1000, // 25 minutes threshold for long events
-  laneRecoveryAgeMs: 60 * 60 * 1000,
-  eventDetailsEvidenceMaxNodes: 50,
-  eventDetailsEvidenceMaxChars: 24000,
-};
-
-const vectorStoreConfig = {
-  indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
-  /** Debounce interval for flushing index to disk (ms) */
-  flushDebounceMs: 500,
-  defaultDimensions: 1536,
-};
-
 export const processingConfig = {
-  vlm: vlmConfig,
-  captureSource: sourceBufferConfig,
-  batch: batchConfig,
-  scheduler: schedulerConfig,
-  ai: aiConcurrencyConfig,
-  activitySummary: activitySummaryConfig,
-  vectorStore: vectorStoreConfig,
+  /**
+   * Batch Trigger Configuration
+   *
+   * Batches are created when either condition is met:
+   * - minSize screenshots accumulated in buffer
+   * - timeoutMs elapsed since first screenshot in buffer
+   */
+  batch: {
+    /** Minimum screenshots to trigger batch creation */
+    minSize: 2,
+    /** Maximum screenshots per batch (for VLM token limits) */
+    maxSize: 5,
+    /** Timeout to flush buffer even with fewer than minSize screenshots (ms) */
+    timeoutMs: 60 * 1000, // 60 seconds
+  },
+
+  /**
+   * Thread Lifecycle Configuration
+   *
+   * Threads track user activity continuity across time windows.
+   * - Threads can span multiple Activity Summary windows (20 min each)
+   * - Long events: threads with duration >= longEventThresholdMs
+   * - Gap handling: gaps > gapThresholdMs don't count toward duration
+   */
+  thread: {
+    /** Duration after which inactive thread status changes to 'inactive' (ms) */
+    inactiveThresholdMs: 4 * 60 * 60 * 1000, // 4 hours
+    /** Gaps longer than this don't count toward thread.duration_ms (ms) */
+    gapThresholdMs: 10 * 60 * 1000, // 10 minutes
+    /** Threshold for "long event" detection in Activity Monitor (ms) */
+    longEventThresholdMs: 25 * 60 * 1000, // 25 minutes
+    /** Max active threads to include in Thread LLM prompt */
+    maxActiveThreads: 3,
+    /** If no active threads, include this many recent threads */
+    fallbackRecentThreads: 1,
+    /** Recent nodes per thread to include in Thread LLM prompt */
+    recentNodesPerThread: 3,
+  },
+
+  /**
+   * Activity Summary Configuration
+   *
+   * Activity summaries are generated for fixed time windows.
+   * - Checks if context nodes belong to "long event" threads
+   * - Long event thread info read from context_nodes.thread_snapshot_json
+   *   (not realtime threads table) for data consistency
+   */
+  activitySummary: {
+    /** Fixed window size for activity summaries (ms) */
+    windowMs: 20 * 60 * 1000, // 20 minutes
+    /** Threshold for long event detection (ms) */
+    longEventThresholdMs: 25 * 60 * 1000, // 25 minutes
+    summaryConcurrency: 2,
+    /** Max context nodes to include in event details evidence */
+    eventDetailsEvidenceMaxNodes: 50,
+    /** Max characters for event details evidence text */
+    eventDetailsEvidenceMaxChars: 24000,
+  },
+
+  /**
+   * OCR Configuration (Hybrid Strategy)
+   *
+   * Selective OCR flow:
+   * 1. VLM analyzes screenshots, identifies "knowledge" content
+   * 2. VLM returns language ("en", "zh", or "other") and text_region
+   * 3. Only if language ∈ supportedLanguages, trigger local OCR
+   * 4. OCR result stored in screenshots.ocr_text and indexed in screenshots_fts
+   *
+   * @see docs/alpha-implementation-plan.md "OCR 精准处理流水线"
+   */
+  ocr: {
+    /** Maximum characters to store in screenshots.ocr_text */
+    maxChars: 8000,
+    /** Tesseract.js language pack (Chinese + English) */
+    languages: "eng+chi_sim",
+    /** Max parallel OCR workers (keep low to avoid CPU spikes) */
+    concurrency: 1,
+    /** Only trigger OCR when VLM detects these languages */
+    supportedLanguages: ["en", "zh"],
+  },
+
+  /**
+   * Global Scheduler Configuration
+   */
+  scheduler: {
+    /** Default interval to scan for new work (ms) */
+    scanIntervalMs: 30 * 1000, // 30 seconds
+    /** Threshold to detect stale "running" tasks for crash recovery (ms) */
+    staleRunningThresholdMs: 5 * 60 * 1000, // 5 minutes
+    /** Age after which a record is treated as "recovery" lane instead of "realtime" (ms) */
+    laneRecoveryAgeMs: 10 * 1000 * 60, // 10 minutes
+    scanCap: 100,
+    activitySummaryScanCap: 10,
+  },
+
+  /**
+   * Retry Configuration (All Schedulers)
+   */
+  retry: {
+    /** Maximum retry attempts before marking as failed_permanent */
+    maxAttempts: 2,
+    /** Delay before retry (ms) */
+    delayMs: 60 * 1000, // 1 minute
+  },
+
+  cleanup: {
+    fallbackEphemeralMaxAgeMs: 24 * 60 * 60 * 1000,
+    fallbackBatchSize: 100,
+    fallbackIntervalMs: 30 * 60 * 1000,
+  },
+
+  /**
+   * AI Concurrency Configuration
+   *
+   * Reuses ai-runtime-service.ts capabilities:
+   * - Semaphore: per-capability global concurrency control
+   * - Adaptive Concurrency Tuner (AIMD): reduce on failure, increase on success
+   * - AI Failure Fuse Breaker: circuit breaker on consecutive failures
+   */
+  ai: {
+    /** Max concurrent VLM requests */
+    vlmGlobalConcurrency: 10,
+    /** Max concurrent text LLM requests (Thread LLM, Activity LLM, etc.) */
+    textGlobalConcurrency: 10,
+    /** Max concurrent embedding requests */
+    embeddingGlobalConcurrency: 10,
+
+    /** VLM request timeout (ms) */
+    vlmTimeoutMs: 120000, // 2 minutes
+    /** VLM max output tokens */
+    vlmMaxOutputTokens: 8129,
+    /** Text LLM request timeout (ms) */
+    textTimeoutMs: 120000, // 2 minutes
+    /** Embedding request timeout (ms) */
+    embeddingTimeoutMs: 60000, // 1 minute
+
+    /** Enable adaptive concurrency tuning (AIMD algorithm) */
+    adaptiveEnabled: true,
+    /** Minimum concurrency during degradation */
+    adaptiveMinConcurrency: 1,
+    /** Sliding window size for failure rate calculation */
+    adaptiveWindowSize: 20,
+    /** Failure rate threshold to trigger degradation (0.0-1.0) */
+    adaptiveFailureRateThreshold: 0.2, // 20%
+    /** Consecutive failures to trigger immediate degradation */
+    adaptiveConsecutiveFailureThreshold: 2,
+    /** Cooldown period after degradation before recovery attempt (ms) */
+    adaptiveCooldownMs: 30000, // 30 seconds
+    /** Concurrency increase step during recovery */
+    adaptiveRecoveryStep: 1,
+    /** Consecutive successes required before increasing concurrency */
+    adaptiveRecoverySuccessThreshold: 20,
+  },
+
+  /**
+   * Adaptive Backpressure Strategy
+   *
+   * Controls capture rate based on pending batch count to prevent queue buildup.
+   * Core principle: control flow at source (capture), not at processing.
+   *
+   * Base values from screen-capture/types.ts:
+   * - DEFAULT_SCHEDULER_CONFIG.interval = 3000ms (3s)
+   * - phash-dedup.ts SimilarityThreshold = 8
+   *
+   * Levels (matched in order by maxPending):
+   * - Level 0 (normal): pending < 4, 3s interval, pHash 8
+   * - Level 1 (light):  4-7 pending, 3s interval, pHash 12 (more dedup)
+   * - Level 2 (medium): 8-11 pending, 6s interval, pHash 12
+   * - Level 3 (heavy):  12+ pending, 12s interval, pHash 12
+   *
+   * Recovery: stays at lower level for recoveryHysteresisMs before upgrading
+   */
+  backpressure: {
+    levels: [
+      {
+        /** Max pending batches for this level (exclusive upper bound) */
+        maxPending: 3,
+        /** Multiplier for DEFAULT_SCHEDULER_CONFIG.interval */
+        intervalMultiplier: 1, // 1x = 3s
+        /** pHash Hamming distance threshold (higher = more dedup) */
+        phashThreshold: 8,
+        description: "normal",
+      },
+      {
+        maxPending: 7,
+        intervalMultiplier: 1, // 1x = 3s
+        phashThreshold: 9, // More aggressive dedup
+        description: "light_pressure",
+      },
+      {
+        maxPending: 11,
+        intervalMultiplier: 2, // 2x = 6s
+        phashThreshold: 10,
+        description: "medium_pressure",
+      },
+      {
+        maxPending: Number.POSITIVE_INFINITY,
+        intervalMultiplier: 4, // 4x = 12s
+        phashThreshold: 11,
+        description: "heavy_pressure",
+      },
+    ],
+    /** Observation period before recovering to lower pressure level (ms) */
+    recoveryHysteresisMs: 30000, // 30 seconds
+    /** Backpressure level change check interval (ms) */
+    checkIntervalMs: 5000,
+    /** Pending count must stay below threshold for this many cycles */
+    recoveryBatchThreshold: 2,
+  },
+
+  vectorStore: {
+    indexFilePath: path.join(os.homedir(), ".mnemora", "vector_index.bin"),
+    flushDebounceMs: 500,
+    defaultDimensions: 1024,
+  },
 };

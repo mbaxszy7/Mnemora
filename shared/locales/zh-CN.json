@@ -313,6 +313,7 @@
       "grantPermissions": "授予所需权限",
       "capturing": "正在采集",
       "starting": "正在启动…",
+      "pause": "暂停采集",
       "resume": "继续采集",
       "start": "开始采集",
       "stop": "停止采集",

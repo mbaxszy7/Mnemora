@@ -2,7 +2,7 @@ import { eq, sql } from "drizzle-orm";
 import { getDb } from "../../database";
 import { batches } from "../../database/schema";
 import { getLogger } from "../logger";
-import { processingConfig } from "../screenshot-processing-alpha/config";
+import { processingConfig } from "../screenshot-processing/config";
 import { screenCaptureEventBus } from "./event-bus";
 
 const logger = getLogger("backpressure-monitor");

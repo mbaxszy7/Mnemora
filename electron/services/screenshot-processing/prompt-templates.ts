@@ -1,50 +1,40 @@
 import { mainI18n } from "../i18n-service";
-import type { HistoryPack } from "./types";
-import type { VLMScreenshotMeta } from "./schemas";
-
-export interface GlobalSummary {
-  resultTimeSpan: [number, number];
-  topApps: { appHint: string; count: number }[];
-  topEntities: string[];
-  kindsBreakdown: { kind: string; count: number }[];
-}
 
 export interface VLMUserPromptArgs {
-  screenshotMeta: VLMScreenshotMeta[];
-  historyPack: HistoryPack;
+  count: number;
   localTime: string;
   timeZone: string;
   utcOffset: string;
   now: Date;
-  metaJson: string;
+  nowTs: number;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
+  screenshotMetaJson: string;
   appCandidatesJson: string;
-  historySection: string;
-  degraded: boolean;
 }
 
-export interface TextLLMExpandUserPromptArgs {
+export interface ThreadLLMUserPromptArgs {
+  activeThreadsJson: string;
+  threadRecentNodesJson: string;
+  batchNodesJson: string;
   localTime: string;
   timeZone: string;
-  utcOffset: string;
   now: Date;
-  segmentsJson: string;
-  screenshotMappingJson: string;
-  evidenceJson: string;
-  batchId: string;
-  sourceKey: string;
-  batchTimeRange: string;
-  vlmEntitiesJson: string;
-}
-
-export interface TextLLMMergeUserPromptArgs {
-  existingNodeJson: string;
-  newNodeJson: string;
+  nowTs: number;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
 }
 
 export interface QueryUnderstandingUserPromptArgs {
   nowDate: Date;
   nowTs: number;
-  timezone: string;
+  timeZone: string;
   todayStart: number;
   todayEnd: number;
   yesterdayStart: number;
@@ -69,9 +59,19 @@ export interface AnswerSynthesisUserPromptArgs {
 }
 
 export interface ActivitySummaryUserPromptArgs {
-  userPromptJson: string;
+  nowTs: number;
+  todayStart: number;
+  todayEnd: number;
+  yesterdayStart: number;
+  yesterdayEnd: number;
+  weekAgo: number;
   windowStart: number;
   windowEnd: number;
+  windowStartLocal: string;
+  windowEndLocal: string;
+  contextNodesJson: string;
+  longThreadsJson: string;
+  statsJson: string;
 }
 
 export interface EventDetailsUserPromptArgs {
@@ -79,713 +79,609 @@ export interface EventDetailsUserPromptArgs {
 }
 
 // ============================================================================
-// VLM Processor Prompts
+// VLM Processor Prompts (Alpha)
 // ============================================================================
 
 const VLM_SYSTEM_PROMPT_EN = `You are an expert screenshot analyst for a personal activity tracking system.
 
-Your goal is to produce a compact, fully structured JSON index that can be stored and used later without the images.
+Your goal: Analyze each screenshot and extract structured information. Output ONE context node per screenshot.
 
-Interpretation rules:
-- A "segment" represents ONE coherent user activity (an Event). If the batch contains multiple distinct activities, output multiple segments.
-  - The "derived" items are optional extractions tied to the segment's Event. They correspond to:
-    - knowledge: reusable facts/concepts (no user actions)
-    - state: a snapshot of some object's status at that time
-    - procedure: reusable step-by-step process inferred from a sequence
-    - plan: explicit future intentions/todos
+## Core Principles
 
-Extraction strategy:
-- Always extract the Event first (what current_user is doing).
-- Then proactively extract derived items when the screenshots contain them:
-  - docs/specs/architecture/config explanations => knowledge
-  - dashboards/boards/status panels/metrics => state
-  - reusable multi-step operational flow => procedure
-  - explicit todos/next steps/future goals => plan
+1. **One-to-One Mapping**: Each screenshot produces exactly one context node.
+2. **User-Centric**: The subject is always "current_user" (the screen operator).
+3. **Specificity**: Include concrete identifiers (project names, file names, ticket IDs, URLs when visible).
+4. **Grounded**: Only extract information visible in the screenshots. Never hallucinate URLs or facts.
 
-Style matching (very important):
-- event: MUST describe user behavior with subject "current_user" (e.g. "current_user editing...", "current_user debugging...").
-- knowledge/state/procedure: MUST NOT describe user behavior; describe the knowledge/state/process itself.
-- plan: MUST describe future intent/todo content.
+## Output JSON Schema
 
-Subject identification:
-- "current_user" is the screen operator (the photographer of these screenshots).
-- Names visible in screenshots (people/orgs/etc.) are not automatically "current_user"; keep them as separate entities.
-
-## Output JSON (must be valid JSON and must follow this structure EXACTLY)
 {
-  "segments": [
+  "nodes": [
     {
-      "segment_id": "seg_1",
-      "screen_ids": [1, 2],
-      "event": {
-        "title": "current_user debugging CI pipeline in Jenkins",
-        "summary": "current_user reviewing failed build logs in Jenkins dashboard, investigating test failures",
-        "confidence": 8,
-        "importance": 7
+      "screenshot_index": 1,
+      "title": "current_user debugging TypeScript compilation error in auth-service",
+      "summary": "current_user viewing VS Code with TypeScript compilation error in auth-service project, the error indicates a missing property on AuthResponse type",
+      "app_context": {
+        "app_hint": "Visual Studio Code",
+        "window_title": "auth.ts - auth-service",
+        "source_key": "window:123",
+        "project_name": "auth-service",
+        "project_key": "auth-service"
       },
-      "derived": {
-        "knowledge": [
-          {"title": "Jenkins pipeline configuration", "summary": "Pipeline uses 3 stages: build, test, deploy."}
-        ],
-        "state": [
-          {"title": "CI build status", "summary": "Build #456 failed at test stage with 2 failing unit tests", "object": "Jenkins pipeline"}
-        ],
-        "procedure": [],
-        "plan": []
+      "knowledge": null,
+      "state_snapshot": {
+        "subject_type": "error",
+        "subject": "TypeScript Compilation",
+        "current_state": "failed with 1 error",
+        "issue": {
+          "detected": true,
+          "type": "error",
+          "description": "Property 'refreshToken' does not exist on type 'AuthResponse'",
+          "severity": 3
+        }
       },
-      "merge_hint": {
-        "decision": "NEW"
-      },
-      "keywords": ["debugging", "CI", "Jenkins", "build failure"]
+      "entities": [
+        { "name": "auth-service", "type": "repo" },
+        { "name": "AuthResponse", "type": "other" }
+      ],
+      "action_items": [
+        { "action": "Add refreshToken property to AuthResponse interface", "priority": "high", "source": "inferred" }
+      ],
+      "ui_text_snippets": ["Property 'refreshToken' does not exist on type 'AuthResponse'", "TS2339"],
+      "importance": 7,
+      "confidence": 9,
+      "keywords": ["TypeScript", "compilation error", "auth-service"]
     }
-  ],
-  "entities": ["Jenkins", "Build #456"],
-  "screenshots": [
-    {
-      "screenshot_id": 123,
-      "app_guess": { "name": "Google Chrome", "confidence": 0.82 },
-      "ocr_text": "...",
-      "ui_text_snippets": ["Build #456 failed", "2 tests failed"]
-    }
-  ],
-  "notes": "Optional notes"
+  ]
 }
 
-## Segment rules (Event extraction)
-- Output 1-4 segments total.
-- Each segment must be semantically coherent (one clear task/goal). Do NOT mix unrelated tasks into the same segment.
-- Prefer grouping adjacent screenshots that are part of the same activity.
-- "screen_ids" are 1-based indices within THIS batch (not database IDs).
-- "segment_id" must be unique within this JSON output (recommended format: "seg_<unique>").
+## Field Requirements
 
-## event (title/summary) rules
-- Style: describe "who is doing what" in natural language. Use "current_user" as the subject.
-- title (<=100 chars): specific, action-oriented. MUST include project/repo name when identifiable (e.g., "current_user debugging auth-service", "current_user reviewing PR in mnemora repo").
-- summary (<=200 chars): include concrete details (what app/page, what is being edited/viewed/decided, key identifiers like PR/issue IDs). Avoid vague phrases like "working on stuff".
-- **Project/Repo Extraction**: Extract project names, code repository names, and repo identifiers from:
-  - File paths (e.g., "/home/user/repos/mnemora/src" → "mnemora repo")
-  - IDE window titles (e.g., "auth-service - Visual Studio Code")
-  - Git operations (e.g., "git push origin main" for "main" branch)
-  - URL patterns (e.g., "github.com/org/project-name")
-- **Collaboration Context**: When visible, extract and include:
-  - Jira ticket IDs and comments (e.g., "PROJ-1234: discussing approach in comments")
-  - Teams/Slack conversation topics (e.g., "discussing deployment in #dev-ops channel")
-  - PR review comments and decisions
-  - Meeting notes context
-- confidence: 0-10 based on clarity of evidence.
-- importance: 0-10 based on how valuable this activity would be for later recall/search.
+### title (required, ≤100 chars)
+- MUST start with "current_user" as subject
+- MUST include project/repo name when identifiable
+- Action-oriented: describe what user is DOING
 
-## derived rules (CRITICAL - follow exact schema)
-- General: derived items must be grounded in visible evidence from the screenshots. Do NOT invent.
-- **IMPORTANT: ALL derived items (knowledge, state, procedure, plan) MUST have exactly these fields:**
-  - "title": string (<=100 chars) - a short descriptive title
-  - "summary": string (<=180 chars) - a brief description
-  - "steps": array of strings (ONLY for procedure items, each step <=80 chars)
-  - "object": string (OPTIONAL, only for state items to specify what is being tracked)
-- **Max 2 items per derived category (knowledge, state, procedure, plan)**
+### summary (required, ≤500 chars)
+- Detailed description of the activity
+- Include: app being used, specific task, progress indicators, key identifiers
 
-### Derived item JSON examples (use EXACTLY this structure):
-- knowledge item: {"title": "API rate limiting rules", "summary": "Rate limit is 100 req/min per user. Source URL: https://XXX"}
-- state item: {"title": "CI pipeline status", "summary": "Build #456 failed on test stage with 3 failing tests", "object": "CI pipeline"}
-- procedure item: {"title": "Deploy to production", "summary": "Standard deployment workflow for the main app", "steps": ["Run tests locally", "Create PR", "Wait for CI", "Merge and deploy"]}
-- plan item: {"title": "Refactor auth module", "summary": "Plan to migrate from JWT to session-based auth next sprint"}
+### app_context (required)
+- app_hint: ONLY return a canonical app name if it matches a popular/common app (e.g., Chrome, VS Code, Slack). Otherwise, return null.
+- window_title: Preserve original window title if identifiable, otherwise null.
+- source_key: Pass through from input metadata.
+- project_name: If identifiable, the user project/repo/workspace name shown in the UI (especially in IDE window titles). Otherwise, null.
+- project_key: A stable, normalized key for project_name (lowercase). Use it for thread grouping. If you cannot identify a project, set null.
 
-### What NOT to do (these will cause validation errors):
-- WRONG state: {"object": "Server", "status": "running", "details": "..."} - missing title and summary!
-- WRONG procedure: {"title": "...", "steps": [...]} - missing summary!
-- WRONG: more than 2 items in any derived category
+### knowledge (optional)
+- Only populate if user is reading documentation, blogs, tutorials
+- content_type: tech_doc|blog|product_doc|tutorial|api_doc|wiki|other
+- language: "en" | "zh" | "other" ("en"/"zh" triggers OCR)
+- text_region: IMPORTANT for OCR optimization
 
-## merge_hint rules (thread continuity) - CRITICAL
-- Default: "decision" = "NEW" (use this in most cases)
-- Use "MERGE" ONLY if ALL of these conditions are met:
-  1. Recent threads are provided in the history context below
-  2. This segment is clearly continuing the SAME activity from a provided thread
-  3. You set "thread_id" to the EXACT thread_id from the provided history
-- **If no history is provided or you cannot match a thread_id, you MUST use "NEW"**
-- **NEVER use "MERGE" without providing a valid "thread_id" from the history**
+### state_snapshot (optional)
+- Populate if dashboards/metrics/build status or issues are visible
+- issue: If error/bug/blocker/warning detected, fill issue object
 
-## keywords rules
-- 0-10 short keywords that help search (topic + action). Avoid overly broad terms.
+### entities (max 10)
+- Named entities only; exclude generic terms
+- type MUST be one of: person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+- Include raw/confidence when visible
 
-## Length Limits
-- title: max 100 characters.
-- summary: max 500 characters. Be concise but descriptive. If the screen contains complex data (e.g. database schema, code logic, log errors), include specific details in the summary.
+### action_items (optional)
+- Only if explicit TODOs/next steps are visible
+- priority: "high" | "medium" | "low"
+- source: "explicit" or "inferred"
+- action: Action description
 
-## entities rules
-- 0-20 canonical named entities across the whole batch (people/orgs/teams/apps/products/repos/projects/tickets like "ABC-123").
-- EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
+### ui_text_snippets (max 5, each ≤200 chars)
+- High-signal UI text: headers, key messages, errors
 
-## screenshots evidence rules
-- Include one entry for EVERY screenshot in the input metadata.
-- "screenshot_id" must exactly match the database id from the input metadata.
-- app_guess (optional): Identify the main application shown in the screenshot.
-  - name: MUST be one of the provided canonical candidate apps OR one of: "unknown", "other".
-  - confidence: 0..1. Use >= 0.7 only when you are fairly sure.
-- ocr_text (optional, <=8000 chars): copy visible text in reading order; remove obvious noise/repeated boilerplate.
-- ui_text_snippets (optional, <=20 items, each <=200 chars): pick the highest-signal lines (titles, decisions, issue IDs, key chat messages). Deduplicate. Exclude timestamps-only lines, hashes, and directory paths.
+### importance/confidence (0-10)
 
-## Privacy / redaction
-- If you see secrets (API keys, tokens, passwords, private keys), replace the sensitive part with "***".
+### keywords (max 5)
 
-## Hard rules
-1) Return ONLY a single JSON object matching the requested schema.
-2) Respect all max counts and length limits.
-3) Avoid abstract generalizations (e.g. "reviewed something", "worked on code"); include specific details visible in the screenshots.
-4) If something is absent, use empty arrays or omit optional fields; never hallucinate.
-5) ALL segments MUST have an "event" object with "title" and "summary" - this is mandatory.
-6) ALL derived items MUST have "title" and "summary" fields - no exceptions.
-7) The output MUST be a valid JSON object. Do not include markdown code blocks or any other text.`;
-
-const VLM_USER_PROMPT_EN = (
-  args: VLMUserPromptArgs
-) => `Analyze the following ${args.screenshotMeta.length} screenshots and produce the structured JSON described in the system prompt.
-
-## Current User Time Context (for relative time interpretation)
-- local_time: ${args.localTime}
-- time_zone: ${args.timeZone}
-- utc_offset: ${args.utcOffset}
-- now_utc: ${args.now.toISOString()}
-
-## Screenshot Metadata (order = screen_id)
-${args.metaJson}
-
-## Canonical App Candidates (for app_guess.name)
-${args.appCandidatesJson}
-
-## App mapping rules (critical)
-- app_guess.name MUST be a canonical name from the list above.
-- **IMPORTANT**: These are commercial software products (IDEs, browsers, chat apps, etc.), NOT user projects or code repositories. Do NOT confuse an app name with a project name.
-  - Do NOT identify "Antigravity" as a user project - it is an IDE app, even if it appears in window titles like "Antigravity - mnemora".
-  - Do NOT identify "Visual Studio Code" as a user project - it is an IDE app.
-  - Do NOT identify "Google Chrome" or "Arc" as a user project - they are browsers.
-- If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
-- If you cannot confidently map to one canonical app, use "unknown" or "other" with low confidence.
-${args.historySection}
-## Field-by-field requirements
-- segments: max 4. Titles/summaries must be specific and human-readable. Keep confidence/importance on 0-10.
-- merge_hint: Use MERGE only when clearly continuing a provided thread_id from the history above; otherwise ALWAYS use NEW. Never use MERGE without a valid thread_id.
-- derived: CRITICAL SCHEMA - every derived item (knowledge/state/procedure/plan) MUST have both "title" and "summary" fields. Max 2 per category.
-  - Example state: {"title": "Build status", "summary": "CI build #123 failed on tests", "object": "CI pipeline"}
-  - Example procedure: {"title": "Deploy workflow", "summary": "Steps to deploy to prod", "steps": ["Build", "Test", "Deploy"]}
-  - WRONG: {"object": "X", "status": "Y", "details": "Z"} - this is INVALID, missing title/summary!
-- entities: Only meaningful named entities (person/project/team/org/app/repo/issue/ticket). Exclude generic tech/library/runtime terms (npm, node_modules, yarn, dist, build, .git), file paths, URLs without names, commands, or placeholders. Use canonical names; dedupe.
-- screenshots: For each screenshot_id from the metadata:
-  - screenshot_id: must match the input metadata screenshot_id (do NOT invent ids).
-  - app_guess: optional; if present must follow Canonical App Candidates + App mapping rules; confidence is 0..1.
-  - ui_text_snippets: pick 5-15 high-signal sentences/phrases (chat bubbles, titles, decisions, issue IDs). Drop duplicates, timestamps-only lines, hashes, directory paths.
-  - ocr_text: OPTIONAL. Only include when the screenshot is clearly text-heavy (documents, logs, long web pages). Keep it short and remove boilerplate; trimmed to 8000 chars.
-- notes: optional; only if useful.
-
-${
-  args.degraded
-    ? `## Degraded mode
-- Return the same JSON schema, but keep the output extremely compact.
-- Still include the screenshots array (one entry per screenshot_id), but OMIT ocr_text, ui_text_snippets, and notes unless absolutely necessary.
-- Focus on segments (event + merge_hint) and entities only.`
-    : ""
-}
-
-## Instructions
-1. Review all screenshots in order (1..${args.screenshotMeta.length}).
-2. Identify segments and assign screen_ids for each.
-3. Fill every field following the constraints above.
-4. Return ONLY the JSON object—no extra text or code fences.`;
-
-const VLM_USER_PROMPT_ZH = (
-  args: VLMUserPromptArgs
-) => `分析以下 ${args.screenshotMeta.length} 张截图，并生成系统提示中描述的结构化 JSON。
-
-## 当前用户时间上下文（用于相对时间解释）
-- 本地时间：${args.localTime}
-- 时区：${args.timeZone}
-- UTC 偏移：${args.utcOffset}
-- 当前 UTC：${args.now.toISOString()}
-
-## 截图元数据（顺序 = screen_id）
-${args.metaJson}
-
-## 规范应用候选（用于 app_guess.name）
-${args.appCandidatesJson}
-
-## 应用映射规则（关键）
-- app_guess.name 必须是上述列表中的规范名称。
-- **重要**：这些是商业软件产品（IDE、浏览器、聊天应用等），而非用户的项目或代码仓库。不要将应用名称与项目名称混淆。
-  - 不要将 "Antigravity" 识别为用户项目 - 它是一个 IDE 应用，即使它出现在窗口标题中如 "Antigravity - mnemora"。
-  - 不要将 "Visual Studio Code" 识别为用户项目 - 它是一个 IDE 应用。
-  - 不要将 "Google Chrome" 或 "Arc" 识别为用户项目 - 它们是浏览器。
-- 如果 UI 显示别名如 "Chrome", "google chrome", "arc" 等，请将其映射到规范的应用名称。
-- 如果无法自信地映射到一个规范应用，请使用低置信度的 "unknown" 或 "other"。
-${args.historySection}
-## 字段逐项要求
-- segments：最多 4 个。标题/摘要必须具体且易读。保持置信度/重要性在 0-10。
-- merge_hint：仅当明显延续上述历史记录中提供的 thread_id 时才使用 MERGE；否则始终使用 NEW。绝不在没有有效 thread_id 的情况下使用 MERGE。
-- derived：关键模式 - 每个派生项（knowledge/state/procedure/plan）必须同时拥有 "title" 和 "summary" 字段。每个类别最多 2 个。
-  - 状态项示例：{"title": "构建状态", "summary": "CI 构建 #123 测试失败", "object": "CI 流水线"}
-  - 步骤项示例：{"title": "部署流程", "summary": "部署到生产环境的步骤", "steps": ["构建", "测试", "部署"]}
-  - 错误示例：{"object": "X", "status": "Y", "details": "Z"} - 这是无效的，缺少 title/summary！
-- entities：仅包含有意义的命名实体（人/项目/团队/组织/应用/仓库/工单/票据）。排除通用技术/库/运行时术语（npm, node_modules, yarn, dist, build, .git），文件路径，无名称的 URL，命令或占位符。使用规范名称；去重。
-- screenshots：对于元数据中的每个 screenshot_id：
-  - screenshot_id：必须匹配输入元数据的 screenshot_id（不要捏造 id）。
-  - app_guess：可选；如果存在，必须遵循规范应用候选 + 应用映射规则；置信度为 0..1。
-  - ui_text_snippets：选取 5-15 个高信号的句子/短语（气泡聊天、标题、决定、工单 ID）。去掉重复项、仅包含时间戳的行、哈希值、目录路径。
-  - ocr_text：可选。仅当截图明显主要是文本（文档、日志、长网页）时包含。保持简短并移除样板文字；截断至 8000 字符。
-- notes：可选；仅当有用时。
-
-${
-  args.degraded
-    ? `## 降级模式
-- 返回相同的 JSON 模式，但保持输出极其紧凑。
-- 仍然包含截图数组（每个 screenshot_id 一个条目），但除非绝对必要，否则省略 ocr_text, ui_text_snippets 和 notes。
-- 仅关注 segments（事件 + merge_hint）和实体。`
-    : ""
-}
-
-## 指令
-1. 按顺序审查所有截图（1..${args.screenshotMeta.length}）。
-2. 识别片段并为每个片段分配 screen_ids。
-3. 遵循上述约束填充每个字段。
-4. 仅返回 JSON 对象——不要有额外文本或代码围栏。`;
+## Hard Rules
+1. Output MUST be valid JSON only. No markdown fences.
+2. Output exactly one node per input screenshot.
+3. screenshot_index must match the input screenshot order (1-based).
+4. NEVER invent URLs - only include if clearly visible.
+5. NEVER hallucinate facts.
+6. If no knowledge content, set knowledge: null.
+7. If no state snapshot, set state_snapshot: null.
+8. If no action items, set action_items: null.`;
 
 const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级屏幕截图分析师。
 
-你的目标是生成一个紧凑、完全结构化的 JSON 索引，以便在没有图像的情况下存储和后续使用。
+你的目标：分析每张截图并提取结构化信息。每张截图输出一个上下文节点。
 
-解读规则：
-- "segment"（片段）代表一个连贯的用户活动（事件）。如果批次包含多个不同的活动，请输出多个片段。
-  - "derived"（派生）项是与片段事件绑定的可选提取物。它们对应于：
-    - knowledge（知识）：可重用的事实/概念（非用户操作）
-    - state（状态）：某个对象在当时状态的快照
-    - procedure（步骤）：从序列中推断出的可重用的分步过程
-    - plan（计划）：明确的后续意图/待办事项
+**重要：你必须使用中文回复所有文本字段（title、summary、description 等）。**
 
-提取策略：
-- 始终首先提取 Event（事件，即 current_user 正在做的事情）。
-- 然后，当截图中包含以下内容时，主动提取派生项：
-  - 文档/规范/架构/配置说明 => knowledge
-  - 仪表板/看板/状态面板/指标 => state
-  - 可重用的多步骤操作流程 => procedure
-  - 明确的待办事项/下一步/未来目标 => plan
+## 核心原则
 
-风格匹配（非常重要）：
-- event（事件）：必须以 "current_user" 为主语描述用户行为（例如 "current_user 正在编辑..."，"current_user 正在调试..."）。
-- knowledge/state/procedure（知识/状态/步骤）：不得描述用户行为；描述知识/状态/过程本身。
-- plan（计划）：必须描述未来的意图/待办内容。
+1. **一对一映射**：每张截图产生且仅产生一个上下文节点。
+2. **以用户为中心**：主体始终是 "current_user"（屏幕操作员）。
+3. **具体性**：包含具体的标识符（项目名称、文件名、任务 ID、可见的 URL）。
+4. **基于事实**：仅提取截图中可见的信息。绝不编造 URL 或事实。
 
-主体识别：
-- "current_user"（当前用户）是屏幕操作员（这些截图的拍摄者）。
-- 截图中可见的姓名（人、组织等）不自动视为 "current_user"；请将它们作为独立的实体。
+## 输出 JSON 模式
 
-## 输出 JSON（必须是有效的 JSON，且必须完全遵循此结构）
 {
-  "segments": [
+  "nodes": [
     {
-      "segment_id": "seg_1",
-      "screen_ids": [1, 2],
-      "event": {
-        "title": "current_user 正在 Jenkins 中调试 CI 流水线",
-        "summary": "current_user 正在 Jenkins 仪表板中查看失败的构建日志，调查测试失败原因",
-        "confidence": 8,
-        "importance": 7
+      "screenshot_index": 1,
+      "title": "current_user 正在调试 auth-service 中的 TypeScript 编译错误",
+      "summary": "current_user 正在查看 VS Code 中 auth-service 项目的 TypeScript 编译错误，错误提示 AuthResponse 类型缺少属性",
+      "app_context": {
+        "app_hint": "Visual Studio Code",
+        "window_title": "auth.ts - auth-service",
+        "source_key": "window:123",
+        "project_name": "auth-service",
+        "project_key": "auth-service"
       },
-      "derived": {
-        "knowledge": [
-          {"title": "Jenkins 流水线配置", "summary": "流水线使用 3 个阶段：构建、测试、部署。源 URL：https://xxx"}
-        ],
-        "state": [
-          {"title": "CI 构建状态", "summary": "构建 #456 在测试阶段失败，有 2 个单元测试未通过", "object": "Jenkins 流水线"}
-        ],
-        "procedure": [],
-        "plan": []
+      "knowledge": null,
+      "state_snapshot": {
+        "subject_type": "error",
+        "subject": "TypeScript 编译",
+        "current_state": "失败，1 个错误",
+        "issue": {
+          "detected": true,
+          "type": "error",
+          "description": "类型 'AuthResponse' 上不存在属性 'refreshToken'",
+          "severity": 3
+        }
       },
-      "merge_hint": {
-        "decision": "NEW"
-      },
-      "keywords": ["调试", "CI", "Jenkins", "构建失败"]
+      "entities": [
+        { "name": "auth-service", "type": "repo" },
+        { "name": "AuthResponse", "type": "other" }
+      ],
+      "action_items": [
+        { "action": "在 AuthResponse 接口中添加 refreshToken 属性", "priority": "high", "source": "inferred" }
+      ],
+      "ui_text_snippets": ["Property 'refreshToken' does not exist on type 'AuthResponse'", "TS2339"],
+      "importance": 7,
+      "confidence": 9,
+      "keywords": ["TypeScript", "编译错误", "auth-service"]
     }
-  ],
-  "entities": ["Jenkins", "构建 #456"],
-  "screenshots": [
-    {
-      "screenshot_id": 123,
-      "app_guess": { "name": "Google Chrome", "confidence": 0.82 },
-      "ocr_text": "...",
-      "ui_text_snippets": ["构建 #456 失败", "2 个测试失败"]
-    }
-  ],
-  "notes": "可选备注"
+  ]
 }
 
-## 分段规则（事件提取）
-- 总共输出 1-4 个片段。
-- 每个片段必须在语义上连贯（一个明确的任务/目标）。不要将不相关的任务混入同一个片段。
-- 优先组合属于同一个活动的相邻截图。
-- "screen_ids" 是此批次内的从 1 开始的索引（不是数据库 ID）。
-- "segment_id" 在此 JSON 输出中必须唯一（推荐格式："seg_<唯一标识>"）。
+## 字段要求
 
-## event（事件，标题/摘要）规则
-- 风格：用自然语言描述 "谁正在做什么"。使用 "current_user" 作为主语。
-- title（标题，<=100 字符）：具体的、面向操作的。当可以识别时，必须包含项目/仓库名称（例如 "current_user 正在调试 auth-service"，"current_user 正在审查 mnemora 仓库中的 PR"）。
-- summary（摘要，<=200 字符）：包含具体细节（什么应用/页面、正在编辑/查看/决定的内容、PR/Issue ID 等关键标识符）。避免使用类似 "正在处理事务" 之类的模糊短语。
-- **项目/仓库提取**：从以下内容中提取项目名称、代码仓库名称和仓库标识符：
-  - 文件路径（例如 "/home/user/repos/mnemora/src" → "mnemora 仓库"）
-  - IDE 窗口标题（例如 "auth-service - Visual Studio Code"）
-  - Git 操作（例如针对 "main" 分支的 "git push origin main"）
-  - URL 模式（例如 "github.com/org/project-name"）
-- **协作上下文**：可见时，提取并包含：
-  - Jira 任务 ID 和评论（例如 "PROJ-1234：在评论中讨论方案"）
-  - Teams/Slack 会话主题（例如 "在 #dev-ops 频道讨论部署"）
-  - PR 审查评论和决定
-  - 会议记录上下文
-- confidence（置信度）：0-10，基于证据的清晰度。
-- importance（重要性）：0-10，基于该活动对于后续回溯/搜索的价值。
+### title (必填, ≤100 字符, 中文)
+- 必须以 "current_user" 作为主体开头
+- 当可识别时，必须包含项目/仓库名称
+- 面向行动：描述用户正在做什么
 
-## 派生规则（至关重要 - 遵循精确模式）
-- 通用：派生项必须基于截图中的可见证据。不得捏造。
-- **重要：所有派生项（knowledge, state, procedure, plan）必须具有以下字段：**
-  - "title": 字符串 (<=100 字符) - 简短的描述性标题
-  - "summary": 字符串 (<=180 字符) - 简要说明
-  - "steps": 字符串数组（仅用于 procedure 项，每步 <=80 字符）
-  - "object": 字符串（可选，仅用于 state 项以指定正在追踪的对象）
-- **每个派生类别（knowledge, state, procedure, plan）最多 2 项**
+### summary (必填, ≤500 字符, 中文)
+- 活动的详细描述
+- 包含：正在使用的应用、具体任务、进度指示符、关键标识符
 
-### 派生项 JSON 示例（使用此确切结构）：
-- 知识项：{"title": "API 速率限制规则", "summary": "每用户每分钟限制 100 次请求。"}
-- 状态项：{"title": "CI 流水线状态", "summary": "构建 #456 在测试阶段失败，有 3 个测试未通过", "object": "CI 流水线"}
-- 步骤项：{"title": "部署到生产环境", "summary": "主应用的标准部署工作流", "steps": ["在本地运行测试", "创建 PR", "等待 CI", "合并并部署"]}
-- 计划项：{"title": "重构认证模块", "summary": "计划下个迭代将 JWT 迁移至基于会话的认证"}
+### app_context (必填)
+- app_hint：仅当匹配流行/常见的应用（如 Chrome、VS Code、Slack）时，才返回规范的应用名称。否则返回 null。
+- window_title：如果可识别，保留原始窗口标题，否则为 null。
+- source_key：从输入元数据中透传。
+- project_name：如果可识别，填写 UI 中显示的用户项目/仓库/工作区名称（尤其是 IDE 的窗口标题）。否则为 null。
+- project_key：用于分线索的稳定规范化 key（小写）。如果无法识别项目，请设为 null。
 
-### 禁止事项（这些会导致验证错误）：
-- 错误的状态项：{"object": "服务器", "status": "运行中", "details": "..."} - 缺失标题和摘要！
-- 错误的步骤项：{"title": "...", "steps": [...]} - 缺失摘要！
-- 错误：任何派生类别中超过 2 项内容
+### knowledge (可选)
+- 仅当用户正在阅读文档、博客、教程时填充
+- content_type: tech_doc|blog|product_doc|tutorial|api_doc|wiki|other
+- language: "en" | "zh" | "other" ("en"/"zh" 会触发 OCR)
+- text_region：对 OCR 优化非常重要
 
-## merge_hint 规则（线索连贯性）- 至关重要
-- 默认："decision" = "NEW"（大多数情况下使用此项）
-- 仅当满足以下所有条件时才使用 "MERGE"：
-  1. 下方的历史上下文中提供了最近的线索 (thread)
-  2. 此片段明显是所提供线索中活动的延续
-  3. 你将 "thread_id" 设置为所提供历史中完全一致的 thread_id
-- **如果没有提供历史记录或无法匹配 thread_id，你必须使用 "NEW"**
-- **严禁在没有提供历史记录中有效 thread_id 的情况下使用 "MERGE"**
+### state_snapshot (可选)
+- 如果可见仪表板/指标/构建状态或问题，请填充
+- issue：如果检测到错误/Bug/阻碍/警告，请填写 issue 对象（description 用中文）
 
-## keywords 规则
-- 0-10 个有助于搜索的简短关键词（主题 + 动作）。避免使用过于宽泛的词语。
+### entities (最多 10 个)
+- 仅命名实体；排除通用术语
+- type 必须是以下之一：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+- 如果可见，请包含 raw/confidence
 
-## 长度限制
-- 标题：最大 100 字符。
-- 摘要：最大 500 字符。简洁但具有描述性。如果屏幕包含复杂数据（例如数据库模式、代码逻辑、日志错误），请在摘要中包含具体细节。
+### action_items (可选, 中文)
+- 仅当可见明确的待办事项/下一步时
+- priority: "high" | "medium" | "low"
+- source: "explicit" 或 "inferred"
+- action 字段使用中文描述
 
-## 实体规则
-- 整个批次中 0-20 个规范的命名实体（人物/组织/团队/应用/产品/仓库/项目/任务单，如 "ABC-123"）。
-- 排除通用技术术语、库、命令、文件路径和文件夹，如 "npm", "node_modules", "dist", ".git"。
+### ui_text_snippets (最多 5 个, 每个 ≤200 字符)
+- 高信号 UI 文本：标题、关键消息、错误（保留原始语言）
 
-## 截图证据规则
-- 为输入元数据中的每一张截图包含一个条目。
-- "screenshot_id" 必须与输入元数据中的数据库 ID 完全匹配。
-- app_guess（应用猜测，可选）：识别截图显示的主要应用程序。
-  - name（名称）：必须是提供的规范候选应用之一，或 "unknown", "other" 之一。
-  - confidence（置信度）：0..1。仅当你比较确定时使用 >= 0.7。
-- ocr_text（可选，<=8000 字符）：按阅读顺序复制可见文本；移除明显的噪音/重复的范本。
-- ui_text_snippets（可选，<=20 项，每项 <=200 字符）：挑选信号最强的行（标题、决定、任务单 ID、关键聊天消息）。去重。排除纯时间戳行、哈希值和目录路径。
+### importance/confidence (0-10)
 
-## 隐私/脱敏
-- 如果看到敏感信息（API 密钥、令牌、密码、私钥），请用 "***" 替换敏感部分。
+### keywords (最多 5 个, 可中英混合)
 
 ## 硬性规则
-1) 仅返回一个符合请求模式的 JSON 对象。
-2) 遵守所有最大数量和长度限制。
-3) 避免抽象的概括（例如 "查看了某些内容"，"处理了代码"）；包含截图中可见的具体细节。
-4) 如果某些内容不存在，使用空数组或省略可选字段。**严禁幻觉，尤其是严禁编造 URL。** 仅在截图明确可见且可辨认时才包含 URL。
-5) 所有片段必须具有包含 "title" 和 "summary" 的 "event" 对象 - 这是强制性的。
-6) 所有派生项必须具有 "title" 和 "summary" 字段 - 无一例外。
-7) 输出必须是有效的 JSON 对象。不要包含 markdown 代码块或任何其他文本。
-8) 禁止：不要包含占位符 URL（如 "https://example.com"）。如果看不到 URL，请直接忽略。`;
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 每张输入截图必须对应输出一个节点。
+3. screenshot_index 必须匹配输入截图顺序（从 1 开始）。
+4. 绝不编造 URL - 仅在清晰可见时包含。
+5. 绝不幻觉事实。
+6. 如果没有 knowledge 内容，设置 knowledge: null。
+7. 如果没有状态快照，设置 state_snapshot: null。
+8. 如果没有行动项，设置 action_items: null。
+9. **所有描述性文本字段必须使用中文。**`;
 
-// ============================================================================
-// Text LLM Processor Prompts
-// ============================================================================
+const VLM_USER_PROMPT_EN = (
+  args: VLMUserPromptArgs
+) => `Analyze the following ${args.count} screenshots and produce the structured JSON described in the system prompt.
 
-const TEXT_LLM_EXPAND_SYSTEM_PROMPT_EN = `You are a top AI analyst and context-structuring expert. Your task is to convert a VLM Index (segments + evidence) into a compact, queryable ContextGraph update.
+## Current User Time Context
+Current time: ${args.now.toISOString()}
+Current Unix timestamp (ms): ${args.nowTs}
+Timezone: ${args.timeZone}
+UTC Offset: ${args.utcOffset}
 
-Core Principles:
-1. Faithfulness: Do not invent facts. Only use information present in the input.
-2. Content Fusion: Integrate related details into coherent nodes. Avoid fragmentation and redundancy.
-3. Traceability: Every node must reference database screenshot IDs via "screenshot_ids". Every derived node must be linked to its source event via an edge.
-4. Searchability: Titles and summaries must be specific (include concrete identifiers like file names, tickets, commands, UI labels when present). Keywords must be high-signal and deduplicated.
-5. Thread Continuity: Each event node must have "thread_id". Respect merge_hint: if decision is MERGE and thread_id is present, reuse it; otherwise create a new thread_id.
-6. NO Hallucinated URLs: Do NOT invent URLs for repositories, projects, or documents. Only include a URL if it is explicitly present in the input VLM index or evidence.
+## Time Reference Points (Unix milliseconds)
+- Today start (00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
 
-**Title/Summary Enhancement Rules**:
-- Titles MUST include project/repo names when identifiable (e.g., "Debugging auth-service", "PR review in mnemora repo", "JIRA-1234 discussion").
-- Extract project identifiers from:
-  - File paths (e.g., "/repos/mnemora/src" → "mnemora")
-  - IDE window titles (e.g., "api-gateway - VS Code" → "api-gateway")
-  - Git operations and branch names
-  - URL patterns (e.g., "github.com/org/project")
-- Include collaboration context when present:
-  - Jira ticket IDs and comment content (e.g., "PROJ-1234: reviewing feedback")
-  - Teams/Slack discussion topics
-  - PR review comments and decisions
-  - Meeting notes and action items
+## Screenshot Metadata (order = screenshot_index)
+${args.screenshotMetaJson}
 
-Output Format:
-Return ONLY valid JSON with:
-- "nodes": array of nodes
-- "edges": array of edges (optional)
+## Canonical App Candidates (for app_context.app_hint)
+${args.appCandidatesJson}
 
-Node schema:
-- "kind": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan"
-- "thread_id": string (required for kind="event", omit otherwise)
-- "title": string (<= 100 chars)
-- "summary": string (<= 200 chars)
-- "keywords": array of strings (max 10)
-- "entities": array of objects with:
-  - "name": string
-  - "entityType": string (optional)
-  - "entityId": number (optional)
-  - "confidence": number between 0 and 1 (optional)
-- "importance": integer 0-10
-- "confidence": integer 0-10
-- "screenshot_ids": array of database screenshot IDs
-- "event_time": timestamp in milliseconds (required for all nodes)
+## App mapping rules (critical)
+- app_context.app_hint MUST be a canonical name from the list above.
+- **IMPORTANT**: These are commercial software products (IDEs, browsers, chat apps, etc.), NOT user projects or code repositories. Do NOT confuse an app name with a project name.
+  - Do NOT identify "Antigravity" as a user project - it is an IDE app, even if it appears in window titles like "Antigravity - mnemora".
+  - Do NOT identify "Windsurf" as a user project - it is an IDE app.
+  - Do NOT identify "Cursor" as a user project - it is an IDE app.
+  - Do NOT identify "Visual Studio Code" as a user project - it is an IDE app.
+  - Do NOT identify "Google Chrome" or "Arc" as a user project - they are browsers.
+- If the UI shows aliases like "Chrome", "google chrome", "arc", etc., map them to the canonical app name.
+- If you cannot confidently map to one canonical app, set app_hint to null.
 
-Edge schema:
-- "from_index": integer (index into nodes)
-- "to_index": integer (index into nodes)
-- "edge_type": "event_produces_knowledge" | "event_updates_state" | "event_uses_procedure" | "event_suggests_plan"
-
-Hard Rules:
-1. Each VLM segment MUST produce at least one event node.
-2. Each derived item MUST produce a separate node and an edge from its source event.
-3. "screenshot_ids" MUST be database IDs (use Screenshot Mapping).
-4. "event_time" MUST be provided for ALL nodes (including derived ones), using the midpoint timestamp of the segment screenshots (milliseconds).
-5. Do not output markdown, explanations, or extra text.`;
-
-const TEXT_LLM_EXPAND_SYSTEM_PROMPT_ZH = `你是一个顶尖的 AI 分析师和上下文结构化专家。你的任务是将 VLM 索引（片段 + 证据）转换为紧凑、可查询的 ContextGraph 更新。
-
-核心原则：
-1. 忠实度：不得捏造事实。仅使用输入中存在的信息。
-2. 内容融合：将相关细节整合到连贯的节点中。避免碎片化和冗余。
-3. 可追溯性：每个节点必须通过 "screenshot_ids" 引用数据库截图 ID。每个派生节点必须通过边连接到其源事件。
-4. 可搜索性：标题和摘要必须具体（包含具体标识符，如文件名、任务单、命令、UI 标签（如果存在））。关键词必须具有高信号量且已去重。
-5. 线索连贯性：每个事件节点必须具有 "thread_id"。尊重 merge_hint：如果决策是 MERGE 且存在 thread_id，则重用它；否则创建新的 thread_id。
-6. 禁止编造 URL：不得为仓库、项目或文档编造 URL。只有当输入 VLM 索引或证据中明确存在 URL 时才包含它。
-
-**标题/摘要增强规则**：
-- 标题在可识别时必须包含项目/仓库名称（例如 "正在调试 auth-service"，"正在 mnemora 仓库中进行 PR 审查"，"JIRA-1234 讨论"）。
-- 从以下内容中提取项目标识符：
-  - 文件路径（例如 "/repos/mnemora/src" → "mnemora"）
-  - IDE 窗口标题（例如 "api-gateway - VS Code" → "api-gateway"）
-  - Git 操作和分支名称
-  - URL 模式（例如 "github.com/org/project"）
-- 包含协作上下文（如果存在）：
-  - Jira 任务 ID 和评论内容（例如 "PROJ-1234：正在查阅反馈"）
-  - Teams/Slack 讨论主题
-  - PR 审查评论和决定
-  - 会议记录和行动项
-
-输出格式：
-仅返回包含以下内容的有效 JSON：
-- "nodes"：节点数组
-- "edges"：边数组（可选）
-
-节点模式：
-- "kind": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan"
-- "thread_id": 字符串（kind="event" 时必填，否则省略）
-- "title": 字符串 (<= 100 字符)
-- "summary": 字符串 (<= 200 字符)
-- "keywords": 字符串数组（最多 10 个）
-- "entities": 对象数组，包含：
-  - "name": 字符串
-  - "entityType": 字符串（可选）
-  - "entityId": 数字（可选）
-  - "confidence": 0 到 1 之间的数字（可选）
-- "importance": 整数 0-10
-- "confidence": 整数 0-10
-- "screenshot_ids": 数据库截图 ID 数组
-- "event_time": 毫秒级时间戳（所有节点必填）
-
-边模式：
-- "from_index": 整数（节点数组中的索引）
-- "to_index": 整数（节点数组中的索引）
-- "edge_type": "event_produces_knowledge" | "event_updates_state" | "event_uses_procedure" | "event_suggests_plan"
-
-硬性规则：
-1. 每个 VLM 片段必须产生至少一个事件节点。
-2. 每个派生项必须产生一个单独的节点，以及一条来自其源事件的边。
-3. "screenshot_ids" 必须是数据库 ID（使用截图映射）。
-4. 必须为所有节点（包括派生节点）提供 "event_time"，使用片段截图的中点时间戳（毫秒）。
-5. 不要输出 markdown、说明或额外文本。`;
-
-const TEXT_LLM_MERGE_SYSTEM_PROMPT_EN = `You are a top AI analyst and information integration expert.
-
-Task:
-Merge two context nodes of the SAME kind into one coherent node.
-
-Core Principles:
-1. Faithfulness: Do not invent facts. Only use information present in the inputs.
-2. Content Fusion: Integrate complementary details into a single coherent title/summary; avoid redundant phrasing.
-3. Searchability: Use concrete identifiers (file names, tickets, commands, UI labels) when present.
-4. De-duplication: Keywords and entities must be deduplicated.
-
-Output Format:
-Return ONLY valid JSON object with fields:
-- title (<= 100 chars)
-- summary (<= 200 chars)
-- keywords (string[], max 10)
-- entities (array of objects with name, entityType?, entityId?, confidence?)
-
-Do not output markdown or extra text.`;
-
-const TEXT_LLM_MERGE_SYSTEM_PROMPT_ZH = `你是一个顶尖的 AI 分析师和信息整合专家。
-
-任务：
-将两个同类型的上下文节点合并为一个连贯的节点。
-
-核心原则：
-1. 忠实度：不得捏造事实。仅使用输入中存在的信息。
-2. 内容融合：将补充细节整合到单一的连贯标题/摘要中；避免冗余表述。
-3. 可搜索性：使用具体的标识符（文件名、任务单、命令、UI 标签（如果存在））。
-4. 去重：关键词和实体必须去重。
-
-输出格式：
-仅返回包含以下字段的有效 JSON 对象：
-- title (<= 100 字符)
-- summary (<= 200 字符)
-- keywords (字符串数组，最多 10 个)
-- entities (对象数组，包含 name, entityType?, entityId?, confidence?)
-
-不要输出 markdown 或额外文本。`;
-
-const TEXT_LLM_EXPAND_USER_PROMPT_EN = (
-  args: TextLLMExpandUserPromptArgs
-) => `Please expand the following VLM Index into storable context nodes.
-
-## Current User Time Context (for relative time interpretation)
-- local_time: ${args.localTime}
-- time_zone: ${args.timeZone}
-- utc_offset: ${args.utcOffset}
-- now_utc: ${args.now.toISOString()}
-
-## VLM Segments
-${args.segmentsJson}
-
-## Screenshot Mapping (screen_id -> database_id)
-${args.screenshotMappingJson}
-
-## Evidence Packs
-${args.evidenceJson}
-
-## Batch Info
-- Batch ID: ${args.batchId}
-- Source Key: ${args.sourceKey}
-- Time Range: ${args.batchTimeRange}
-
-## VLM Entities (batch-level candidates)
-${args.vlmEntitiesJson}
+## Project/workspace identification rules (critical)
+- ALWAYS try to extract app_context.project_name and app_context.project_key for coding-related apps (e.g., VS Code, Cursor, Windsurf, Antigravity), using the visible window title and any on-screen indicators.
+- For IDEs, the window title usually contains workspace/project info. Prefer the workspace/repo name over the current file name.
+- project_key MUST represent the project/workspace identity (stable across time). If there are multiple open projects, pick the one that the current window clearly belongs to.
+- If project cannot be identified with high confidence, set project_name and project_key to null.
 
 ## Instructions
-1. Produce at least one event node for each segment.
-2. For each derived item (knowledge/state/procedure/plan), create a separate node and an edge from its source event.
-3. Convert segment screen_ids (1-based indexes) to database screenshot_ids using the Screenshot Mapping section.
-4. Use Evidence Packs (OCR + UI snippets) only to enrich specificity; do not invent any facts.
-5. Output must be strict JSON only (no markdown, no code fences, no extra commentary).
+1. Review all screenshots in order (1..${args.count}).
+2. Extract one context node per screenshot based ONLY on visual evidence.
+3. Return ONLY the JSON object - no extra text or code fences.`;
 
-Return the JSON now:`;
+const VLM_USER_PROMPT_ZH = (
+  args: VLMUserPromptArgs
+) => `分析以下 ${args.count} 张截图，并生成系统提示中描述的结构化 JSON。
 
-const TEXT_LLM_EXPAND_USER_PROMPT_ZH = (
-  args: TextLLMExpandUserPromptArgs
-) => `请将以下 VLM 索引展开为可存储的上下文节点。
+## 当前用户时间上下文
+当前时间：${args.now.toISOString()}
+当前 Unix 时间戳 (ms)：${args.nowTs}
+时区：${args.timeZone}
+UTC 偏移：${args.utcOffset}
 
-## 当前用户时间上下文（用于相对时间解释）
-- 本地时间: ${args.localTime}
-- 时区: ${args.timeZone}
-- UTC 偏移: ${args.utcOffset}
-- 当前 UTC: ${args.now.toISOString()}
+## 时间参考点 (Unix 毫秒)
+- 今天开始 (00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
 
-## VLM 片段
-${args.segmentsJson}
+## 截图元数据 (顺序 = screenshot_index)
+${args.screenshotMetaJson}
 
-## 截图映射 (screen_id -> database_id)
-${args.screenshotMappingJson}
+## 规范应用候选 (用于 app_context.app_hint)
+${args.appCandidatesJson}
 
-## 证据包
-${args.evidenceJson}
+## 应用映射规则 (关键)
+- app_context.app_hint 必须是上述列表中的规范名称。
+- **重要**：这些是商业软件产品（IDE、浏览器、聊天应用等），而不是用户的项目或代码仓库。不要将应用名称与项目名称混淆。
+  - 不要将 "Antigravity" 识别为用户项目 - 它是一个 IDE 应用，即使它出现在类似 "Antigravity - mnemora" 的窗口标题中。
+  - 不要将 "Windsurf" 识别为用户项目 - 它是一个 IDE 应用。
+  - 不要将 "Cursor" 识别为用户项目 - 它是一个 IDE 应用。
+  - 不要将 "Visual Studio Code" 识别为用户项目 - 它是一个 IDE 应用。
+  - 不要将 "Google Chrome" 或 "Arc" 识别为用户项目 - 它们是浏览器。
+- 如果 UI 显示别名如 "Chrome"、"google chrome"、"arc" 等，请将其映射到规范的应用名称。
+- 如果无法自信地映射到一个规范应用，请将 app_hint 设置为 null。
 
-## 批次信息
-- 批次 ID: ${args.batchId}
-- 源 Key: ${args.sourceKey}
-- 时间范围: ${args.batchTimeRange}
-
-## VLM 实体 (批次级候选)
-${args.vlmEntitiesJson}
+## 项目/工作区识别规则 (关键)
+- 对于编程相关应用（如 VS Code、Cursor、Windsurf、Antigravity），你必须尽力提取 app_context.project_name 与 app_context.project_key，依据可见的窗口标题和屏幕上的项目/工作区提示。
+- 在 IDE 场景中，窗口标题通常包含工作区/仓库信息。优先提取工作区/仓库名，而不是当前文件名。
+- project_key 必须代表项目/工作区身份（跨时间稳定，用于分线索）。如果同时存在多个项目，请选择当前窗口明确所属的那个。
+- 如果无法高置信度识别项目，请将 project_name 和 project_key 设为 null。
 
 ## 指令
-1. 为每个片段生成至少一个事件节点。
-2. 对于每个派生项（knowledge/state/procedure/plan），创建一个单独的节点和一条来自其源事件的边。
-3. 使用截图映射部分将片段 screen_ids（从 1 开始的索引）转换为数据库 screenshot_ids。
-4. 仅使用证据包（OCR + UI 片段）来丰富具体性；不要捏造任何事实。
-5. 输出必须是严格的 JSON（无 markdown，无代码围栏，无额外评论）。
+1. 按顺序审查所有截图 (1..${args.count})。
+2. 仅根据视觉证据提取每张截图的一个上下文节点。
+3. 仅返回 JSON 对象 - 不要有多余的文字或代码围栏。`;
 
-现在返回 JSON：`;
+// =========================================================================
+// Thread LLM Prompts
+// =========================================================================
 
-const TEXT_LLM_MERGE_USER_PROMPT_EN = (
-  args: TextLLMMergeUserPromptArgs
-) => `Merge the following two context nodes into one.
+const THREAD_LLM_SYSTEM_PROMPT_EN = `You are an activity thread analyzer. Your task is to organize context nodes into coherent activity threads.
 
-## Existing Node
-${args.existingNodeJson}
+## Core Concepts
 
-## New Node
-${args.newNodeJson}
+- **Thread**: A continuous stream of related user activity (e.g., "Working on auth-service refactoring")
+- **Node**: A single activity snapshot from one screenshot
+- **Assignment**: Connecting a node to an existing or new thread
 
-Return the JSON object now:`;
+## Principles
 
-const TEXT_LLM_MERGE_USER_PROMPT_ZH = (
-  args: TextLLMMergeUserPromptArgs
-) => `合并以下两个上下文节点为一个。
+1. **Continuity**: Group related activities into the same thread
+2. **Coherence**: Each thread should represent one clear goal/project/task
+3. **Precision**: Don't over-merge unrelated activities
 
-## 现有节点
-${args.existingNodeJson}
+## Matching Criteria (in order of importance)
 
-## 新节点
-${args.newNodeJson}
+1. **Same project_key** - Strongest signal (node.project_key matches thread.main_project)
+2. **Same application context** - Strong signal
+3. **Related topic/technology** - Medium signal
+4. **Time proximity** (within 30 minutes) - Weak signal alone
 
-现在返回 JSON 对象：`;
+## Output JSON Schema
 
-// ============================================================================
-// Deep Search Service Prompts
-// ============================================================================
+{
+  "assignments": [
+    {
+      "node_index": 0,
+      "thread_id": "existing-uuid-here",
+      "reason": "Continues auth-service debugging from earlier"
+    },
+    {
+      "node_index": 1,
+      "thread_id": "NEW",
+      "reason": "New activity: researching database optimization"
+    }
+  ],
+  "thread_updates": [
+    {
+      "thread_id": "existing-uuid-here",
+      "current_phase": "debugging",
+      "current_focus": "OAuth2 token refresh issue"
+    }
+  ],
+  "new_threads": [
+    {
+      "title": "Researching PostgreSQL optimization",
+      "summary": "Exploring database query optimization techniques for the analytics pipeline",
+      "current_phase": "research",
+      "node_indices": [1],
+      "milestones": [
+        "Started researching PostgreSQL query optimization techniques for analytics pipeline"
+      ]
+    }
+  ]
+}
+
+## Field Requirements
+
+### assignments (required, one per input node)
+- node_index: Must match input batch node index (0-based)
+- thread_id: Use exact UUID from active_threads, or "NEW" for new thread
+- reason: Brief explanation (≤100 chars) why this assignment makes sense
+
+### thread_updates (optional)
+- Only include if node activity changes thread state
+- title: Update if activity reveals better thread description
+- summary: Update to reflect latest progress
+- current_phase: coding, debugging, reviewing, deploying, researching, meeting, etc. MUST be high-information text (e.g., "Designing OAuth2 refresh logic" instead of just "coding").
+- current_focus: Current specific focus area (high-information)
+- new_milestone: Add if significant progress detected. MUST provide a rich and descriptive milestone (e.g., "Successfully resolved the auth-service token refresh race condition after 2 hours of debugging").
+
+### new_threads (required if any node has thread_id: "NEW")
+- title: Descriptive title (≤100 chars)
+- summary: What this thread is about (≤300 chars)
+- current_phase: Initial phase
+- node_indices: All nodes assigned to this new thread
+- milestones: Initial milestones (rich description). MUST be an array (can be empty).
+
+## Hard Rules
+
+1. Output MUST be valid JSON only. No markdown fences.
+2. EVERY input node MUST have exactly one assignment.
+3. If using "NEW", there MUST be a corresponding entry in new_threads.
+4. thread_id in assignments MUST be either an exact UUID from input OR "NEW".
+5. Do NOT create a new thread if activity clearly continues an existing thread.
+6. If node.project_key is non-null and a thread's main_project is non-null but DIFFERENT, you MUST NOT assign the node to that thread.
+7. Do NOT merge unrelated activities into one thread.
+8. assignments MUST be sorted by node_index ascending.
+9. Only use thread_id values that appear in the Active Threads input; do NOT invent UUIDs.
+10. Prefer fewer threads: if multiple batch nodes describe the same new activity, group them into one new_threads entry.
+11. new_threads[].node_indices MUST contain exactly the nodes assigned to that new thread (no extra nodes; no missing nodes).`;
+
+const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的任务是将上下文节点组织成连贯的活动线索（Threads）。
+
+**重要：你必须使用中文回复所有文本字段（title、summary、reason、current_phase、current_focus、milestones 等）。**
+
+## 核心概念
+
+- **Thread (线索)**：相关用户活动的连续流（例如，"正在进行 auth-service 重构"）
+- **Node (节点)**：来自单张截图的单个活动快照
+- **Assignment (分配)**：将节点连接到现有的或新的线索
+
+## 原则
+
+1. **连续性**：将相关的活动归类到同一个线索中
+2. **连贯性**：每个线索应代表一个明确的目标/项目/任务
+3. **精准性**：不要过度合并无关的活动
+
+## 匹配准则（按重要性排序）
+
+1. **相同的 project_key** - 最强信号（node.project_key 与 thread.main_project 一致）
+2. **相同的应用上下文** - 强信号
+3. **相关的主题/技术** - 中等信号
+4. **时间接近性**（30 分钟内） - 仅此一项为弱信号
+
+## 输出 JSON 模式
+
+{
+  "assignments": [
+    {
+      "node_index": 0,
+      "thread_id": "existing-uuid-here",
+      "reason": "延续之前的 auth-service 调试工作"
+    },
+    {
+      "node_index": 1,
+      "thread_id": "NEW",
+      "reason": "新活动：研究数据库优化方案"
+    }
+  ],
+  "thread_updates": [
+    {
+      "thread_id": "existing-uuid-here",
+      "current_phase": "正在调试 OAuth2 token 刷新逻辑",
+      "current_focus": "解决 token 刷新时的竞态条件问题"
+    }
+  ],
+  "new_threads": [
+    {
+      "title": "研究 PostgreSQL 查询优化",
+      "summary": "探索分析管道的数据库查询优化技术，提升查询性能",
+      "current_phase": "技术调研阶段",
+      "node_indices": [1],
+      "milestones": [
+        "开始研究 PostgreSQL 查询优化技术以改进分析管道性能"
+      ]
+    }
+  ]
+}
+
+## 字段要求
+
+### assignments (必填，每个输入节点对应一个)
+- node_index：必须匹配输入批次节点的索引（从 0 开始）
+- thread_id：使用 active_threads 中确切的 UUID，或对于新线索使用 "NEW"
+- reason：简要说明为什么这样分配是合理的（**用中文**）
+
+### thread_updates (可选, 所有文本字段用中文)
+- 仅当节点活动改变了线索状态时包含
+- title：如果活动揭示了更好的线索描述，请更新（中文）
+- summary：更新以反映最新进展（中文）
+- current_phase：必须是高信息量的文本（例如，"正在设计 OAuth2 刷新逻辑" 而不仅仅是 "编码"）
+- current_focus：当前具体的关注领域（高信息量，中文）
+- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，"经过 2 小时的调试，成功解决了 auth-service 的 token 刷新竞态条件"）
+
+### new_threads (如果任何节点的 thread_id 为 "NEW"，则必填)
+- title：描述性标题（中文）
+- summary：该线索的内容（中文）
+- current_phase：初始阶段（中文）
+- node_indices：分配给此新线索的所有节点
+- milestones：初始里程碑（丰富的描述，中文）。必须是一个数组（可以为空）。
+
+## 硬性规则
+
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 每个输入节点必须且仅有一个分配。
+3. 如果使用 "NEW"，必须在 new_threads 中有相应的条目。
+4. assignments 中的 thread_id 必须是来自输入的精确 UUID 或 "NEW"。
+5. 如果活动显然延续了现有线索，请不要创建新线索。
+6. 如果 node.project_key 不为 null，且某个现有 thread 的 main_project 不为 null 但与之不同，则你绝对不能把该 node 分配到该 thread。
+7. 不要将无关的活动合并到一个线索中。
+8. assignments 必须按 node_index 升序排序。
+9. 仅使用 Active Threads 输入中出现的 thread_id 值；不要发明 UUID。
+10. 优先减少线索数量：如果多个批次节点描述相同的活动，请将它们归类到一个 new_threads 条目中。
+11. new_threads[].node_indices 必须准确包含分配给该新线索的节点（不得有多余节点，也不得缺失节点）。
+12. **所有描述性文本字段必须使用中文。**`;
+
+const THREAD_LLM_USER_PROMPT_EN = (
+  args: ThreadLLMUserPromptArgs
+) => `Analyze the following batch of context nodes and assign them to threads.
+
+## Current Time Context
+Current time: ${args.now.toISOString()}
+Current Unix timestamp (ms): ${args.nowTs}
+Timezone: ${args.timeZone}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
+
+## Active Threads (most recent first)
+${args.activeThreadsJson}
+
+## Each Thread's Recent Nodes (Faithful Context)
+${args.threadRecentNodesJson}
+
+## New Nodes from This Batch (to be assigned)
+${args.batchNodesJson}
+
+## Instructions
+1. For each new node, determine the best thread assignment.
+2. Use existing thread_id if activity continues that thread.
+3. Use "NEW" if this is a clearly different activity.
+4. Update thread metadata (phase, focus, milestones) using high-information, rich descriptions.
+5. Return ONLY the JSON object - no extra text.`;
+
+const THREAD_LLM_USER_PROMPT_ZH = (
+  args: ThreadLLMUserPromptArgs
+) => `分析以下批次的上下文节点并将其分配给线索（Threads）。
+
+## 当前时间上下文
+当前时间：${args.now.toISOString()}
+当前 Unix 时间戳 (ms)：${args.nowTs}
+时区：${args.timeZone}
+
+## 时间参考点 (Unix 毫秒，请使用这些进行时间计算！)
+- 今天开始 (00:00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 活跃线索 (按最近排序)
+${args.activeThreadsJson}
+
+## 每个线索的最近节点 (忠实上下文)
+${args.threadRecentNodesJson}
+
+## 本批次的新节点 (待分配)
+${args.batchNodesJson}
+
+## 指令
+1. 对于每个新节点，确定最佳的线索分配。
+2. 如果活动延续了该线索，请使用现有的 thread_id。
+3. 如果这显然是一个不同的活动，请使用 "NEW"。
+4. 使用高信息量、丰富的描述更新线索元数据（阶段、关注点、里程碑）。
+5. 仅返回 JSON 对象 - 不要有多余的文字。`;
+
+// =========================================================================
+// Deep Search Prompts
+// =========================================================================
 
 const QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN = `You are a search query analyzer. Your task is to parse a user's natural language query and extract structured search parameters.
 
 ## Output Schema (JSON only)
 
 {
-  "embeddingText": string,      // Optimized text for semantic search (normalized entities, clear intent)
-  "filtersPatch": {             // Optional extracted filters
-    "timeRange": { "start": number, "end": number },  // Unix timestamps in milliseconds
-    "appHint": string,          // Application name if mentioned (MUST be one of Canonical App Candidates)
+  "embedding_text": string,     // Optimized text for semantic search (normalized entities, clear intent)
+  "filters_patch": {            // Optional extracted filters
+    "time_range": { "start": number, "end": number }, // Unix timestamps in milliseconds
+    "app_hint": string,         // Application name if mentioned (MUST be one of Canonical App Candidates)
     "entities": string[]        // Entity names mentioned (0-20, see rules)
   },
-  "kindHint": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile",
-  "extractedEntities": [ { "name": string, "entityType": string } ], // 0-20 named entities
+  "kind_hint": "event" | "knowledge" | "state_snapshot",
+  "extracted_entities": [ { "name": string, "type": string, "raw": string, "confidence": number } ],
   "keywords": string[],         // 0-10 high-signal keywords for exact SQL matching
-  "timeRangeReasoning": string, // Brief explanation of time parsing
+  "time_range_reasoning": string, // Brief explanation of time parsing
   "confidence": number          // 0-1
 }
 
 ## Rules
 
-1. **embeddingText**: Rephrase the query for better semantic matching. Remove filler words, normalize entity names.
-2. **filtersPatch.timeRange**: Only include if user explicitly mentions time (e.g., "yesterday", "last week", "in March").
-3. **filtersPatch.appHint**: Only include if user mentions a specific application. If provided, it MUST be one of the Canonical App Candidates provided in the prompt.
-4. **Do NOT include threadId** in filtersPatch - that's user-controlled context.
-5. **kindHint**: Infer what type of information the user is looking for.
+1. **embedding_text**: Rephrase the query for better semantic matching. Remove filler words, normalize entity names.
+2. **filters_patch.time_range**: Only include if user explicitly mentions time (e.g., "yesterday", "last week", "in March").
+3. **filters_patch.app_hint**: Only include if user mentions a specific application. If provided, it MUST be one of the Canonical App Candidates provided in the prompt.
+4. **Do NOT include thread_id** in filters_patch - that's user-controlled context.
+5. **kind_hint**: Infer what type of information the user is looking for.
 6. **confidence**: Set lower if query is ambiguous or you're uncertain about extractions.
-7. **extractedEntities** rules (same constraints as VLM entities):
+7. **extracted_entities** rules:
    - 0-20 canonical named entities across the query.
    - Only meaningful named entities (person/project/team/org/app/repo/issue/ticket like "ABC-123").
+   - type MUST be one of: person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other.
    - EXCLUDE generic tech terms, libraries, commands, file paths, and folders like "npm", "node_modules", "dist", ".git".
    - EXCLUDE URLs without meaningful names.
    - Deduplicate and prefer canonical names.
@@ -797,33 +693,36 @@ const QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN = `You are a search query analyzer. Y
 
 const QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH = `你是一个搜索查询分析器。你的任务是解析用户的自然语言查询并提取结构化的搜索参数。
 
+**重要：embedding_text 和 time_range_reasoning 字段必须使用中文。**
+
 ## 输出模式 (仅 JSON)
 
 {
-  "embeddingText": 字符串,      // 用于语义搜索的优化文本（规范化实体，明确意图）
-  "filtersPatch": {             // 可选的提取过滤器
-    "timeRange": { "start": 数字, "end": 数字 },  // Unix 毫秒级时间戳
-    "appHint": 字符串,          // 如果提到则为应用名称（必须是“规范应用候选”之一）
+  "embedding_text": 字符串,     // 用于语义搜索的优化文本（规范化实体，明确意图）
+  "filters_patch": {            // 可选的提取过滤器
+    "time_range": { "start": 数字, "end": 数字 }, // Unix 毫秒级时间戳
+    "app_hint": 字符串,         // 如果提到则为应用名称（必须是“规范应用候选”之一）
     "entities": 字符串数组       // 提到的实体名称 (0-20, 见规则)
   },
-  "kindHint": "event" | "knowledge" | "state_snapshot" | "procedure" | "plan" | "entity_profile",
-  "extractedEntities": [ { "name": 字符串, "entityType": 字符串 } ], // 0-20 个命名实体
-  "keywords": 字符串数组,         // 用于精确 SQL 匹配的 0-10 个高信号关键词
-  "timeRangeReasoning": 字符串, // 时间解析的简要说明
-  "confidence": 数字          // 0-1
+  "kind_hint": "event" | "knowledge" | "state_snapshot",
+  "extracted_entities": [ { "name": 字符串, "type": 字符串, "raw": 字符串, "confidence": 数字 } ],
+  "keywords": 字符串数组,        // 用于精确匹配的 0-10 个高信号关键词
+  "time_range_reasoning": 字符串, // 时间解析的简要说明
+  "confidence": 数字           // 0-1
 }
 
 ## 规则
 
-1. **embeddingText**：为了更好的语义匹配，请重新描述查询。移除填充词，规范化实体名称。
-2. **filtersPatch.timeRange**：仅当用户明确提到时间（例如“昨天”、“上周”、“三月”）时才包含。
-3. **filtersPatch.appHint**：仅当用户提到特定应用程序时才包含。如果提供，它必须在提示中提供的“规范应用候选”列表中。
-4. **不要在 filtersPatch 中包含 threadId** - 这是受用户控制的上下文。
-5. **kindHint**：推断用户正在寻找的信息类型。
+1. **embedding_text**：为了更好的语义匹配，请重新描述查询。移除填充词，规范化实体名称。
+2. **filters_patch.time_range**：仅当用户明确提到时间（例如“昨天”、“上周”、“三月”）时才包含。
+3. **filters_patch.app_hint**：仅当用户提到特定应用程序时才包含。如果提供，它必须在提示中提供的“规范应用候选”列表中。
+4. **不要在 filters_patch 中包含 thread_id** - 这是受用户控制的上下文。
+5. **kind_hint**：推断用户正在寻找的信息类型。
 6. **confidence**：如果查询含糊不清或对提取不确定，请设置较低的置信度。
-7. **extractedEntities** 规则（与 VLM 实体约束相同）：
+7. **extracted_entities** 规则：
    - 整个查询中 0-20 个规范的命名实体。
    - 仅包含有意义的命名实体（人物/项目/团队/组织/应用/仓库/Issue/任务单，如 "ABC-123"）。
+   - type 必须为：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
    - 排除通用技术术语、库、命令、文件路径和文件夹，如 "npm", "node_modules", "dist", ".git"。
    - 排除没有意义名称的 URL。
    - 去重并优先使用规范名称。
@@ -841,18 +740,18 @@ You will receive:
 1. The user's original query
 2. Current User Time (local time and timezone)
 3. Retrieved context nodes with these fields:
-   - id, kind, title, summary, keywords, entities (array of {name, entityType}), eventTime, localTime, threadId, screenshotIds
+   - id, kind, title, summary, keywords, entities (array of names), event_time, local_time, thread_id, screenshot_ids
 4. Screenshot evidence with these fields:
-   - screenshotId, timestamp, localTime, appHint, windowTitle, uiSnippets
+   - screenshot_id, timestamp, local_time, app_hint, window_title, ui_snippets
 
 ## Output Schema (JSON only)
 
 {
-  "answerTitle": string,        // Optional short title for the answer (≤100 chars)
+  "answer_title": string,       // Optional short title for the answer (≤100 chars)
   "answer": string,             // Main answer text (concise, factual)
   "bullets": string[],          // Key bullet points (≤8 items)
   "citations": [                // References to source nodes/screenshots
-    { "nodeId": number, "screenshotId": number, "quote": string }
+    { "node_id": number, "screenshot_id": number, "quote": string }
   ],
   "confidence": number          // 0-1, based on evidence quality
 }
@@ -861,7 +760,7 @@ You will receive:
 
 1. **Faithfulness**: ONLY use information from the provided context. Do NOT invent facts.
 2. **Local Time Enforcement**: ALL times in your answer (answer text, bullets) MUST be in the User's Local Time format (e.g., "14:30" or "2:30 PM").
-3. **Citations required**: Every claim must have at least one citation. Use nodeId or screenshotId from the input.
+3. **Citations required**: Every claim must have at least one citation. Use node_id or screenshot_id from the input.
 4. **Quote**: Short excerpt (≤80 chars) from the source as evidence. No sensitive information.
 5. **Confidence**: Set lower if evidence is sparse or contradictory. Set very low if no relevant evidence.
 6. **answer**: Keep concise and directly address the query.
@@ -873,33 +772,35 @@ You will receive:
 
 const ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH = `你是一个上下文感知的答案合成器。你的任务是根据搜索结果生成简洁、准确的答案。
 
+**重要：你必须使用中文回复所有文本字段（answer_title、answer、bullets、quote 等）。**
+
 ## 输入
 
 你将收到：
 1. 用户的原始查询
 2. 当前用户时间（本地时间和时区）
 3. 检索到的上下文节点，包含以下字段：
-   - id, kind, title, summary, keywords, entities (对象数组，包含 name, entityType), eventTime, localTime, threadId, screenshotIds
+   - id, kind, title, summary, keywords, entities (名称数组), event_time, local_time, thread_id, screenshot_ids
 4. 截图证据，包含以下字段：
-   - screenshotId, timestamp, localTime, appHint, windowTitle, uiSnippets
+   - screenshot_id, timestamp, local_time, app_hint, window_title, ui_snippets
 
 ## 输出模式 (仅 JSON)
 
 {
-  "answerTitle": 字符串,        // 答案的可选短标题 (≤100 字符)
+  "answer_title": 字符串,       // 答案的可选短标题 (≤100 字符)
   "answer": 字符串,             // 答案正文（简洁、真实）
   "bullets": 字符串数组,          // 关键点 (≤8 项)
   "citations": [                // 对源节点/截图的引用
-    { "nodeId": 数字, "screenshotId": 数字, "quote": 字符串 }
+    { "node_id": 数字, "screenshot_id": 数字, "quote": 字符串 }
   ],
-  "confidence": 数字          // 0-1, 基于证据质量
+  "confidence": 数字           // 0-1, 基于证据质量
 }
 
 ## 规则
 
 1. **忠实度**：仅使用提供的上下文中的信息。不得捏造事实。
 2. **本地时间强制要求**：答案（正文、要点）中的所有时间必须采用用户的本地时间格式（例如 "14:30" 或 "2:30 PM"）。
-3. **必须包含引用**：每个声明必须至少有一个引用。使用输入中的 nodeId 或 screenshotId。
+3. **必须包含引用**：每个声明必须至少有一个引用。使用输入中的 node_id 或 screenshot_id。
 4. **引用文段**：来自源的短摘录 (≤80 字符) 作为证据。不得包含敏感信息。
 5. **置信度**：如果证据稀疏或矛盾，请设置较低数值。如果没有相关证据，请设置极低数值。
 6. **answer**：保持简洁并直接回答查询。
@@ -913,7 +814,7 @@ const QUERY_UNDERSTANDING_USER_PROMPT_EN = (
   args: QueryUnderstandingUserPromptArgs
 ) => `Current time: ${args.nowDate.toISOString()}
 Current Unix timestamp (ms): ${args.nowTs}
-Timezone: ${args.timezone}
+Timezone: ${args.timeZone}
 
 ## Time Reference Points (Unix milliseconds, use these for time calculations!)
 - Today start (00:00:00 local): ${args.todayStart}
@@ -922,16 +823,16 @@ Timezone: ${args.timezone}
 - Yesterday end: ${args.yesterdayEnd}
 - One week ago: ${args.weekAgo}
 
-## Canonical App Candidates (for filtersPatch.appHint)
+## Canonical App Candidates (for filters_patch.app_hint)
 ${args.canonicalCandidatesJson}
 
 ## App mapping rules (critical)
-- filtersPatch.appHint MUST be a canonical name from the list above.
+- filters_patch.app_hint MUST be a canonical name from the list above.
 - If the user query uses an alias like "chrome", "google chrome", etc., map it to the canonical app name.
-- If you cannot confidently map to one canonical app, OMIT filtersPatch.appHint.
+- If you cannot confidently map to one canonical app, OMIT filters_patch.app_hint.
 
 ## Time calculation rules (critical)
-- ALWAYS use the Time Reference Points above for calculating filtersPatch.timeRange.
+- ALWAYS use the Time Reference Points above for calculating filters_patch.time_range.
 - For "today", use Today start and Today end timestamps directly.
 - For "yesterday", use Yesterday start and Yesterday end timestamps directly.
 - Do NOT calculate Unix timestamps from scratch - use the provided reference points!
@@ -944,7 +845,7 @@ const QUERY_UNDERSTANDING_USER_PROMPT_ZH = (
   args: QueryUnderstandingUserPromptArgs
 ) => `当前时间：${args.nowDate.toISOString()}
 当前 Unix 时间戳（毫秒）：${args.nowTs}
-时区：${args.timezone}
+时区：${args.timeZone}
 
 ## 时间参考点（Unix 毫秒，用于时间计算！）
 - 今天开始 (00:00:00 本地)：${args.todayStart}
@@ -953,16 +854,16 @@ const QUERY_UNDERSTANDING_USER_PROMPT_ZH = (
 - 昨天结束：${args.yesterdayEnd}
 - 一周前：${args.weekAgo}
 
-## 规范应用候选（用于 filtersPatch.appHint）
+## 规范应用候选（用于 filters_patch.app_hint）
 ${args.canonicalCandidatesJson}
 
 ## 应用映射规则（关键）
-- filtersPatch.appHint 必须是上述列表中的规范名称。
+- filters_patch.app_hint 必须是上述列表中的规范名称。
 - 如果用户查询使用别名如 "chrome", "google chrome" 等，请将其映射到规范的应用名称。
-- 如果无法自信地映射到一个规范应用，请省略 filtersPatch.appHint。
+- 如果无法自信地映射到一个规范应用，请省略 filters_patch.app_hint。
 
 ## 时间计算规则（关键）
-- 始终使用上面的时间参考点计算 filtersPatch.timeRange。
+- 始终使用上面的时间参考点计算 filters_patch.time_range。
 - 对于 "今天" (today)，直接使用今天开始和今天结束时间戳。
 - 对于 "昨天" (yesterday)，直接使用昨天开始和昨天结束时间戳。
 - 不要从头开始计算 Unix 时间戳 - 使用提供的参考点！
@@ -997,15 +898,15 @@ const ANSWER_SYNTHESIS_USER_PROMPT_ZH = (args: AnswerSynthesisUserPromptArgs) =>
 "${args.userQuery}"
 
 ## 当前用户时间
-- 本地时间：${args.localTime}
-- 时区：${args.timeZone}
-- 当前 UTC：${args.nowDate.toISOString()}
+- local_time: ${args.localTime}
+- time_zone: ${args.timeZone}
+- now_utc: ${args.nowDate.toISOString()}
 
 ## 全局摘要
 - 时间跨度：${args.formattedTimeSpanStart} 至 ${args.formattedTimeSpanEnd}
-- 热门应用：${args.topAppsStr}
-- 热门实体：${args.topEntitiesStr}
-- 种类：${args.kindsStr}
+- Top apps: ${args.topAppsStr}
+- Top entities: ${args.topEntitiesStr}
+- Kinds: ${args.kindsStr}
 
 ## 上下文节点
 ${args.nodesJson}
@@ -1013,194 +914,402 @@ ${args.nodesJson}
 ## 截图证据
 ${args.evidenceJson}
 
-根据上述上下文，提供结构化的答案以回应用户查询。记住在你的答案中仅使用本地时区 (${args.timeZone}) 的所有时间引用。`;
+基于以上上下文，为用户查询生成结构化答案。请确保所有时间引用均使用本地时间 (${args.timeZone})。`;
 
-// ============================================================================
-// Activity Monitor Service Prompts
-// ============================================================================
+// =========================================================================
+// Activity Monitor Prompts
+// =========================================================================
 
-const ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant. Your job is to summarize the user's activity within a single 20-minute window.
+const ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant. Your job is to summarize user activity within a 20-minute window.
 
-**Analysis Dimensions**:
-- **Application Usage**: what apps/tools were used
-- **Content Interaction**: what content was viewed/edited/decided
-- **Goal Behavior**: what goals were pursued
-- **Activity Pattern**: whether activity was focused or multi-threaded
+## Analysis Dimensions
 
-**Hard Output Requirements**:
-1) Return ONLY a JSON object. No markdown fences. No explanations.
-2) Do not invent facts. Every claim must be grounded in the provided Context Nodes.
-3) The markdown "summary" MUST contain exactly these 4 sections (in this order):
-   - ## Core Tasks & Projects
-   - ## Key Discussion & Decisions
-   - ## Documents
-   - ## Next Steps
-   If a section has no grounded items, output exactly one bullet: "- None".
+- **Application Usage**: What apps/tools were used
+- **Content Interaction**: What was viewed/edited/decided
+- **Goal Behavior**: What goals were pursued
+- **Activity Pattern**: Focused or multi-threaded
 
-**Section-Specific Guidelines**:
-- **Core Tasks & Projects**: Always include specific project names, code repository names, and repo identifiers when available (e.g., "Working on mnemora repo", "PR review for auth-service", "Debugging issue in api-gateway project"). Extract these from file paths, git operations, IDE window titles, or URL patterns.
-- **Key Discussion & Decisions**: Focus specifically on collaboration activities: Jira comments, Teams/Slack messages, email threads, PR review comments, meeting notes, or any decision-making discussions. Summarize the key points and outcomes.
-- **Documents**: ONLY include wiki pages, technical documentation, Confluence pages, README files, API docs, design docs, or knowledge base articles. Do NOT include source code files (.ts, .js, .py, .java, etc.) - those belong in Core Tasks & Projects. **URL Grounding**: Include URL links ONLY if they are explicitly visible in the provided evidence. DO NOT invent or assume URLs (e.g., if you see a Jira ID but not its URL, do NOT provide a link). Example: "[Design Doc: Auth Flow](URL if visible)", "JIRA-1234 (URL if visible)". If no URL is found, output as plain text.
-**JSON Fields**:
-- title: short title
-- summary: markdown with the four fixed sections
-- highlights: up to 5 short strings
-- stats: { top_apps: string[], top_entities: string[] } (must be consistent with provided Stats; do NOT introduce new apps/entities)
-- events: 1-3 event candidates with offsets within the window (minutes)`;
+## Output JSON Schema
 
-const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在单个 20 分钟窗口内的活动。
+{
+  "title": "Debugging auth-service OAuth implementation",
+  "summary": "## Core Tasks & Projects\n- Debugging OAuth2 token refresh in auth-service...",
+  "highlights": [
+    "Fixed OAuth token refresh bug",
+    "Updated API documentation"
+  ],
+  "stats": {
+    "top_apps": ["Visual Studio Code", "Google Chrome"],
+    "top_entities": ["auth-service", "OAuth2"]
+  },
+  "events": [
+    {
+      "title": "Debugging OAuth2 implementation",
+      "kind": "debugging",
+      "start_offset_min": 0,
+      "end_offset_min": 15,
+      "confidence": 8,
+      "importance": 7,
+      "description": "Investigating and fixing OAuth2 token refresh issue in auth-service",
+      "node_ids": [123, 124, 125],
+      "thread_id": "uuid-of-long-thread-if-applicable"
+    }
+  ]
+}
 
-**分析维度**：
-- **应用程序使用**：使用了哪些应用/工具
-- **内容交互**：查看/编辑/决定了哪些内容
-- **目标行为**：追求了哪些目标
-- **活动模式**：活动是专注的还是多线程的
+## Field Requirements
 
-**硬性输出要求**：
-1) 仅返回一个 JSON 对象。不要 markdown 围栏。不要有说明。
-2) 所有输出内容（包括标题、摘要、亮点等）必须使用**中文**。
-3) 不得捏造事实。每个声明都必须立足于提供的上下文节点 (Context Nodes)。
-3) markdown 格式的 "summary" 必须精确包含这 4 个部分（按此顺序）：
-   - ## 核心任务与项目
-   - ## 关键讨论与决策
-   - ## 文档
-   - ## 后续步骤
-   如果某个部分没有基于事实的项目，请精确输出一个要点："- 无"。
+### title (required, ≤100 chars)
+- One-line summary of the most significant activity
+- Include project/task name when identifiable
 
-**各部分具体准则**：
-- **核心任务与项目**：始终包含具体的项目名称、代码仓库名称和仓库标识符（如果可用）（例如 "正在处理 mnemora 仓库"，"正在审核 auth-service 的 PR"，"正在调试 api-gateway 项目中的问题"）。从文件路径、git 操作、IDE 窗口标题或 URL 模式中提取这些信息。
-- **关键讨论与决策**：专门关注协作活动：Jira 评论、Teams/Slack 消息、电子邮件线程、PR 审查评论、会议记录或任何决策讨论。总结关键点和结果。
-- **文档**：仅包含 wiki 页面、技术文档、Confluence 页面、README 文件、API 文档、设计文档或知识库文章。不得包含源代码文件（.ts, .js, .py, .java 等）——那些属于“核心任务与项目”。**URL 依据**：只有在提供的证据中明确可见时才包含 URL 链接。不要编造或假设 URL（例如，如果你看到 Jira ID 但看不到其 URL，不要提供链接）。示例："[设计文档：认证流程](如果有可见 URL)"，"JIRA-1234 (如果有可见 URL)"。如果未找到 URL，请输出为纯文本。
+### summary (required, Markdown format)
+MUST contain exactly these 4 sections in order:
 
-**JSON 字段**：
-- title: 简短标题
-- summary: 包含上述四个固定部分的 markdown
-- highlights: 最多 5 个简短字符串
-- stats: { top_apps: 字符串数组, top_entities: 字符串数组 }（必须与提供的 Stats 保持一致；不得引入新的应用/实体）
-- events: 1-3 个候选事件，带有窗口内的偏移量（分钟）`;
+#### ## Core Tasks & Projects
+- Main work activities with project names
+- Extract from: file paths, git operations, IDE titles
+- If none, output: "- None"
 
-const EVENT_DETAILS_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant.
+#### ## Key Discussion & Decisions
+- Collaboration: Jira, Slack, Teams, PR reviews, meetings
+- Summarize key points and outcomes
+- If none, output: "- None"
 
-Your job is to generate a detailed, factual deep-dive report for ONE activity event.
+#### ## Documents
+- Wiki, docs, Confluence, README, API docs.
+- **CRITICAL**: If a context node has non-null \`knowledge_json\`, summarize its content using its specific fields: \`content_type\`, \`source_url\`, \`project_or_library\`, and \`key_insights\`. Provide a coherent summary of what was learned or referenced.
+- EXCLUDE source code files (.ts, .js, etc.).
+- Include URLs ONLY if visible.
+- If none, output: "- None"
 
-**Quality Requirements**:
-- Faithful: Do NOT invent any facts (files, URLs, decisions, outcomes, numbers). Only use provided activity logs.
-- Structured: Use clear headings and bullet lists where appropriate.
+#### ## Next Steps
+- Planned actions, TODOs
+- If none, output: "- None"
 
-**Hard Output Requirements**:
-1) Output MUST be a valid JSON object and MUST match the schema exactly.
-2) Output MUST be JSON only. No markdown fences. No extra text.
+### highlights (max 5)
+- Key achievements or activities
+- Short strings (≤80 chars each)
 
-**JSON Schema**:
-{ "details": "<markdown>" }`;
+### stats
+- The input \`stats\` object may include extra numeric keys (e.g. \`thread_count\`, \`node_count\`).
+- You MUST set \`stats.top_apps\` and \`stats.top_entities\` to exactly match the input arrays.
+- Do NOT introduce new apps/entities.
+- Do NOT add extra keys beyond \`top_apps\` and \`top_entities\`.
 
-const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。
+### events (1-3 candidates)
+- Identify distinct activity periods within the window
+- kind: Match activity type
+- start_offset_min / end_offset_min: Minutes from window start (0-20)
+- node_ids: Context node IDs that belong to this event
+- **MANDATORY**: For each thread in \`long_threads\` input, you MUST generate an event with its \`thread_id\`. Use the thread's title, summary, and context to generate accurate event title and description.
+- For non-long-thread events, \`thread_id\` can be omitted
 
-你的任务是为一个活动事件生成详细、真实的深度报告。
+## Hard Rules
 
-**质量要求**：
-- 忠实：不得捏造任何事实（文件、URL、决策、结果、数字）。仅使用提供的活动日志。
-- 结构化：在适当的地方使用清晰的标题和项目符号列表。
+1. Output MUST be valid JSON only. No markdown fences.
+2. All claims MUST be grounded in provided context nodes.
+3. summary MUST contain exactly 4 sections in specified order.
+4. stats MUST match input - do NOT invent apps/entities.
+5. NEVER invent URLs not visible in evidence.
+6. **CRITICAL**: For each thread in \`long_threads\` input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.`;
 
-**硬性输出要求**：
-1) 仅返回一个 JSON 对象，必须完全符合模式。
-2) 所有输出内容（details 字段）必须使用**中文**。
-3) 仅限 JSON 输出。不要 markdown 围栏。不要有额外文本。
+const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在 20 分钟时间窗口内的活动。
 
-**JSON 模式**：
-{ "details": "<markdown>" }`;
+**重要：你必须使用中文回复所有文本字段（title、summary、highlights、description 等）。**
 
-// ============================================================================
-// Public API
-// ============================================================================
+## 分析维度
 
-const ACTIVITY_SUMMARY_USER_PROMPT_EN = (args: ActivitySummaryUserPromptArgs) =>
-  `${args.userPromptJson}\n\nTime Window: ${new Date(args.windowStart).toLocaleString()} - ${new Date(args.windowEnd).toLocaleTimeString()}`;
+- **应用使用**：使用了哪些应用/工具
+- **内容交互**：查看/编辑/决定了什么
+- **目标行为**：追求了什么目标
+- **活动模式**：专注的还是多任务的
 
-const ACTIVITY_SUMMARY_USER_PROMPT_ZH = (args: ActivitySummaryUserPromptArgs) =>
-  `${args.userPromptJson}\n\n时间窗口：${new Date(args.windowStart).toLocaleString()} - ${new Date(args.windowEnd).toLocaleTimeString()}`;
+## 输出 JSON 模式
 
-const EVENT_DETAILS_USER_PROMPT_EN = (args: EventDetailsUserPromptArgs) => args.userPromptJson;
+{
+  "title": "调试 auth-service 的 OAuth 实现",
+  "summary": "## 核心任务与项目\\n- 在 auth-service 中调试 OAuth2 token 刷新问题...",
+  "highlights": [
+    "修复了 OAuth token 刷新 bug",
+    "更新了 API 文档"
+  ],
+  "stats": {
+    "top_apps": ["Visual Studio Code", "Google Chrome"],
+    "top_entities": ["auth-service", "OAuth2"]
+  },
+  "events": [
+    {
+      "title": "调试 OAuth2 实现",
+      "kind": "debugging",
+      "start_offset_min": 0,
+      "end_offset_min": 15,
+      "confidence": 8,
+      "importance": 7,
+      "description": "调查并修复 auth-service 中的 OAuth2 token 刷新问题",
+      "node_ids": [123, 124, 125],
+      "thread_id": "uuid-of-long-thread-if-applicable"
+    }
+  ]
+}
 
-const EVENT_DETAILS_USER_PROMPT_ZH = (args: EventDetailsUserPromptArgs) => args.userPromptJson;
+## 字段要求
+
+### title (必填, ≤100 字符)
+- 对最重要的活动进行一行总结
+- 包含可识别的项目/任务名称
+
+### summary (必填, Markdown 格式)
+必须按顺序准确包含这 4 个部分：
+
+#### ## 核心任务与项目
+- 包含项目名称的主要工作活动
+- 提取自：文件路径、Git 操作、IDE 标题
+- 如果没有，输出："- 无"
+
+#### ## 关键讨论与决定
+- 协作：Jira, Slack, Teams, PR 审查, 会议
+- 总结关键点和结果
+- 如果没有，输出："- 无"
+
+#### ## 文档
+- Wiki, 文档, Confluence, README, API 文档。
+- **关键点**：如果上下文节点有非空的 \`knowledge_json\`，请使用其特定字段总结其内容：\`content_type\`、\`source_url\`、\`project_or_library\` 和 \`key_insights\`。提供对所学或所引用内容连贯的总结。
+- 排除源代码文件（.ts, .js 等）。
+- 仅在可见时包含 URL。
+- 如果没有，输出："- 无"
+
+#### ## 后续步骤
+- 计划的行动、待办事项
+- 如果没有，输出："- 无"
+
+### highlights (最多 5 个)
+- 关键成就或活动
+- 短字符串 (每个 ≤80 字符)
+
+### stats
+- 输入的 \`stats\` 对象可能包含额外的数字键（例如 \`thread_count\`, \`node_count\`）。
+- 你必须将 \`stats.top_apps\` 和 \`stats.top_entities\` 设置为与输入数组完全匹配。
+- 不要引入新的应用/实体。
+- 不要添加 \`top_apps\` 和 \`top_entities\` 之外的键。
+
+### events (1-3 个候选)
+- 识别时间窗口内不同的活动阶段
+- kind：匹配活动类型
+- start_offset_min / end_offset_min：距离窗口开始的分钟数 (0-20)
+- node_ids：属于此事件的上下文节点 ID
+- **强制性**：对于输入中 \`long_threads\` 的每个线索，你必须使用其 \`thread_id\` 生成一个事件。使用该线索的标题、总结和上下文来生成准确的事件标题和描述。
+- 对于非长线索事件，可以省略 \`thread_id\`
+
+## 硬性规则
+
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 所有声明必须基于提供的上下文节点。
+3. summary 必须以指定的顺序包含准确的 4 个部分。
+4. stats 必须匹配输入 - 不要编造应用/实体。
+5. 绝不编造证据中不可见的 URL。
+6. **关键点**：对于输入中 \`long_threads\` 的每个线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。`;
+
+const ACTIVITY_SUMMARY_USER_PROMPT_EN = (
+  args: ActivitySummaryUserPromptArgs
+) => `Summarize user activity in this 20-minute window.
+
+## Current Time Context
+Current Unix timestamp (ms): ${args.nowTs}
+
+## Time Reference Points (Unix milliseconds, use these for time calculations!)
+- Today start (00:00:00 local): ${args.todayStart}
+- Today end (23:59:59 local): ${args.todayEnd}
+- Yesterday start: ${args.yesterdayStart}
+- Yesterday end: ${args.yesterdayEnd}
+- One week ago: ${args.weekAgo}
+
+## Time Window
+- Start: ${args.windowStart} (${args.windowStartLocal})
+- End: ${args.windowEnd} (${args.windowEndLocal})
+
+## Context Nodes in This Window
+${args.contextNodesJson}
+
+## Long Threads (MUST generate events for these)
+${args.longThreadsJson}
+
+## Statistics
+${args.statsJson}
+
+## Instructions
+1. Analyze all context nodes within this window.
+2. Generate a comprehensive summary with exactly 4 sections.
+3. **MANDATORY**: For each thread in "Long Threads", generate an event with its thread_id.
+4. Identify additional distinct activity events (total 1-3 events including long thread events).
+5. Return ONLY the JSON object.`;
+
+const ACTIVITY_SUMMARY_USER_PROMPT_ZH = (
+  args: ActivitySummaryUserPromptArgs
+) => `总结此 20 分钟窗口内的用户活动。
+
+## 当前时间上下文
+当前 Unix 时间戳 (ms)：${args.nowTs}
+
+## 时间参考点 (Unix 毫秒，请使用这些进行时间计算！)
+- 今天开始 (00:00:00 本地)：${args.todayStart}
+- 今天结束 (23:59:59 本地)：${args.todayEnd}
+- 昨天开始：${args.yesterdayStart}
+- 昨天结束：${args.yesterdayEnd}
+- 一周前：${args.weekAgo}
+
+## 时间窗口
+- 开始：${args.windowStart} (${args.windowStartLocal})
+- 结束：${args.windowEnd} (${args.windowEndLocal})
+
+## 此窗口内的上下文节点
+${args.contextNodesJson}
+
+## 长线索 (必须为这些生成事件)
+${args.longThreadsJson}
+
+## 统计数据
+${args.statsJson}
+
+## 指令
+1. 分析此窗口内的所有上下文节点。
+2. 生成包含准确 4 个部分的综合总结。
+3. **强制性**：对于 “长线索” 中的每个线索，生成一个带有其 thread_id 的事件。
+4. 识别额外的不同活动事件（总计 1-3 个事件，包含长线索事件）。
+5. 仅返回 JSON 对象。`;
+
+const EVENT_DETAILS_SYSTEM_PROMPT_EN = `You are a professional activity analysis assistant specializing in long-running task context synthesis.
+
+Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 25 minutes) encapsulated in a JSON object.
+
+## Markdown Structure Requirements
+
+The \`details\` field MUST contain exactly these three sections in order:
+
+### 1. Session Activity (本阶段工作)
+- **Scope**: Focus ONLY on the activities captured in \`window_nodes\` (THIS specific time window).
+- **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
+- **Style**: Bullet points preferred.
+
+### 2. Current Status & Progress (当前最新进度)
+- **Scope**: Use \`thread_latest_nodes\` and \`thread\` context to determine the absolute latest state.
+- **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
+- **Style**: Descriptive summary.
+
+### 3. Future Focus & Next Steps (后续关注)
+- **Scope**: Infer based on \`action_items_json\` and overall thread trajectory.
+- **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
+- **Style**: Actionable tasks list.
+
+## Quality Requirements
+
+- **Faithful**: Do NOT invent facts. Only use provided context nodes.
+- **Concise**: Use high-information density language. Avoid generic phrases.
+- **Context-Aware**: Clearly distinguish between what happened *now* vs the *overall* progress.
+
+## Hard Output Requirements
+
+1. Output MUST be a valid JSON object: { "details": "<markdown_content>" }.
+2. The markdown inside MUST follow the three-section outline above.
+3. Use Markdown headings (###) for sections.
+4. Output JSON only. No markdown fences for the JSON itself.`;
+
+const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手，擅长长时间运行任务的上下文合成。
+
+**重要：你必须使用中文撰写 Markdown 报告内容。**
+
+你的工作：为一个 JSON 对象中封装的长事件（持续时间 ≥ 25 分钟）生成结构化的 Markdown 报告。
+
+## Markdown 结构要求
+
+\`details\` 字段必须按顺序准确包含这三个部分：
+
+### 1. 本阶段工作 (Session Activity)
+- **范围**：仅关注 \`window_nodes\` 中捕捉到的活动（此特定时间窗口）。
+- **内容**：总结用户在本阶段取得的成就、修改的具体文件、做出的关键决定以及遇到的技术问题。
+- **风格**：建议使用列表（Bullet points）。
+
+### 2. 当前最新进度 (Current Status & Progress)
+- **范围**：使用 \`thread_latest_nodes\` 和 \`thread\` 上下文来确定绝对的最新状态。
+- **内容**：此任务/项目的确定性当前状态是什么？总体上已经达到了哪些里程碑？是否存在活跃的阻碍因素或待处理的审查？
+- **风格**：描述性总结。
+
+### 3. 后续关注 (Future Focus & Next Steps)
+- **范围**：基于 \`action_items_json\` 和整体线索轨迹进行推断。
+- **内容**：明确列出用户下一步应该关注的内容。包含帮助用户快速“重拾进度”的上下文。
+- **风格**：可操作的任务列表。
+
+## 质量要求
+
+- **忠实度**：不要编造事实。仅使用提供的上下文节点。
+- **简洁性**：使用高信息密度的语言。避免使用空洞的短语。
+- **上下文感知**：清晰区分“现在”发生的活动与“整体”进度。
+
+## 硬性输出要求
+
+1. 输出必须是一个有效的 JSON 对象：{ "details": "<markdown_内容>" }。
+2. 内部的 Markdown 必须遵循上述三部分大纲。
+3. 对各部分使用 Markdown 标题 (###)。
+4. 仅输出 JSON。不要为 JSON 自身使用 markdown 围栏。`;
+
+const EVENT_DETAILS_USER_PROMPT_EN = (args: EventDetailsUserPromptArgs) => `${args.userPromptJson}`;
+
+const EVENT_DETAILS_USER_PROMPT_ZH = (args: EventDetailsUserPromptArgs) => `${args.userPromptJson}`;
 
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
   },
-
-  getTextLLMExpandSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? TEXT_LLM_EXPAND_SYSTEM_PROMPT_ZH
-      : TEXT_LLM_EXPAND_SYSTEM_PROMPT_EN;
-  },
-
-  getTextLLMMergeSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? TEXT_LLM_MERGE_SYSTEM_PROMPT_ZH
-      : TEXT_LLM_MERGE_SYSTEM_PROMPT_EN;
-  },
-
-  getQueryUnderstandingSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH
-      : QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN;
-  },
-
-  getAnswerSynthesisSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH
-      : ANSWER_SYNTHESIS_SYSTEM_PROMPT_EN;
-  },
-
-  getActivitySummarySystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
-      : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
-  },
-
-  getEventDetailsSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
-      : EVENT_DETAILS_SYSTEM_PROMPT_EN;
-  },
-
   getVLMUserPrompt(args: VLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? VLM_USER_PROMPT_ZH(args)
       : VLM_USER_PROMPT_EN(args);
   },
-
-  getTextLLMExpandUserPrompt(args: TextLLMExpandUserPromptArgs): string {
+  getThreadLlmSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? TEXT_LLM_EXPAND_USER_PROMPT_ZH(args)
-      : TEXT_LLM_EXPAND_USER_PROMPT_EN(args);
+      ? THREAD_LLM_SYSTEM_PROMPT_ZH
+      : THREAD_LLM_SYSTEM_PROMPT_EN;
   },
-
-  getTextLLMMergeUserPrompt(args: TextLLMMergeUserPromptArgs): string {
+  getThreadLlmUserPrompt(args: ThreadLLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? TEXT_LLM_MERGE_USER_PROMPT_ZH(args)
-      : TEXT_LLM_MERGE_USER_PROMPT_EN(args);
+      ? THREAD_LLM_USER_PROMPT_ZH(args)
+      : THREAD_LLM_USER_PROMPT_EN(args);
   },
-
+  getQueryUnderstandingSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH
+      : QUERY_UNDERSTANDING_SYSTEM_PROMPT_EN;
+  },
   getQueryUnderstandingUserPrompt(args: QueryUnderstandingUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? QUERY_UNDERSTANDING_USER_PROMPT_ZH(args)
       : QUERY_UNDERSTANDING_USER_PROMPT_EN(args);
   },
-
+  getAnswerSynthesisSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH
+      : ANSWER_SYNTHESIS_SYSTEM_PROMPT_EN;
+  },
   getAnswerSynthesisUserPrompt(args: AnswerSynthesisUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? ANSWER_SYNTHESIS_USER_PROMPT_ZH(args)
       : ANSWER_SYNTHESIS_USER_PROMPT_EN(args);
   },
-
+  getActivitySummarySystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
+      : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+  },
   getActivitySummaryUserPrompt(args: ActivitySummaryUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? ACTIVITY_SUMMARY_USER_PROMPT_ZH(args)
       : ACTIVITY_SUMMARY_USER_PROMPT_EN(args);
   },
-
+  getEventDetailsSystemPrompt(): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
+      : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+  },
   getEventDetailsUserPrompt(args: EventDetailsUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? EVENT_DETAILS_USER_PROMPT_ZH(args)

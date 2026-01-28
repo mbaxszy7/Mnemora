@@ -11,7 +11,13 @@ describe("VLMOutputProcessedSchema", () => {
           screenshot_index: 1,
           title: long,
           summary: "y".repeat(600),
-          app_context: { app_hint: null, window_title: null, source_key: "window:1" },
+          app_context: {
+            app_hint: null,
+            window_title: null,
+            source_key: "window:1",
+            project_name: "Demo Project",
+            project_key: "demo-project",
+          },
           knowledge: null,
           state_snapshot: null,
           entities: Array.from({ length: 12 }, (_, i) => ({ name: `Entity-${i}`, type: "other" })),
@@ -35,6 +41,8 @@ describe("VLMOutputProcessedSchema", () => {
     expect(node.importance).toBe(10);
     expect(node.confidence).toBe(0);
     expect(node.keywords.length).toBe(5);
+    expect(node.appContext.projectName).toBe("Demo Project");
+    expect(node.appContext.projectKey).toBe("demo-project");
   });
 });
 

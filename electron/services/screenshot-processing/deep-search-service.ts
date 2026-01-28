@@ -7,10 +7,14 @@
  */
 
 import { generateObject } from "ai";
+
+import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { AISDKService } from "../ai-sdk-service";
 import { getLogger } from "../logger";
-import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
 import { llmUsageService } from "../llm-usage-service";
+import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
+import { aiRuntimeService } from "../ai-runtime-service";
+import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
 import {
   SearchQueryPlanSchema,
@@ -26,9 +30,6 @@ import type {
   ScreenshotEvidence,
   ContextKind,
 } from "./types";
-import { processingConfig } from "./config";
-import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
-import { aiRuntimeService } from "../ai-runtime-service";
 
 const logger = getLogger("deep-search-service");
 
@@ -43,26 +44,14 @@ function getCanonicalAppCandidates(): string[] {
 const QUERY_UNDERSTANDING_CONFIDENCE_THRESHOLD = 0.5;
 
 // Payload limits
-const MAX_NODES = 15;
+const MAX_NODES = 100;
 const MAX_EVIDENCE = 25;
 const MAX_CHARS_PER_NODE_SUMMARY = 600;
 const MAX_SCREENSHOT_IDS_PER_NODE = 8;
 const MAX_ENTITIES_PER_NODE = 8;
 const MAX_KEYWORDS_PER_NODE = 10;
-// Reserved for future extended evidence support:
-// const MAX_OCR_EXCERPT_CHARS = 1000;
-// const MAX_UI_SNIPPETS = 15;
-// const MAX_CHARS_PER_UI_SNIPPET = 100;
 
 const CANONICAL_APP_CANDIDATES = getCanonicalAppCandidates();
-
-// ============================================================================
-// System Prompts
-// ============================================================================
-
-// ============================================================================
-// Helper Types for Payload Building
-// ============================================================================
 
 // ============================================================================
 // Helper Types for Payload Building
@@ -75,20 +64,20 @@ interface NodePayload {
   summary: string;
   keywords: string[];
   entities: string[];
-  eventTime: number;
-  localTime: string;
-  threadId?: string;
-  screenshotIds: number[];
+  event_time: number;
+  local_time: string;
+  thread_id?: string;
+  screenshot_ids: number[];
   score?: number;
 }
 
 interface EvidencePayload {
-  screenshotId: number;
+  screenshot_id: number;
   timestamp: number;
-  localTime: string;
-  appHint?: string;
-  windowTitle?: string;
-  uiSnippets?: string[];
+  local_time: string;
+  app_hint?: string;
+  window_title?: string;
+  ui_snippets?: string[];
 }
 
 interface GlobalSummary {
@@ -119,7 +108,6 @@ export class DeepSearchService {
   ): Promise<SearchQueryPlan | null> {
     const startTime = Date.now();
 
-    // Acquire global text semaphore
     const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
@@ -137,7 +125,6 @@ export class DeepSearchService {
       const canonicalCandidatesJson = JSON.stringify(CANONICAL_APP_CANDIDATES, null, 2);
       const modelName = aiService.getTextModelName();
 
-      // Calculate helpful time reference points for LLM
       const nowDate = new Date(nowTs);
       const todayStartLocal = new Date(nowDate);
       todayStartLocal.setHours(0, 0, 0, 0);
@@ -147,7 +134,7 @@ export class DeepSearchService {
       const prompt = promptTemplates.getQueryUnderstandingUserPrompt({
         nowDate,
         nowTs,
-        timezone,
+        timeZone: timezone,
         todayStart: todayStartLocal.getTime(),
         todayEnd: todayEndLocal.getTime(),
         yesterdayStart: todayStartLocal.getTime() - 86400000,
@@ -161,14 +148,11 @@ export class DeepSearchService {
         model: aiService.getTextClient(),
         system: promptTemplates.getQueryUnderstandingSystemPrompt(),
         schema: SearchQueryPlanSchema,
+        mode: "json",
         prompt,
         abortSignal: controller.signal,
         providerOptions: {
-          mnemora: {
-            thinking: {
-              type: "disabled",
-            },
-          },
+          mnemora: {},
         },
       });
 
@@ -180,7 +164,6 @@ export class DeepSearchService {
 
       const durationMs = Date.now() - startTime;
 
-      // Track usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -191,7 +174,6 @@ export class DeepSearchService {
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
 
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
@@ -212,7 +194,6 @@ export class DeepSearchService {
 
       aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
-      // Record failed usage
       try {
         const aiService = AISDKService.getInstance();
         const modelName = aiService.getTextModelName();
@@ -228,7 +209,6 @@ export class DeepSearchService {
           errorCode: error instanceof Error ? error.name : "unknown",
         });
 
-        // Record trace for monitoring dashboard
         aiRequestTraceBuffer.record({
           ts: Date.now(),
           capability: "text",
@@ -256,11 +236,6 @@ export class DeepSearchService {
 
   /**
    * Synthesize an answer from search results
-   *
-   * @param query - Original user query
-   * @param nodes - Retrieved context nodes
-   * @param evidence - Screenshot evidence
-   * @returns SearchAnswer or null on failure/timeout
    */
   async synthesizeAnswer(
     query: string,
@@ -277,7 +252,6 @@ export class DeepSearchService {
 
     const startTime = Date.now();
 
-    // Acquire global text semaphore
     const release = await aiRuntimeService.acquire("text");
 
     const controller = new AbortController();
@@ -294,7 +268,6 @@ export class DeepSearchService {
 
       const modelName = aiService.getTextModelName();
 
-      // Build LLM payload
       const { nodesPayload, evidencePayload, globalSummary } = this.buildLLMPayload(
         nodes,
         evidence,
@@ -314,13 +287,14 @@ export class DeepSearchService {
         model: aiService.getTextClient(),
         system: promptTemplates.getAnswerSynthesisSystemPrompt(),
         schema: SearchAnswerSchema,
+        mode: "json",
         prompt,
         abortSignal: controller.signal,
         providerOptions: {
           mnemora: {
-            thinking: {
-              type: "enabled",
-            },
+            // thinking: {
+            //   type: "enabled",
+            // },
           },
         },
       });
@@ -328,7 +302,6 @@ export class DeepSearchService {
       const parsed = SearchAnswerProcessedSchema.parse(rawResult);
       const durationMs = Date.now() - startTime;
 
-      // Track usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -339,7 +312,6 @@ export class DeepSearchService {
         usageStatus: usage?.totalTokens ? "present" : "missing",
       });
 
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
@@ -365,7 +337,6 @@ export class DeepSearchService {
 
       aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
-      // Record failed usage
       try {
         const aiService = AISDKService.getInstance();
         const modelName = aiService.getTextModelName();
@@ -381,7 +352,6 @@ export class DeepSearchService {
           errorCode: error instanceof Error ? error.name : "unknown",
         });
 
-        // Record trace for monitoring dashboard
         aiRequestTraceBuffer.record({
           ts: Date.now(),
           capability: "text",
@@ -395,9 +365,15 @@ export class DeepSearchService {
         // Ignore usage recording errors
       }
 
-      logger.warn(
-        { error: error instanceof Error ? error.message : String(error), durationMs },
-        "Answer synthesis failed"
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          stack: error instanceof Error ? error.stack : undefined,
+          fullError: error,
+          durationMs,
+        },
+        "Answer synthesis failed with detailed error"
       );
       return null;
     } finally {
@@ -426,24 +402,19 @@ export class DeepSearchService {
       return result;
     }
 
-    // Merge timeRange (only if user didn't specify)
     if (patch.timeRange && !result.timeRange) {
       result.timeRange = patch.timeRange;
     }
 
-    // Merge appHint (only if user didn't specify)
     if (patch.appHint && !result.appHint) {
       result.appHint = patch.appHint;
     }
 
-    // Merge entities (combine both)
     if (patch.entities && patch.entities.length > 0) {
       const existingEntities = result.entities ?? [];
       const combined = [...new Set([...existingEntities, ...patch.entities])];
       result.entities = combined;
     }
-
-    // threadId is NEVER touched from queryPlan
 
     return result;
   }
@@ -461,7 +432,6 @@ export class DeepSearchService {
     evidencePayload: EvidencePayload[];
     globalSummary: GlobalSummary;
   } {
-    // Limit and transform nodes
     const limitedNodes = nodes.slice(0, MAX_NODES);
     const nodesPayload: NodePayload[] = limitedNodes.map((node) => ({
       id: node.id!,
@@ -470,13 +440,12 @@ export class DeepSearchService {
       summary: this.truncateText(node.summary, MAX_CHARS_PER_NODE_SUMMARY),
       keywords: node.keywords.slice(0, MAX_KEYWORDS_PER_NODE),
       entities: node.entities.slice(0, MAX_ENTITIES_PER_NODE).map((e) => e.name),
-      eventTime: node.eventTime ?? 0,
-      localTime: this.formatTime(node.eventTime, timezone),
-      threadId: node.threadId,
-      screenshotIds: node.screenshotIds.slice(0, MAX_SCREENSHOT_IDS_PER_NODE),
+      event_time: node.eventTime ?? 0,
+      local_time: this.formatTime(node.eventTime, timezone),
+      thread_id: node.threadId,
+      screenshot_ids: node.screenshotIds.slice(0, MAX_SCREENSHOT_IDS_PER_NODE),
     }));
 
-    // Get screenshot IDs referenced by top nodes
     const nodeScreenshotIds = new Set<number>();
     for (const node of limitedNodes) {
       for (const sid of node.screenshotIds.slice(0, MAX_SCREENSHOT_IDS_PER_NODE)) {
@@ -484,7 +453,6 @@ export class DeepSearchService {
       }
     }
 
-    // Prioritize evidence linked to top nodes, then by recency
     const sortedEvidence = [...evidence].sort((a, b) => {
       const aLinked = nodeScreenshotIds.has(a.screenshotId) ? 1 : 0;
       const bLinked = nodeScreenshotIds.has(b.screenshotId) ? 1 : 0;
@@ -494,15 +462,14 @@ export class DeepSearchService {
 
     const limitedEvidence = sortedEvidence.slice(0, MAX_EVIDENCE);
     const evidencePayload: EvidencePayload[] = limitedEvidence.map((e) => ({
-      screenshotId: e.screenshotId,
+      screenshot_id: e.screenshotId,
       timestamp: e.timestamp,
-      localTime: this.formatTime(e.timestamp, timezone),
-      appHint: e.appHint,
-      windowTitle: e.windowTitle,
-      uiSnippets: e.uiTextSnippets, // Map from EvidencePack fields
+      local_time: this.formatTime(e.timestamp, timezone),
+      app_hint: e.appHint,
+      window_title: e.windowTitle,
+      ui_snippets: e.uiTextSnippets,
     }));
 
-    // Build global summary
     const globalSummary = this.buildGlobalSummary(limitedNodes, limitedEvidence);
 
     return { nodesPayload, evidencePayload, globalSummary };
@@ -512,14 +479,12 @@ export class DeepSearchService {
     nodes: ExpandedContextNode[],
     evidence: ScreenshotEvidence[]
   ): GlobalSummary {
-    // Time span
     const nodeTimes = nodes.map((n) => n.eventTime).filter((t): t is number => t !== undefined);
     const evidenceTimes = evidence.map((e) => e.timestamp);
     const allTimes = [...nodeTimes, ...evidenceTimes];
     const minTs = allTimes.length > 0 ? Math.min(...allTimes) : 0;
     const maxTs = allTimes.length > 0 ? Math.max(...allTimes) : 0;
 
-    // Top apps
     const appCounts = new Map<string, number>();
     for (const e of evidence) {
       if (e.appHint) {
@@ -531,7 +496,6 @@ export class DeepSearchService {
       .slice(0, 5)
       .map(([appHint, count]) => ({ appHint, count }));
 
-    // Top entities
     const entitySet = new Set<string>();
     for (const node of nodes) {
       for (const entity of node.entities) {
@@ -540,7 +504,6 @@ export class DeepSearchService {
     }
     const topEntities = Array.from(entitySet).slice(0, 10);
 
-    // Kinds breakdown
     const kindCounts = new Map<string, number>();
     for (const node of nodes) {
       kindCounts.set(node.kind, (kindCounts.get(node.kind) ?? 0) + 1);

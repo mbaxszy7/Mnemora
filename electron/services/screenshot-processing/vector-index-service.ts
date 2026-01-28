@@ -15,15 +15,8 @@ export class VectorIndexService {
   private loadPromise: Promise<void> | null = null;
   private flushTimer: NodeJS.Timeout | null = null;
 
-  /**
-   * 从数据库中探测 embedding 的维度。
-   *
-   * 原理：`vector_documents.embedding` 以 Float32Array 序列化后的 Buffer 存储。
-   * 因此维度 = buffer.byteLength / 4。
-   */
   private detectDimensionsFromDb(): number {
     const db = getDb();
-    // 尝试从任意一条已有 embedding 的记录中读取维度。
     const doc = db
       .select({ embedding: vectorDocuments.embedding })
       .from(vectorDocuments)
@@ -33,7 +26,7 @@ export class VectorIndexService {
 
     if (doc?.embedding) {
       const buffer = doc.embedding as Buffer;
-      const dims = buffer.byteLength / 4; // Float32 = 4 bytes
+      const dims = buffer.byteLength / 4;
       logger.info({ detectedDimensions: dims }, "Detected embedding dimensions from database");
       return dims;
     }
@@ -45,14 +38,6 @@ export class VectorIndexService {
     return processingConfig.vectorStore.defaultDimensions;
   }
 
-  /**
-   * 从磁盘加载 HNSW 索引；如果不存在或加载失败，则创建新索引。
-   *
-   * 注意：本索引是“DB 的派生物”。
-   * - 真实的状态机在 `vector_documents` 表里（indexStatus 等）。
-   * - 本地索引丢失/重建后，需要把 DB 中的 `indexStatus=succeeded` 重置为 pending，
-   *   让 VectorDocumentScheduler 重新把 embedding 写入索引，以保持一致性。
-   */
   async load(): Promise<void> {
     if (this.loadPromise) {
       return this.loadPromise;
@@ -62,15 +47,11 @@ export class VectorIndexService {
     const db = getDb();
 
     this.loadPromise = (async () => {
-      // 1) 探测维度。
       this.detectedDimensions = this.detectDimensionsFromDb();
 
-      // 2) 估算容量：当前 doc 数 + 预留 headroom。
       const [{ value }] = db.select({ value: count() }).from(vectorDocuments).all();
-      // 初始容量：当前 docs + 5000 预留。
       const neededCapacity = Number(value ?? 0) + 5000;
 
-      // 3) 确保索引目录存在。
       const dir = path.dirname(indexFilePath);
       if (!fs.existsSync(dir)) {
         fs.mkdirSync(dir, { recursive: true });
@@ -81,7 +62,6 @@ export class VectorIndexService {
           this.index = new hnswlib.HierarchicalNSW("l2", this.detectedDimensions);
           this.index.readIndexSync(indexFilePath);
 
-          // 加载后如果容量不足，立即扩容。
           if (this.index.getMaxElements() < neededCapacity) {
             logger.info(
               { oldMax: this.index.getMaxElements(), newMax: neededCapacity },
@@ -117,12 +97,6 @@ export class VectorIndexService {
     }
   }
 
-  /**
-   * 当本地索引被重建（或加载失败）时，把 DB 中“已 index succeeded”的记录重置为 pending。
-   *
-   * 目的：让 VectorDocumentScheduler 重新执行 index 子任务，把 embedding 写回新索引，
-   * 避免出现“DB 认为已索引，但本地索引实际为空/丢失”的不一致。
-   */
   private resetSucceededIndexStatuses(): void {
     const db = getDb();
     const now = Date.now();
@@ -143,10 +117,6 @@ export class VectorIndexService {
       .run();
   }
 
-  /**
-   * 维度变更时，重置所有 embedding 和 index 状态为 pending。
-   * 这会让调度器重新生成所有 embedding，确保维度一致性。
-   */
   private resetAllEmbeddingsForDimensionChange(): void {
     const db = getDb();
     const now = Date.now();
@@ -160,8 +130,6 @@ export class VectorIndexService {
         indexStatus: "pending",
         indexAttempts: 0,
         indexNextRunAt: null,
-        errorCode: null,
-        errorMessage: null,
         updatedAt: now,
       })
       .run();
@@ -180,12 +148,6 @@ export class VectorIndexService {
     logger.info({ capacity, dimensions: this.detectedDimensions }, "Created fresh vector index");
   }
 
-  /**
-   * 将索引写入磁盘。
-   *
-   * 写入是同步的（hnswlib 的 writeIndexSync），因此上层会用 requestFlush() 做 debounce
-   * 来降低频繁 IO。
-   */
   async flush(): Promise<void> {
     if (!this.index) return;
     const { indexFilePath } = processingConfig.vectorStore;
@@ -198,19 +160,12 @@ export class VectorIndexService {
     }
   }
 
-  /**
-   * 把一条向量写入/更新到 HNSW 索引。
-   *
-   * 约定：label 使用 `vector_documents.id`（docId）。这样查询返回的 neighbors 可以直接回表。
-   */
   async upsert(docId: number, embedding: Float32Array): Promise<void> {
-    // JS 侧是单线程；调度器已经做了 claim 限制并发。这里主要保证 index 已初始化。
     if (!this.index) {
       await this.load();
     }
     if (!this.index) throw new Error("Index not initialized");
 
-    // 检测维度变更：如果新 embedding 的维度与当前索引不同，触发维度迁移
     if (this.detectedDimensions && embedding.length !== this.detectedDimensions) {
       logger.warn(
         {
@@ -221,14 +176,10 @@ export class VectorIndexService {
         "Embedding dimension change detected, triggering dimension migration"
       );
 
-      // 用新维度重建索引
       const capacity = this.index?.getMaxElements() ?? 5000;
       this.createFreshIndex(capacity, embedding.length);
-
-      // 重置所有 embedding 为 pending，让调度器用新模型重新生成
       this.resetAllEmbeddingsForDimensionChange();
 
-      // 抛出一个特殊错误，让调度器知道需要重试
       throw new Error(
         `Dimension migration triggered: ${this.detectedDimensions} dimensions. All embeddings reset to pending.`
       );
@@ -238,19 +189,15 @@ export class VectorIndexService {
       const currentCount = this.index.getCurrentCount();
       const maxElements = this.index.getMaxElements();
 
-      // 容量不足自动扩容。
-      // 注：getCurrentCount 可能包含已删除元素；这里采取保守策略，接近上限就扩容。
       if (currentCount >= maxElements) {
         const newMax = maxElements + 5000;
         logger.info({ currentCount, maxElements, newMax }, "Auto-resizing index during upsert");
         this.index.resizeIndex(newMax);
       }
 
-      // addPoint(vector, label)：通常会覆盖同 label 的旧值。
       this.index.addPoint(Array.from(embedding), docId);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      // 如果是 hnswlib 内部检测到的维度不匹配（理论上不应该发生，因为上面已经处理了）
       if (message.includes("dimensions mismatch") && !message.includes("migration triggered")) {
         const capacity = this.index?.getMaxElements() ?? 5000;
         this.createFreshIndex(capacity, embedding.length);
@@ -261,11 +208,6 @@ export class VectorIndexService {
     }
   }
 
-  /**
-   * 语义检索：返回 topK 个近邻。
-   *
-   * 注意：这里的 score 是 L2 distance（越小越相似）。
-   */
   async search(
     queryEmbedding: Float32Array,
     topK: number
@@ -289,13 +231,12 @@ export class VectorIndexService {
     }
 
     try {
-      // searchKnn 返回 { distances, neighbors }，neighbors 即 labels（docIds）。
       const result = this.index.searchKnn(Array.from(queryEmbedding), topK);
       const { distances, neighbors } = result;
 
       return neighbors.map((docId, i) => ({
         docId,
-        score: distances[i], // L2 distance
+        score: distances[i],
       }));
     } catch (err) {
       logger.error({ error: err, topK }, "Vector search failed");
@@ -303,27 +244,15 @@ export class VectorIndexService {
     }
   }
 
-  /**
-   * 从索引中删除（软删除）：markDelete。
-   *
-   * 注：这不会改 DB；通常用于数据删除/回收场景。
-   */
   async remove(docId: number): Promise<void> {
     if (!this.index) return;
     try {
       this.index.markDelete(docId);
     } catch (err) {
-      // Ignore error if element doesn't exist
       logger.debug({ docId, error: err }, "Failed to markDelete (likely not found)");
     }
   }
 
-  /**
-   * 请求落盘（debounce）。
-   *
-   * 场景：index 子任务可能短时间 upsert 很多点，如果每次都 writeIndexSync 会产生明显 IO 压力。
-   * 因此这里用 setTimeout 做一次合并写。
-   */
   requestFlush(): void {
     const delay = processingConfig.vectorStore.flushDebounceMs;
     if (this.flushTimer) return;

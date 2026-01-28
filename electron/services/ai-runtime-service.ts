@@ -6,7 +6,7 @@ import type { LLMConfig } from "@shared/llm-config-types";
 
 import { getLogger } from "./logger";
 import { llmConfigService } from "./llm-config-service";
-import { processingConfig } from "./screenshot-processing-alpha/config";
+import { processingConfig } from "./screenshot-processing/config";
 import type { CaptureSchedulerState } from "./screen-capture/types";
 
 /**

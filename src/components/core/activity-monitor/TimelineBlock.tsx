@@ -34,6 +34,7 @@ export function TimelineBlock({
 }: TimelineBlockProps) {
   const startTime = format(new Date(window.windowStart), "HH:mm");
   const endTime = format(new Date(window.windowEnd), "HH:mm");
+  const isPending = window.status === "pending";
 
   return (
     <motion.div
@@ -52,6 +53,10 @@ export function TimelineBlock({
       whileTap={{ scale: 0.99 }}
       transition={{ duration: 0.15 }}
     >
+      {isPending && (
+        <div className="pointer-events-none absolute inset-0 rounded-lg ring-1 ring-primary/35 animate-pulse" />
+      )}
+
       {/* Long event indicator */}
       {hasLongEvent && (
         <motion.div
@@ -67,14 +72,16 @@ export function TimelineBlock({
         <span className="text-xs font-medium text-muted-foreground">
           {startTime} - {endTime}
         </span>
-        {isSelected && (
+        {isSelected ? (
           <motion.div
             className="w-1.5 h-1.5 rounded-full bg-primary"
             initial={{ scale: 0 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", stiffness: 500, damping: 30 }}
           />
-        )}
+        ) : isPending ? (
+          <div className="w-1.5 h-1.5 rounded-full bg-primary/70 animate-pulse" />
+        ) : null}
       </div>
 
       {/* Title */}

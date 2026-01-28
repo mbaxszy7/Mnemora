@@ -21,7 +21,7 @@ import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
 import { databaseService } from "./database";
 import { captureScheduleController, screenCaptureModule } from "./services/screen-capture";
-import { screenshotProcessingModule } from "./services/screenshot-processing-alpha/screenshot-processing-module";
+import { screenshotProcessingModule } from "./services/screenshot-processing/screenshot-processing-module";
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 import { monitoringServer } from "./services/monitoring";

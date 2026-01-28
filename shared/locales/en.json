@@ -312,6 +312,7 @@
       "grantPermissions": "Grant required permissions",
       "capturing": "Capturing",
       "starting": "Starting…",
+      "pause": "Pause capture",
       "resume": "Resume capture",
       "start": "Start capture",
       "stop": "Stop capture",

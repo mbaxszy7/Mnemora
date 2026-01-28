@@ -37,6 +37,8 @@ export interface AppContextPayload {
   appHint: string | null;
   windowTitle: string | null;
   sourceKey: string;
+  projectName?: string | null;
+  projectKey?: string | null;
 }
 
 export interface KnowledgePayload {

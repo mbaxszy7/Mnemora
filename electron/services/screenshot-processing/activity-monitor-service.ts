@@ -1,52 +1,43 @@
-/**
- * Activity Monitor Service
- *
- * Provides timeline queries, window summaries, and event details for Activity Monitor.
- * Note: This is a data access layer - LLM generation is handled by ScreenshotPipelineScheduler.
- */
-
-import { eq, and, or, gte, lte, ne, inArray, lt, gt, desc } from "drizzle-orm";
 import { BrowserWindow } from "electron";
-import { getDb } from "../../database";
-import {
-  activitySummaries,
-  activityEvents,
-  type ActivitySummaryRecord,
-  type ActivityEventRecord,
-  contextNodes,
-  type ContextNodeRecord,
-  screenshots,
-  contextScreenshotLinks,
-} from "../../database/schema";
+import { and, desc, eq, gte, lt, lte, gt, isNull, or } from "drizzle-orm";
+import { generateObject, NoObjectGeneratedError } from "ai";
 import type {
-  TimeWindow,
   ActivityEvent,
-  WindowSummary,
-  LongEventMarker,
-  TimelineResponse,
-  ActivityStats,
   ActivityEventKind,
-  ActivityTimelineChangedPayload,
+  ActivityStats,
+  EventDetailsResponse,
+  LongEventMarker,
+  RegenerateSummaryResponse,
+  SummaryResponse,
+  TimelineResponse,
+  TimeWindow,
+  WindowSummary,
 } from "@shared/activity-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
+import { getDb } from "../../database";
+import {
+  activityEvents,
+  activitySummaries,
+  contextNodes,
+  type ActivityEventRecord,
+  type ActivitySummaryRecord,
+  type ContextNodeRecord,
+} from "../../database/schema";
 import { getLogger } from "../logger";
 import { AISDKService } from "../ai-sdk-service";
 import { llmUsageService } from "../llm-usage-service";
-import { generateObject } from "ai";
-import {
-  ActivityWindowSummaryLLMSchema,
-  ActivityWindowSummaryLLMProcessedSchema,
-  ActivityEventDetailsLLMSchema,
-  ActivityEventDetailsLLMProcessedSchema,
-} from "./schemas";
-
-import { processingConfig } from "./config";
-import { promptTemplates } from "./prompt-templates";
 import { aiRuntimeService } from "../ai-runtime-service";
-import { mainI18n } from "../i18n-service";
-import { screenshotProcessingEventBus } from "./event-bus";
 import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 import { activityAlertBuffer } from "../monitoring/activity-alert-trace";
+import {
+  ActivityEventDetailsLLMSchema,
+  ActivityEventDetailsLLMProcessedSchema,
+  ActivityWindowSummaryLLMSchema,
+  ActivityWindowSummaryLLMProcessedSchema,
+} from "./schemas";
+import { processingConfig } from "./config";
+import { promptTemplates } from "./prompt-templates";
+import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("activity-monitor-service");
 
@@ -70,7 +61,7 @@ function emitActivityTimelineChanged(fromTs: number, toTs: number): void {
     if (!range) return;
 
     activityTimelineChangedRevision += 1;
-    const payload: ActivityTimelineChangedPayload = {
+    const payload = {
       revision: activityTimelineChangedRevision,
       fromTs: range.fromTs,
       toTs: range.toTs,
@@ -87,14 +78,11 @@ function emitActivityTimelineChanged(fromTs: number, toTs: number): void {
         win.webContents.send(IPC_CHANNELS.ACTIVITY_TIMELINE_CHANGED, payload);
       }
     } catch {
-      // Ignore if BrowserWindow is not available (e.g. tests)
+      // ignore when running in tests
     }
   }, 800);
 }
 
-/**
- * Parse JSON safely with fallback
- */
 function parseJsonSafe<T>(json: string | null | undefined, fallback: T): T {
   if (!json) return fallback;
   try {
@@ -124,6 +112,23 @@ function capJsonArrayByChars<T>(
   return { items: result, approxChars: used };
 }
 
+function inferLongEventKindFromSnapshot(snapshot: {
+  title?: string;
+  currentPhase?: string;
+}): ActivityEventKind {
+  const phase = (snapshot.currentPhase ?? "").toLowerCase();
+  const title = (snapshot.title ?? "").toLowerCase();
+  const haystack = `${phase} ${title}`;
+
+  if (haystack.includes("meeting")) return "meeting";
+  if (haystack.includes("break")) return "break";
+  if (haystack.includes("browse") || haystack.includes("research")) return "browse";
+  if (haystack.includes("debug")) return "debugging";
+  if (haystack.includes("code") || haystack.includes("implement")) return "coding";
+
+  return "work";
+}
+
 function buildEmptyWindowSummary(): string {
   return [
     "## Core Tasks & Projects",
@@ -140,30 +145,111 @@ function buildEmptyWindowSummary(): string {
   ].join("\n");
 }
 
-function normalizeSummaryStatus(status: string): "pending" | "succeeded" | "failed" {
+function normalizeSummaryStatus(
+  status: string
+): "pending" | "succeeded" | "failed" | "failed_permanent" {
   if (status === "running") return "pending";
-  if (status === "failed_permanent") return "failed";
-  if (status === "succeeded") return "succeeded";
+  if (status === "failed_permanent") return "failed_permanent";
   if (status === "failed") return "failed";
+  if (status === "no_data") return "succeeded";
+  if (status === "succeeded") return "succeeded";
   return "pending";
 }
 
 function normalizeDetailsStatus(status: string): "pending" | "succeeded" | "failed" {
   if (status === "running") return "pending";
   if (status === "failed_permanent") return "failed";
-  if (status === "succeeded") return "succeeded";
   if (status === "failed") return "failed";
+  if (status === "succeeded") return "succeeded";
   return "pending";
 }
 
+function parseAppHint(node: ContextNodeRecord): string | null {
+  const appContext = parseJsonSafe<{ appHint?: string } | null>(node.appContext, null);
+  const hint = typeof appContext?.appHint === "string" ? appContext.appHint.trim() : null;
+  // Filter out placeholder values from VLM - these shouldn't be shown in UI
+  if (!hint || hint.toLowerCase() === "unknown" || hint.toLowerCase() === "other") {
+    return null;
+  }
+  return hint;
+}
+
+function toSnakeCaseKnowledgePayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+  const textRegion = (obj.textRegion ?? obj.text_region) as Record<string, unknown> | undefined;
+
+  return {
+    content_type: obj.contentType ?? obj.content_type,
+    source_url: obj.sourceUrl ?? obj.source_url,
+    project_or_library: obj.projectOrLibrary ?? obj.project_or_library,
+    key_insights: obj.keyInsights ?? obj.key_insights,
+    language: obj.language,
+    text_region: textRegion
+      ? {
+          box: (textRegion.box ?? (textRegion as Record<string, unknown>).box) as unknown,
+          description: textRegion.description,
+          confidence: textRegion.confidence,
+        }
+      : undefined,
+  };
+}
+
+function toSnakeCaseStateSnapshotPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const obj = raw as Record<string, unknown>;
+
+  return {
+    subject_type: obj.subjectType ?? obj.subject_type,
+    subject: obj.subject,
+    current_state: obj.currentState ?? obj.current_state,
+    metrics: obj.metrics,
+    issue: obj.issue,
+  };
+}
+
+function extractEntityNames(rawEntitiesJson: string | null | undefined): string[] {
+  const entities = parseJsonSafe<Array<{ name?: unknown }>>(rawEntitiesJson, []);
+  const out: string[] = [];
+  for (const e of entities) {
+    const name = typeof e?.name === "string" ? e.name.trim() : "";
+    if (!name) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+function buildTimeContext(now: Date) {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const nowTs = now.getTime();
+
+  const todayStart = new Date(now);
+  todayStart.setHours(0, 0, 0, 0);
+  const todayEnd = new Date(now);
+  todayEnd.setHours(23, 59, 59, 999);
+
+  const yesterdayStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+  const yesterdayEnd = new Date(todayEnd.getTime() - 24 * 60 * 60 * 1000);
+
+  const weekAgo = nowTs - 7 * 24 * 60 * 60 * 1000;
+
+  return {
+    localTime: now.toLocaleString("sv-SE", { timeZone, hour12: false }),
+    timeZone,
+    now,
+    nowTs,
+    todayStart: todayStart.getTime(),
+    todayEnd: todayEnd.getTime(),
+    yesterdayStart: yesterdayStart.getTime(),
+    yesterdayEnd: yesterdayEnd.getTime(),
+    weekAgo,
+  };
+}
+
 class ActivityMonitorService {
-  /**
-   * Get timeline windows and long events for a time range
-   */
   async getTimeline(fromTs: number, toTs: number): Promise<TimelineResponse> {
     const db = getDb();
 
-    // Query activity summaries that overlap with the range
     const summaries = await db
       .select()
       .from(activitySummaries)
@@ -172,7 +258,6 @@ class ActivityMonitorService {
       )
       .orderBy(desc(activitySummaries.windowStart));
 
-    // Map to TimeWindow format
     const windows: TimeWindow[] = summaries.map((s: ActivitySummaryRecord) => ({
       id: s.id,
       windowStart: s.windowStart,
@@ -182,7 +267,6 @@ class ActivityMonitorService {
       stats: parseJsonSafe<ActivityStats | null>(s.stats, null),
     }));
 
-    // Query long events that overlap with the range
     const events = await db
       .select()
       .from(activityEvents)
@@ -195,7 +279,6 @@ class ActivityMonitorService {
       )
       .orderBy(desc(activityEvents.startTs));
 
-    // Map to LongEventMarker format
     const longEvents: LongEventMarker[] = events.map((e: ActivityEventRecord) => ({
       id: e.id,
       title: e.title,
@@ -208,13 +291,9 @@ class ActivityMonitorService {
     return { windows, longEvents };
   }
 
-  /**
-   * Get a summary for a specific window
-   */
-  async getSummary(windowStart: number, windowEnd: number): Promise<WindowSummary | null> {
+  async getSummary(windowStart: number, windowEnd: number): Promise<SummaryResponse | null> {
     const db = getDb();
 
-    // Query the summary for this window
     const summaries = await db
       .select()
       .from(activitySummaries)
@@ -231,15 +310,12 @@ class ActivityMonitorService {
     }
 
     const summary = summaries[0];
-
-    // Query events that overlap with this window
     const events = await db
       .select()
       .from(activityEvents)
       .where(and(lt(activityEvents.startTs, windowEnd), gt(activityEvents.endTs, windowStart)))
       .orderBy(activityEvents.startTs);
 
-    // Map events to ActivityEvent format
     const mappedEvents: ActivityEvent[] = events.map((e: ActivityEventRecord) => ({
       id: e.id,
       eventKey: e.eventKey,
@@ -249,31 +325,112 @@ class ActivityMonitorService {
       endTs: e.endTs,
       durationMs: e.durationMs,
       isLong: e.isLong,
-      confidence: e.confidence,
-      importance: e.importance,
+      confidence: e.confidence ?? 5,
+      importance: e.importance ?? 5,
       threadId: e.threadId,
       nodeIds: parseJsonSafe<number[] | null>(e.nodeIds, null),
-      details: e.details,
+      details: e.detailsText ?? null,
       detailsStatus: normalizeDetailsStatus(e.detailsStatus),
     }));
 
-    return {
+    const response: WindowSummary = {
       windowStart: summary.windowStart,
       windowEnd: summary.windowEnd,
       title: summary.title,
-      summary: summary.summary,
+      summary: summary.summaryText ?? "",
       highlights: parseJsonSafe<string[] | null>(summary.highlights, null),
       stats: parseJsonSafe<ActivityStats | null>(summary.stats, null),
       events: mappedEvents,
     };
+
+    return response;
   }
 
-  /**
-   * Get event details. If details are missing for a long event, trigger background generation
-   */
-  async getEventDetails(eventId: number): Promise<ActivityEvent> {
+  async regenerateSummary(
+    windowStart: number,
+    windowEnd: number
+  ): Promise<RegenerateSummaryResponse> {
     const db = getDb();
+    const aiService = AISDKService.getInstance();
+    const now = Date.now();
 
+    const row = db
+      .select({
+        status: activitySummaries.status,
+      })
+      .from(activitySummaries)
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd)
+        )
+      )
+      .limit(1)
+      .get();
+
+    if (!row) {
+      return { ok: false, reason: "not_found" };
+    }
+
+    if (row.status !== "failed_permanent") {
+      return { ok: false, reason: "not_failed_permanent" };
+    }
+
+    if (!aiService.isInitialized()) {
+      return { ok: false, reason: "not_initialized" };
+    }
+
+    const claimed = db
+      .update(activitySummaries)
+      .set({
+        status: "running",
+        nextRunAt: null,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd),
+          eq(activitySummaries.status, "failed_permanent")
+        )
+      )
+      .run();
+
+    if (claimed.changes === 0) {
+      return { ok: false, reason: "already_running" };
+    }
+
+    emitActivityTimelineChanged(windowStart, windowEnd);
+
+    const success = await this.generateWindowSummary(windowStart, windowEnd, {
+      failureStatus: "failed_permanent",
+    });
+
+    if (success) {
+      return { ok: true };
+    }
+
+    await db
+      .update(activitySummaries)
+      .set({
+        status: "failed_permanent",
+        nextRunAt: null,
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(activitySummaries.windowStart, windowStart),
+          eq(activitySummaries.windowEnd, windowEnd)
+        )
+      )
+      .run();
+
+    emitActivityTimelineChanged(windowStart, windowEnd);
+    return { ok: false, reason: "failed" };
+  }
+
+  async getEventDetails(eventId: number): Promise<EventDetailsResponse> {
+    const db = getDb();
     const row = await db
       .select()
       .from(activityEvents)
@@ -295,35 +452,29 @@ class ActivityMonitorService {
       endTs: event.endTs,
       durationMs: event.durationMs,
       isLong: event.isLong,
-      confidence: event.confidence,
-      importance: event.importance,
+      confidence: event.confidence ?? 5,
+      importance: event.importance ?? 5,
       threadId: event.threadId,
       nodeIds: parseJsonSafe<number[] | null>(event.nodeIds, null),
-      details: event.details,
+      details: event.detailsText ?? null,
       detailsStatus: normalizeDetailsStatus(event.detailsStatus),
     });
 
-    // Non-long events don't need details
     if (!event.isLong) {
       return mapped();
     }
 
-    // Already have details
-    if (event.details) {
+    if (event.detailsText) {
       return mapped();
     }
 
-    // Details generation failed permanently
     if (event.detailsStatus === "failed_permanent") {
       return mapped();
     }
 
-    // Directly generate details for on-demand user request
-    // This bypasses the scheduler for immediate response
     try {
       await this.generateEventDetails(eventId);
 
-      // Fetch refreshed event with details
       const refreshed = await db
         .select()
         .from(activityEvents)
@@ -344,21 +495,19 @@ class ActivityMonitorService {
         endTs: e.endTs,
         durationMs: e.durationMs,
         isLong: e.isLong,
-        confidence: e.confidence,
-        importance: e.importance,
+        confidence: e.confidence ?? 5,
+        importance: e.importance ?? 5,
         threadId: e.threadId,
         nodeIds: parseJsonSafe<number[] | null>(e.nodeIds, null),
-        details: e.details,
+        details: e.detailsText ?? null,
         detailsStatus: normalizeDetailsStatus(e.detailsStatus),
       };
     } catch (error) {
-      // If generation fails, return event with failed status
       logger.warn(
         { eventId, error: error instanceof Error ? error.message : String(error) },
         "Event details generation failed on-demand"
       );
 
-      // Refetch to get latest status
       const failedEvent = await db
         .select()
         .from(activityEvents)
@@ -379,22 +528,25 @@ class ActivityMonitorService {
         endTs: f.endTs,
         durationMs: f.durationMs,
         isLong: f.isLong,
-        confidence: f.confidence,
-        importance: f.importance,
+        confidence: f.confidence ?? 5,
+        importance: f.importance ?? 5,
         threadId: f.threadId,
         nodeIds: parseJsonSafe<number[] | null>(f.nodeIds, null),
-        details: f.details,
+        details: f.detailsText ?? null,
         detailsStatus: normalizeDetailsStatus(f.detailsStatus),
       };
     }
   }
 
-  /**
-   * Trigger LLM generation for a 20-minute window summary
-   */
-  async generateWindowSummary(windowStart: number, windowEnd: number) {
+  async generateWindowSummary(
+    windowStart: number,
+    windowEnd: number,
+    opts?: { failureStatus?: "failed" | "failed_permanent" }
+  ): Promise<boolean> {
     const db = getDb();
     const aiService = AISDKService.getInstance();
+
+    const startTime = Date.now();
 
     if (!aiService.isInitialized()) {
       logger.warn("AI service not initialized, skipping summary generation");
@@ -414,66 +566,13 @@ class ActivityMonitorService {
         .limit(1)
         .get();
 
-      // Count screenshots in window (no storageState filter per user)
-      const screenshotCount = db
-        .select({ id: screenshots.id })
-        .from(screenshots)
-        .where(and(gte(screenshots.ts, windowStart), lt(screenshots.ts, windowEnd)))
-        .all().length;
+      const nodes = await db
+        .select()
+        .from(contextNodes)
+        .where(and(gte(contextNodes.eventTime, windowStart), lt(contextNodes.eventTime, windowEnd)))
+        .orderBy(contextNodes.eventTime);
 
-      // 1. Fetch screenshots in this window first, then join back to context nodes.
-      // This is more robust under node merge: merged nodes may accumulate screenshot links
-      // across windows, but we only count/attribute evidence that is backed by screenshots
-      // whose timestamps fall inside this window.
-      const rows = await db
-        .select({
-          screenshot: screenshots,
-          node: contextNodes,
-        })
-        .from(screenshots)
-        .leftJoin(contextScreenshotLinks, eq(screenshots.id, contextScreenshotLinks.screenshotId))
-        .leftJoin(
-          contextNodes,
-          and(
-            eq(contextScreenshotLinks.nodeId, contextNodes.id),
-            ne(contextNodes.kind, "entity_profile")
-          )
-        )
-        .where(and(gte(screenshots.ts, windowStart), lt(screenshots.ts, windowEnd)))
-        .orderBy(screenshots.ts);
-
-      const nodeIdsSet = new Set<number>();
-      for (const row of rows) {
-        if (row.node) nodeIdsSet.add(row.node.id);
-      }
-      const nodeCount = nodeIdsSet.size;
-
-      const pendingVlmCount =
-        screenshotCount === 0
-          ? 0
-          : db
-              .select({ id: screenshots.id })
-              .from(screenshots)
-              .where(
-                and(
-                  gte(screenshots.ts, windowStart),
-                  lt(screenshots.ts, windowEnd),
-                  or(
-                    inArray(screenshots.vlmStatus, ["pending", "running"]),
-                    and(
-                      eq(screenshots.vlmStatus, "failed"),
-                      lt(
-                        screenshots.vlmAttempts,
-                        processingConfig.scheduler.retryConfig.maxAttempts
-                      )
-                    )
-                  )
-                )
-              )
-              .all().length;
-
-      // Branch: No Data (no screenshots at all)
-      if (screenshotCount === 0) {
+      if (nodes.length === 0) {
         const emptySummary = buildEmptyWindowSummary();
         const stats: ActivityStats = {
           topApps: [],
@@ -486,14 +585,12 @@ class ActivityMonitorService {
           .update(activitySummaries)
           .set({
             title: "No Data",
-            summary: emptySummary,
+            summaryText: emptySummary,
             highlights: JSON.stringify([]),
             stats: JSON.stringify(stats),
-            status: "succeeded",
+            status: "no_data",
             updatedAt: Date.now(),
             nextRunAt: null,
-            errorCode: null,
-            errorMessage: null,
           })
           .where(
             and(
@@ -503,138 +600,21 @@ class ActivityMonitorService {
           )
           .run();
         emitActivityTimelineChanged(windowStart, windowEnd);
-      }
-
-      // Branch: Processing (screens exist but no nodes yet)
-      if (screenshotCount > 0 && (nodeCount === 0 || pendingVlmCount > 0)) {
-        const attempts = summaryRow?.attempts ?? 0;
-        const pendingRatio = pendingVlmCount > 0 ? pendingVlmCount / screenshotCount : 0;
-
-        const now = Date.now();
-        const overdueMs = now - windowEnd;
-        if (pendingVlmCount > 0 && overdueMs > 30 * 60 * 1000) {
-          activityAlertBuffer.record({
-            ts: now,
-            kind: "activity_summary_overdue",
-            message: `Activity summary blocked by VLM progress: ${pendingVlmCount}/${screenshotCount} screenshots still pending`,
-            windowStart,
-            windowEnd,
-          });
-        }
-
-        // 动态计算下一次重试时间（nextRunAt）：根据窗口内 VLM 仍未完成的占比来调整轮询频率。
-        // - pendingRatio 越高：说明还剩很多截图在跑 VLM，此时频繁轮询意义不大，适当拉长间隔降低 DB 压力
-        // - pendingRatio 越低：说明接近完成，为了更快从 "Processing" 切换到真实 summary，缩短间隔提升体验
-        // 该策略只影响 "Processing" 状态下的轮询，不影响真正的失败重试（failed/failed_permanent）路径。
-        const minDelayMs = 15_000;
-        const maxDelayMs = 120_000;
-        const delayMs = Math.round(minDelayMs + (maxDelayMs - minDelayMs) * pendingRatio);
-
-        // 叠加随机抖动：避免多个窗口在同一时刻集中醒来，造成突发的 DB/CPU 峰值。
-        const nextRunAt =
-          Date.now() +
-          delayMs +
-          Math.floor(Math.random() * processingConfig.scheduler.retryConfig.jitterMs);
-
-        // 只是在等待 VLM 时，不应该把这次当作失败重试。
-        // scheduler 在 claim 时会先 +1，这里在 VLM 仍未完成时把 attempts 回滚（避免把 "Processing" 等待耗尽重试次数）。
-        const newAttempts = pendingVlmCount > 0 ? Math.max(0, attempts - 1) : attempts;
-
-        // 只有在：重试次数耗尽 且 VLM 已经对窗口内所有截图处理完成 时，才允许 "Processing" 变成 "No Data" 并结束重试。
-        const shouldStopRetry =
-          newAttempts >= processingConfig.scheduler.retryConfig.maxAttempts &&
-          pendingVlmCount === 0;
-
-        const emptySummary = buildEmptyWindowSummary();
-        const stats: ActivityStats = {
-          topApps: [],
-          topEntities: [],
-          nodeCount: 0,
-          screenshotCount,
-          threadCount: 0,
-        };
-        await db
-          .update(activitySummaries)
-          .set({
-            title: shouldStopRetry ? "No Data" : "Processing",
-            summary: emptySummary,
-            highlights: JSON.stringify([]),
-            stats: JSON.stringify(stats),
-            status: shouldStopRetry ? "succeeded" : "pending",
-            attempts: newAttempts,
-            nextRunAt: shouldStopRetry ? null : nextRunAt,
-            updatedAt: Date.now(),
-          })
-          .where(
-            and(
-              eq(activitySummaries.windowStart, windowStart),
-              eq(activitySummaries.windowEnd, windowEnd)
-            )
-          )
-          .run();
-        emitActivityTimelineChanged(windowStart, windowEnd);
-        // Return true to indicate we've handled the state (even if it's still 'pending')
-        // Returning false would trigger the scheduler's catch block, which we want to avoid.
         return true;
       }
 
-      // Group nodes and count unique screenshots
-      const nodeMap = new Map<
-        number,
-        {
-          node: ContextNodeRecord;
-          apps: Set<string>;
-          screenshotIds: Set<number>;
-          minScreenshotTs: number;
-          maxScreenshotTs: number;
-        }
-      >();
-      for (const row of rows) {
-        if (!row.node) continue;
-        const nodeId = row.node.id;
-        let entry = nodeMap.get(nodeId);
-        if (!entry) {
-          entry = {
-            node: row.node,
-            apps: new Set<string>(),
-            screenshotIds: new Set<number>(),
-            minScreenshotTs: row.screenshot.ts,
-            maxScreenshotTs: row.screenshot.ts,
-          };
-          nodeMap.set(nodeId, entry);
-        }
-
-        // Only associate evidence that belongs to this window's timeframe.
-        // Even after node merges, screenshot links can span multiple windows; this check
-        // ensures our evidence and stats stay strictly within [windowStart, windowEnd).
-        if (row.screenshot.ts < windowEnd && row.screenshot.ts >= windowStart) {
-          entry.minScreenshotTs = Math.min(entry.minScreenshotTs, row.screenshot.ts);
-          entry.maxScreenshotTs = Math.max(entry.maxScreenshotTs, row.screenshot.ts);
-          if (row.screenshot.appHint) {
-            entry.apps.add(row.screenshot.appHint);
-          }
-          entry.screenshotIds.add(row.screenshot.id);
-        }
-      }
-
-      const nodes = Array.from(nodeMap.values()).sort(
-        (a, b) => a.minScreenshotTs - b.minScreenshotTs
-      );
-
-      // 2. Aggregate stats for the prompt
       const appCounts: Record<string, number> = {};
       const entityCounts: Record<string, number> = {};
       const threadIds = new Set<string>();
 
-      const screenshotIdsSet = new Set<number>();
-      for (const { node, apps, screenshotIds } of nodes) {
-        for (const app of apps) {
-          appCounts[app] = (appCounts[app] || 0) + 1;
+      for (const node of nodes) {
+        const appHint = parseAppHint(node);
+        if (appHint) {
+          appCounts[appHint] = (appCounts[appHint] || 0) + 1;
         }
-        for (const sid of screenshotIds) {
-          screenshotIdsSet.add(sid);
+        if (node.threadId) {
+          threadIds.add(node.threadId);
         }
-        if (node.threadId) threadIds.add(node.threadId);
         const entities = parseJsonSafe<Array<{ name?: unknown }>>(node.entities, []);
         for (const e of entities) {
           const name = typeof e?.name === "string" ? e.name : null;
@@ -643,154 +623,135 @@ class ActivityMonitorService {
         }
       }
 
-      const totalScreenshotCount = screenshotIdsSet.size;
-
       const topApps = Object.entries(appCounts)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
-        .map(([name]: [string, number]) => name);
+        .map(([name]) => name);
 
       const topEntities = Object.entries(entityCounts)
         .sort((a, b) => b[1] - a[1])
         .slice(0, 5)
-        .map(([name]: [string, number]) => name);
+        .map(([name]) => name);
 
-      // 3. Prepare nodes data for LLM
-      const nodesData = nodes.map(
-        ({
-          node,
-          apps,
-          minScreenshotTs,
-          maxScreenshotTs,
-        }: {
-          node: ContextNodeRecord;
-          apps: Set<string>;
-          minScreenshotTs: number;
-          maxScreenshotTs: number;
-        }) => ({
-          id: node.id,
-          kind: node.kind,
-          title: node.title,
-          summary: node.summary,
-          apps: Array.from(apps),
-          time: new Date(Math.floor((minScreenshotTs + maxScreenshotTs) / 2)).toLocaleTimeString(),
-        })
-      );
+      const nodesData = nodes.map((node) => ({
+        node_id: node.id,
+        title: node.title,
+        summary: node.summary,
+        app_hint: parseAppHint(node),
+        thread_id: node.threadId ?? null,
+        entities: extractEntityNames(node.entities),
+        keywords: parseJsonSafe<string[]>(node.keywords, []),
+        event_time: node.eventTime,
+        importance: node.importance,
+        knowledge_json: toSnakeCaseKnowledgePayload(parseJsonSafe(node.knowledge, null)),
+        state_snapshot_json: toSnakeCaseStateSnapshotPayload(
+          parseJsonSafe(node.stateSnapshot, null)
+        ),
+      }));
 
-      // 4. Prompt Design
-      // System prompt is now handled by promptTemplates.getActivitySummarySystemPrompt()
-
-      const userPrompt = JSON.stringify(
+      const longThreadMap = new Map<
+        string,
         {
-          window: {
-            windowStart,
-            windowEnd,
-          },
-          contextNodes: nodesData,
-          stats: {
+          snapshot: {
+            title?: string;
+            summary?: string;
+            durationMs?: number;
+            startTime?: number;
+            currentPhase?: string;
+            mainProject?: string;
+          } | null;
+          lastActiveAt: number;
+          nodeCount: number;
+        }
+      >();
+
+      for (const node of nodes) {
+        if (!node.threadId) continue;
+        const snapshot = parseJsonSafe<{
+          title?: string;
+          summary?: string;
+          durationMs?: number;
+          startTime?: number;
+          currentPhase?: string;
+          mainProject?: string;
+        } | null>(node.threadSnapshot, null);
+
+        const existing = longThreadMap.get(node.threadId);
+        const next = {
+          snapshot: snapshot ?? existing?.snapshot ?? null,
+          lastActiveAt: Math.max(existing?.lastActiveAt ?? 0, node.eventTime),
+          nodeCount: (existing?.nodeCount ?? 0) + 1,
+        };
+        longThreadMap.set(node.threadId, next);
+      }
+
+      const longThreads = Array.from(longThreadMap.entries())
+        .map(([threadId, data]) => ({ threadId, ...data }))
+        .filter(
+          (entry) =>
+            (entry.snapshot?.durationMs ?? 0) >=
+            processingConfig.activitySummary.longEventThresholdMs
+        )
+        .map((entry) => ({
+          thread_id: entry.threadId,
+          title: entry.snapshot?.title ?? "",
+          summary: entry.snapshot?.summary ?? "",
+          duration_ms: entry.snapshot?.durationMs ?? 0,
+          start_time: entry.snapshot?.startTime ?? windowStart,
+          last_active_at: entry.lastActiveAt,
+          current_phase: entry.snapshot?.currentPhase,
+          main_project: entry.snapshot?.mainProject,
+          node_count_in_window: entry.nodeCount,
+        }));
+
+      const timeContext = buildTimeContext(new Date());
+      const userPrompt = promptTemplates.getActivitySummaryUserPrompt({
+        nowTs: timeContext.nowTs,
+        todayStart: timeContext.todayStart,
+        todayEnd: timeContext.todayEnd,
+        yesterdayStart: timeContext.yesterdayStart,
+        yesterdayEnd: timeContext.yesterdayEnd,
+        weekAgo: timeContext.weekAgo,
+        windowStart,
+        windowEnd,
+        windowStartLocal: new Date(windowStart).toLocaleString("sv-SE", {
+          timeZone: timeContext.timeZone,
+          hour12: false,
+        }),
+        windowEndLocal: new Date(windowEnd).toLocaleString("sv-SE", {
+          timeZone: timeContext.timeZone,
+          hour12: false,
+        }),
+        contextNodesJson: JSON.stringify(nodesData, null, 2),
+        longThreadsJson: JSON.stringify(longThreads, null, 2),
+        statsJson: JSON.stringify(
+          {
             top_apps: topApps,
             top_entities: topEntities,
-            nodeCount: nodes.length,
-            screenshotCount: totalScreenshotCount,
-            threadCount: threadIds.size,
+            thread_count: threadIds.size,
+            node_count: nodes.length,
           },
-          outputSchema: {
-            title: "string",
-            summary: "string",
-            highlights: "string[]",
-            stats: { top_apps: "string[]", top_entities: "string[]" },
-            events: [
-              {
-                title: "string",
-                kind: "focus|work|meeting|break|browse|coding|debugging",
-                start_offset_min: "number",
-                end_offset_min: "number",
-                confidence: "0-10",
-                importance: "0-10",
-                description: "string",
-                node_ids: "number[]",
-              },
-            ],
-          },
-        },
-        null,
-        2
-      );
+          null,
+          2
+        ),
+      });
 
-      // Use semaphore for concurrency control and AbortController for timeout
-      const semaphoreStart = Date.now();
       const releaseText = await aiRuntimeService.acquire("text");
-      const semaphoreWaitMs = Date.now() - semaphoreStart;
-      logger.debug(
-        { windowStart, windowEnd, waitMs: semaphoreWaitMs },
-        "Activity summary semaphore acquired"
-      );
-      if (semaphoreWaitMs > 5000) {
-        activityAlertBuffer.record({
-          ts: Date.now(),
-          kind: "activity_summary_semaphore_wait",
-          message: `Activity summary waited ${semaphoreWaitMs}ms for text semaphore`,
-          windowStart,
-          windowEnd,
-          waitMs: semaphoreWaitMs,
-        });
-      }
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
-
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
         llmResult = await generateObject({
           model: aiService.getTextClient(),
           system: promptTemplates.getActivitySummarySystemPrompt(),
           schema: ActivityWindowSummaryLLMSchema,
-          prompt: promptTemplates.getActivitySummaryUserPrompt({
-            userPromptJson: userPrompt,
-            windowStart,
-            windowEnd,
-          }),
+          mode: "json",
+          prompt: userPrompt,
           abortSignal: controller.signal,
           providerOptions: {
-            mnemora: {
-              thinking: {
-                type: "disabled",
-              },
-            },
+            mnemora: {},
           },
         });
-      } catch (error) {
-        // Detailed logging for schema mismatch errors
-        if (error instanceof Error && error.name === "AI_NoObjectGeneratedError") {
-          const aiError = error as unknown as {
-            response?: { text?: string };
-            text?: string;
-            partialObject?: unknown;
-          };
-          const rawResponse = aiError.response?.text || aiError.text;
-          const partialObject = aiError.partialObject;
-          logger.error(
-            {
-              windowStart,
-              windowEnd,
-              error: error.message,
-              rawResponse: rawResponse ? rawResponse.slice(0, 5000) : "N/A",
-              partialObject,
-              errorStack: error.stack,
-            },
-            "Activity summary LLM schema mismatch - detailed"
-          );
-        } else if (error instanceof Error && error.name === "ZodError") {
-          const zodError = error as unknown as { errors: unknown };
-          logger.error(
-            {
-              windowStart,
-              windowEnd,
-              error: zodError.errors,
-            },
-            "Activity summary Zod validation failed"
-          );
-        }
-        throw error;
       } finally {
         clearTimeout(timeoutId);
         releaseText();
@@ -800,8 +761,6 @@ class ActivityMonitorService {
       const data = ActivityWindowSummaryLLMProcessedSchema.parse(rawData);
 
       aiRuntimeService.recordSuccess("text");
-
-      // Log usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -812,28 +771,21 @@ class ActivityMonitorService {
         totalTokens: usage?.totalTokens ?? 0,
         usageStatus: usage ? "present" : "missing",
       });
-
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
         operation: "text_summary",
         model: aiService.getTextModelName(),
-        durationMs: Date.now() - windowStart, // approximate
+        durationMs: Date.now() - startTime,
         status: "succeeded",
         responsePreview: JSON.stringify(data, null, 2),
       });
 
-      if (!data) {
-        throw new Error("LLM output validation failed: null result from generateObject");
-      }
-
-      // 5. Save Summary
       const finalStats: ActivityStats = {
         topApps,
         topEntities,
         nodeCount: nodes.length,
-        screenshotCount: totalScreenshotCount,
+        screenshotCount: nodes.length,
         threadCount: threadIds.size,
       };
 
@@ -841,13 +793,11 @@ class ActivityMonitorService {
         .update(activitySummaries)
         .set({
           title: data.title,
-          summary: data.summary,
+          summaryText: data.summary,
           highlights: JSON.stringify(data.highlights),
           stats: JSON.stringify(finalStats),
           status: "succeeded",
           nextRunAt: null,
-          errorCode: null,
-          errorMessage: null,
           updatedAt: Date.now(),
         })
         .where(
@@ -860,59 +810,11 @@ class ActivityMonitorService {
 
       emitActivityTimelineChanged(windowStart, windowEnd);
 
-      // 6. Save Events
-      // Allow small gaps when merging events across windows for the same threadId.
-      // This tolerates boundary jitter and LLM offsets when a continuous activity spans windows.
-      const mergeGapMs = processingConfig.activitySummary.generationIntervalMs + 2 * 60 * 1000;
       for (const [idx, event] of data.events.entries()) {
-        // LLM returns start/end as minute offsets relative to windowStart.
-        // Convert them to absolute timestamps for persistence and cross-window merging.
-        const startTs = windowStart + event.start_offset_min * 60 * 1000;
-        const endTs = windowStart + event.end_offset_min * 60 * 1000;
-
-        // Use threadId of the first node cited if available, or generate a stable key
-        const primaryNodeId = event.node_ids[0];
-        const primaryNodeEntry = nodes.find(
-          (n: { node: ContextNodeRecord; apps: Set<string> }) => n.node.id === primaryNodeId
-        );
-        const threadId = primaryNodeEntry?.node.threadId || null;
-
-        // Choose a stable eventKey. If a thread exists, try to merge across windows by continuity.
-        let eventKey: string;
-        if (threadId) {
-          const candidate = await db
-            .select({
-              id: activityEvents.id,
-              eventKey: activityEvents.eventKey,
-              endTs: activityEvents.endTs,
-              title: activityEvents.title,
-              kind: activityEvents.kind,
-            })
-            .from(activityEvents)
-            .where(
-              and(
-                eq(activityEvents.threadId, threadId),
-                lte(activityEvents.startTs, startTs),
-                gte(activityEvents.endTs, startTs - mergeGapMs)
-              )
-            )
-            .orderBy(desc(activityEvents.endTs))
-            .limit(1);
-
-          const titleHash = Buffer.from(`${event.kind}:${event.title}`)
-            .toString("hex")
-            .slice(0, 16);
-          if (candidate.length > 0) {
-            eventKey = candidate[0].eventKey;
-          } else {
-            eventKey = `thr_${threadId}_win_${windowStart}_evt_${idx}_${titleHash}`;
-          }
-        } else {
-          const titleHash = Buffer.from(`${event.kind}:${event.title}`)
-            .toString("hex")
-            .slice(0, 16);
-          eventKey = `win_${windowStart}_evt_${idx}_${titleHash}`;
-        }
+        const startTs = windowStart + event.startOffsetMin * 60 * 1000;
+        const endTs = windowStart + event.endOffsetMin * 60 * 1000;
+        const titleHash = Buffer.from(`${event.kind}:${event.title}`).toString("hex").slice(0, 16);
+        const eventKey = `win_${windowStart}_evt_${idx}_${titleHash}`;
 
         await this.upsertEvent({
           eventKey,
@@ -920,29 +822,119 @@ class ActivityMonitorService {
           kind: event.kind,
           startTs,
           endTs,
-          threadId,
-          nodeIds: event.node_ids,
+          threadId: event.threadId ?? null,
+          nodeIds: event.nodeIds,
           confidence: event.confidence,
           importance: event.importance,
+          summaryId: summaryRow?.id ?? null,
         });
+      }
+
+      const kindByThreadId = new Map<string, ActivityEventKind>();
+      for (const event of data.events) {
+        if (!event.threadId) continue;
+        kindByThreadId.set(event.threadId, event.kind as ActivityEventKind);
+      }
+
+      for (const thread of longThreads) {
+        const threadId = thread.thread_id;
+        const markerKey = `thr_${threadId}`;
+
+        const latestNodeIds = await db
+          .select({ id: contextNodes.id })
+          .from(contextNodes)
+          .where(eq(contextNodes.threadId, threadId))
+          .orderBy(desc(contextNodes.eventTime))
+          .limit(200);
+
+        const nodeIdsJson = JSON.stringify(latestNodeIds.map((r) => r.id));
+
+        const existingMarker = await db
+          .select({ id: activityEvents.id })
+          .from(activityEvents)
+          .where(eq(activityEvents.eventKey, markerKey))
+          .limit(1);
+
+        const nowTs = Date.now();
+        if (existingMarker.length > 0) {
+          await db
+            .update(activityEvents)
+            .set({
+              title: thread.title,
+              startTs: thread.start_time,
+              endTs: thread.last_active_at,
+              durationMs: thread.duration_ms,
+              isLong: true,
+              threadId,
+              nodeIds: nodeIdsJson,
+              updatedAt: nowTs,
+            })
+            .where(eq(activityEvents.id, existingMarker[0].id))
+            .run();
+        } else {
+          const kind =
+            kindByThreadId.get(threadId) ??
+            inferLongEventKindFromSnapshot({
+              title: thread.title,
+              currentPhase: thread.current_phase,
+            });
+
+          await db
+            .insert(activityEvents)
+            .values({
+              eventKey: markerKey,
+              title: thread.title,
+              kind,
+              startTs: thread.start_time,
+              endTs: thread.last_active_at,
+              durationMs: thread.duration_ms,
+              isLong: true,
+              confidence: 6,
+              importance: 6,
+              threadId,
+              nodeIds: nodeIdsJson,
+              detailsStatus: "pending",
+              detailsAttempts: 0,
+              createdAt: nowTs,
+              updatedAt: nowTs,
+            })
+            .run();
+        }
       }
 
       return true;
     } catch (error) {
-      logger.error({ error, windowStart }, "Failed to generate window summary");
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const durationMs = Date.now() - startTime;
+      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
 
-      if (error instanceof Error && error.name === "AbortError") {
-        activityAlertBuffer.record({
-          ts: Date.now(),
-          kind: "activity_summary_timeout",
-          message: `Activity summary timed out after ${processingConfig.ai.textTimeoutMs}ms`,
-          windowStart,
-          windowEnd,
-        });
+      if (NoObjectGeneratedError.isInstance(error)) {
+        logger.error(
+          {
+            errorName: error.name,
+            rawText: error.text,
+            rawResponse: error.response,
+            cause: error.cause instanceof Error ? error.cause.message : String(error.cause),
+            windowStart,
+            windowEnd,
+            durationMs,
+          },
+          "Activity summary NoObjectGeneratedError - raw response did not match schema"
+        );
       }
 
-      // Log failure
+      logger.error(
+        {
+          error: error instanceof Error ? error.message : String(error),
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          stack: error instanceof Error ? error.stack : undefined,
+          fullError: error,
+          windowStart,
+          windowEnd,
+          durationMs,
+        },
+        "Activity summary generation failed"
+      );
+
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -952,28 +944,23 @@ class ActivityMonitorService {
         provider: "openai_compatible",
         totalTokens: 0,
         usageStatus: "missing",
-        errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
+        errorCode: error instanceof Error ? error.name : "unknown",
       });
 
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
         operation: "text_summary",
         model: aiService.getTextModelName(),
-        durationMs: 0, // unknown on failure
+        durationMs,
         status: "failed",
         errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
 
-      // Record failure for circuit breaker
-      aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
-
       await db
         .update(activitySummaries)
         .set({
-          status: "failed",
-          errorMessage,
+          status: opts?.failureStatus ?? "failed",
           updatedAt: Date.now(),
         })
         .where(
@@ -985,14 +972,10 @@ class ActivityMonitorService {
         .run();
 
       emitActivityTimelineChanged(windowStart, windowEnd);
-
-      throw error;
+      return false;
     }
   }
 
-  /**
-   * Generate detailed report for a long event
-   */
   async generateEventDetails(eventId: number): Promise<boolean> {
     const db = getDb();
     const aiService = AISDKService.getInstance();
@@ -1012,14 +995,83 @@ class ActivityMonitorService {
       if (eventRows.length === 0) return false;
       const event = eventRows[0];
 
-      const dataFetchStart = Date.now();
+      const now = Date.now();
+      const staleThreshold = now - processingConfig.scheduler.staleRunningThresholdMs;
+
+      if (!event.isLong || !event.threadId) {
+        return false;
+      }
+
+      const currentAttempts = event.detailsAttempts ?? 0;
+
+      if (event.detailsStatus === "running") {
+        if (event.updatedAt < staleThreshold) {
+          await db
+            .update(activityEvents)
+            .set({
+              detailsStatus: "failed",
+              updatedAt: now,
+            })
+            .where(eq(activityEvents.id, eventId))
+            .run();
+
+          activityAlertBuffer.record({
+            ts: now,
+            kind: "activity_event_details_stuck_running",
+            message: `Event details was stuck running for >${processingConfig.scheduler.staleRunningThresholdMs}ms; reset to failed`,
+            eventId,
+            updatedAt: event.updatedAt,
+          });
+        } else {
+          return false;
+        }
+      }
+
+      if (currentAttempts >= processingConfig.retry.maxAttempts) {
+        await db
+          .update(activityEvents)
+          .set({
+            detailsStatus: "failed_permanent",
+            updatedAt: now,
+          })
+          .where(eq(activityEvents.id, eventId))
+          .run();
+        return false;
+      }
+
+      const nextAttempts = currentAttempts + 1;
+
+      const claim = await db
+        .update(activityEvents)
+        .set({
+          detailsStatus: "running",
+          detailsAttempts: nextAttempts,
+          detailsNextRunAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(activityEvents.id, eventId),
+            isNull(activityEvents.detailsText),
+            or(
+              eq(activityEvents.detailsStatus, "pending"),
+              eq(activityEvents.detailsStatus, "failed")
+            ),
+            eq(activityEvents.detailsAttempts, currentAttempts)
+          )
+        )
+        .run();
+
+      if (claim.changes === 0) {
+        return false;
+      }
 
       const nodeIds = parseJsonSafe<number[]>(event.nodeIds, []);
       if (nodeIds.length === 0) {
         await db
           .update(activityEvents)
           .set({
-            details: "No evidence found for this event.",
+            detailsText: "No evidence found for this event.",
             detailsStatus: "succeeded",
             updatedAt: Date.now(),
           })
@@ -1028,125 +1080,116 @@ class ActivityMonitorService {
         return true;
       }
 
-      // Fetch nodes with joined screens
-      const rows = await db
-        .select({
-          node: contextNodes,
-          screenshot: screenshots,
-        })
+      const windowNodesRows = await db
+        .select()
         .from(contextNodes)
-        .leftJoin(contextScreenshotLinks, eq(contextNodes.id, contextScreenshotLinks.nodeId))
-        .leftJoin(screenshots, eq(contextScreenshotLinks.screenshotId, screenshots.id))
-        .where(inArray(contextNodes.id, nodeIds));
+        .where(
+          and(
+            eq(contextNodes.threadId, event.threadId),
+            gte(contextNodes.eventTime, event.startTs),
+            lt(contextNodes.eventTime, event.endTs)
+          )
+        )
+        .orderBy(contextNodes.eventTime);
 
-      const nodeMap = new Map<number, { node: ContextNodeRecord; apps: Set<string> }>();
-      for (const row of rows) {
-        let entry = nodeMap.get(row.node.id);
-        if (!entry) {
-          entry = { node: row.node, apps: new Set<string>() };
-          nodeMap.set(row.node.id, entry);
-        }
-        if (row.screenshot?.appHint) {
-          entry.apps.add(row.screenshot.appHint);
-        }
-      }
+      const latestNodesRows = await db
+        .select()
+        .from(contextNodes)
+        .where(eq(contextNodes.threadId, event.threadId))
+        .orderBy(desc(contextNodes.eventTime))
+        .limit(processingConfig.activitySummary.eventDetailsEvidenceMaxNodes);
 
-      const nodesDataRaw = Array.from(nodeMap.values())
-        .map(({ node, apps }: { node: ContextNodeRecord; apps: Set<string> }) => ({
-          id: node.id,
-          kind: node.kind,
+      const timeContext = buildTimeContext(new Date());
+
+      const formatNodes = (rows: ContextNodeRecord[]) =>
+        rows.map((node) => ({
+          node_id: node.id,
           title: node.title,
           summary: node.summary,
-          apps: Array.from(apps),
-          eventTimeMs: node.eventTime ?? null,
-        }))
-        .sort((a, b) => {
-          const at = a.eventTimeMs ?? 0;
-          const bt = b.eventTimeMs ?? 0;
-          return at - bt;
-        });
+          app_hint: parseAppHint(node),
+          knowledge_json: toSnakeCaseKnowledgePayload(parseJsonSafe(node.knowledge, null)),
+          state_snapshot_json: toSnakeCaseStateSnapshotPayload(
+            parseJsonSafe(node.stateSnapshot, null)
+          ),
+          entities_json: parseJsonSafe(node.entities, []),
+          action_items_json: null,
+          event_time: node.eventTime,
+          local_time: new Date(node.eventTime).toLocaleString("sv-SE", {
+            timeZone: timeContext.timeZone,
+            hour12: false,
+          }),
+          is_in_current_window: node.eventTime >= event.startTs && node.eventTime < event.endTs,
+        }));
 
-      const { items: nodesDataCapped, approxChars: nodesDataApproxChars } = capJsonArrayByChars(
-        nodesDataRaw,
+      const windowNodesRaw = formatNodes(windowNodesRows);
+      const latestNodesRaw = formatNodes(latestNodesRows);
+
+      const { items: windowNodes } = capJsonArrayByChars(
+        windowNodesRaw,
+        processingConfig.activitySummary.eventDetailsEvidenceMaxNodes,
+        processingConfig.activitySummary.eventDetailsEvidenceMaxChars
+      );
+      const { items: threadLatestNodes } = capJsonArrayByChars(
+        latestNodesRaw,
         processingConfig.activitySummary.eventDetailsEvidenceMaxNodes,
         processingConfig.activitySummary.eventDetailsEvidenceMaxChars
       );
 
-      const nodesData = nodesDataCapped.map(({ eventTimeMs, ...rest }) => ({
-        ...rest,
-        time: eventTimeMs ? new Date(eventTimeMs).toLocaleString() : "unknown",
-      }));
+      const latestSnapshot = latestNodesRows.find((row) => row.threadSnapshot)?.threadSnapshot;
+      const snapshot = parseJsonSafe<{
+        title?: string;
+        summary?: string;
+        durationMs?: number;
+        startTime?: number;
+        currentPhase?: string;
+        mainProject?: string;
+      }>(latestSnapshot, {});
 
-      const dataFetchDuration = Date.now() - dataFetchStart;
-      logger.debug(
-        { eventId, nodeCount: nodeMap.size, durationMs: dataFetchDuration },
-        "Event details data fetch completed"
-      );
-
-      // System prompt is now handled by promptTemplates.getEventDetailsSystemPrompt()
-
-      const userPrompt = JSON.stringify(
-        {
-          event: {
-            id: event.id,
-            title: event.title,
-            kind: event.kind,
-            startTs: event.startTs,
-            endTs: event.endTs,
-            durationMinutes: Math.round(event.durationMs / 60000),
-          },
-          evidenceInfo: {
-            originalNodeCount: nodeMap.size,
-            returnedNodeCount: nodesData.length,
-            returnedApproxChars: nodesDataApproxChars,
-            maxNodes: processingConfig.activitySummary.eventDetailsEvidenceMaxNodes,
-            maxChars: processingConfig.activitySummary.eventDetailsEvidenceMaxChars,
-          },
-          activityLogs: nodesData,
-          outputSchema: {
-            details:
-              mainI18n.getCurrentLanguage() === "zh-CN" ? "markdown 字符串" : "markdown string",
-          },
+      const userPromptPayload = {
+        now_ts: timeContext.nowTs,
+        today_start: timeContext.todayStart,
+        today_end: timeContext.todayEnd,
+        yesterday_start: timeContext.yesterdayStart,
+        yesterday_end: timeContext.yesterdayEnd,
+        week_ago: timeContext.weekAgo,
+        event: {
+          event_id: event.id,
+          title: event.title,
+          kind: event.kind,
+          start_ts: event.startTs,
+          end_ts: event.endTs,
+          is_long: event.isLong,
         },
-        null,
-        2
-      );
+        thread: {
+          thread_id: event.threadId,
+          title: snapshot.title ?? "",
+          summary: snapshot.summary ?? "",
+          duration_ms: snapshot.durationMs ?? event.durationMs,
+          start_time: snapshot.startTime ?? event.startTs,
+          current_phase: snapshot.currentPhase,
+          main_project: snapshot.mainProject,
+        },
+        window_nodes: windowNodes,
+        thread_latest_nodes: threadLatestNodes,
+      };
 
-      // Use semaphore for concurrency control and AbortController for timeout
-      const aiStart = Date.now();
+      const userPrompt = promptTemplates.getEventDetailsUserPrompt({
+        userPromptJson: JSON.stringify(userPromptPayload, null, 2),
+      });
+
       const releaseText = await aiRuntimeService.acquire("text");
-      const semaphoreWaitDuration = Date.now() - aiStart;
-      logger.debug({ eventId, waitMs: semaphoreWaitDuration }, "Event details semaphore acquired");
-
-      if (semaphoreWaitDuration > 5000) {
-        activityAlertBuffer.record({
-          ts: Date.now(),
-          kind: "activity_event_details_semaphore_wait",
-          message: `Event details waited ${semaphoreWaitDuration}ms for text semaphore`,
-          eventId,
-          waitMs: semaphoreWaitDuration,
-        });
-      }
-
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.textTimeoutMs);
-
       let llmResult: { object: unknown; usage?: { totalTokens?: number } };
       try {
         llmResult = await generateObject({
           model: aiService.getTextClient(),
           system: promptTemplates.getEventDetailsSystemPrompt(),
           schema: ActivityEventDetailsLLMSchema,
-          prompt: promptTemplates.getEventDetailsUserPrompt({
-            userPromptJson: userPrompt,
-          }),
+          prompt: userPrompt,
           abortSignal: controller.signal,
           providerOptions: {
-            mnemora: {
-              thinking: {
-                type: "disabled",
-              },
-            },
+            mnemora: {},
           },
         });
       } finally {
@@ -1154,15 +1197,10 @@ class ActivityMonitorService {
         releaseText();
       }
 
-      const aiDuration = Date.now() - aiStart;
-      logger.info({ eventId, aiDurationMs: aiDuration }, "Event details AI generation completed");
-
       const { object: rawData, usage } = llmResult;
       const data = ActivityEventDetailsLLMProcessedSchema.parse(rawData);
 
       aiRuntimeService.recordSuccess("text");
-
-      // Log usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -1173,26 +1211,20 @@ class ActivityMonitorService {
         totalTokens: usage?.totalTokens ?? 0,
         usageStatus: usage ? "present" : "missing",
       });
-
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
         operation: "text_event_details",
         model: aiService.getTextModelName(),
-        durationMs: Date.now() - aiStart,
+        durationMs: Date.now() - startTime,
         status: "succeeded",
         responsePreview: JSON.stringify(data, null, 2),
       });
 
-      if (!data) {
-        throw new Error("LLM output validation failed: null result from generateObject");
-      }
-
       await db
         .update(activityEvents)
         .set({
-          details: data.details,
+          detailsText: data.details,
           detailsStatus: "succeeded",
           updatedAt: Date.now(),
         })
@@ -1200,13 +1232,6 @@ class ActivityMonitorService {
         .run();
 
       emitActivityTimelineChanged(event.startTs, event.endTs);
-
-      const totalDuration = Date.now() - startTime;
-      logger.info(
-        { eventId, totalDurationMs: totalDuration },
-        "Event details updated successfully"
-      );
-
       return true;
     } catch (error) {
       logger.error({ error, eventId }, "Failed to generate event details");
@@ -1220,7 +1245,6 @@ class ActivityMonitorService {
         });
       }
 
-      // Log failure
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "text",
@@ -1232,8 +1256,6 @@ class ActivityMonitorService {
         usageStatus: "missing",
         errorCode: error instanceof Error ? error.name : "UNKNOWN_ERROR",
       });
-
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "text",
@@ -1243,18 +1265,25 @@ class ActivityMonitorService {
         status: "failed",
         errorPreview: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
       });
-
-      // Record failure for circuit breaker
       aiRuntimeService.recordFailure("text", error, { tripBreaker: false });
+
+      const row = await db
+        .select({ detailsAttempts: activityEvents.detailsAttempts })
+        .from(activityEvents)
+        .where(eq(activityEvents.id, eventId))
+        .limit(1);
+
+      const attempts = row[0]?.detailsAttempts ?? 0;
+      const exceeded = attempts >= processingConfig.retry.maxAttempts;
+      const status = exceeded ? "failed_permanent" : "failed";
 
       await db
         .update(activityEvents)
         .set({
-          detailsStatus: "failed",
-          detailsErrorMessage: error instanceof Error ? error.message : String(error),
+          detailsStatus: status,
           updatedAt: Date.now(),
         })
-        .where(eq(activityEvents.id, eventId))
+        .where(and(eq(activityEvents.id, eventId), eq(activityEvents.detailsStatus, "running")))
         .run();
 
       emitActivityTimelineChanged(Date.now() - 24 * 60 * 60 * 1000, Date.now());
@@ -1262,10 +1291,6 @@ class ActivityMonitorService {
     }
   }
 
-  /**
-   * Create or update an event with isLong calculated from durationMs
-   * Used by summary generation when processing LLM output
-   */
   async upsertEvent(params: {
     eventKey: string;
     title: string;
@@ -1276,13 +1301,13 @@ class ActivityMonitorService {
     nodeIds?: number[] | null;
     confidence?: number;
     importance?: number;
+    summaryId?: number | null;
   }): Promise<number> {
     const db = getDb();
     const now = Date.now();
     const durationMs = params.endTs - params.startTs;
     const isLong = durationMs >= processingConfig.activitySummary.longEventThresholdMs;
 
-    // Check if event exists
     const existing = await db
       .select()
       .from(activityEvents)
@@ -1290,14 +1315,12 @@ class ActivityMonitorService {
       .limit(1);
 
     if (existing.length > 0) {
-      // Update existing event
       const event = existing[0];
       const newStartTs = Math.min(event.startTs, params.startTs);
       const newEndTs = Math.max(event.endTs, params.endTs);
       const newDurationMs = newEndTs - newStartTs;
       const newIsLong = newDurationMs >= processingConfig.activitySummary.longEventThresholdMs;
 
-      // Merge nodeIds
       const existingNodeIds = parseJsonSafe<number[]>(event.nodeIds, []);
       const newNodeIds = params.nodeIds || [];
       const mergedNodeIds = [...new Set([...existingNodeIds, ...newNodeIds])];
@@ -1310,6 +1333,7 @@ class ActivityMonitorService {
           confidence: params.confidence ?? event.confidence,
           importance: params.importance ?? event.importance,
           threadId: params.threadId ?? event.threadId,
+          summaryId: params.summaryId ?? event.summaryId,
           startTs: newStartTs,
           endTs: newEndTs,
           durationMs: newDurationMs,
@@ -1321,31 +1345,31 @@ class ActivityMonitorService {
         .run();
 
       return event.id;
-    } else {
-      // Insert new event
-      const result = await db
-        .insert(activityEvents)
-        .values({
-          eventKey: params.eventKey,
-          title: params.title,
-          kind: params.kind,
-          startTs: params.startTs,
-          endTs: params.endTs,
-          durationMs,
-          isLong,
-          confidence: params.confidence ?? 5,
-          importance: params.importance ?? 5,
-          threadId: params.threadId || null,
-          nodeIds: params.nodeIds ? JSON.stringify(params.nodeIds) : null,
-          detailsStatus: "succeeded",
-          detailsAttempts: 0,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run();
-
-      return Number(result.lastInsertRowid);
     }
+
+    const result = await db
+      .insert(activityEvents)
+      .values({
+        eventKey: params.eventKey,
+        title: params.title,
+        kind: params.kind,
+        startTs: params.startTs,
+        endTs: params.endTs,
+        durationMs,
+        isLong,
+        confidence: params.confidence ?? 5,
+        importance: params.importance ?? 5,
+        threadId: params.threadId ?? null,
+        summaryId: params.summaryId ?? null,
+        nodeIds: params.nodeIds ? JSON.stringify(params.nodeIds) : null,
+        detailsStatus: "pending",
+        detailsAttempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+
+    return Number(result.lastInsertRowid);
   }
 }
 

@@ -59,6 +59,7 @@ export function registerScreenCaptureHandlers(): void {
       try {
         logger.info("IPC: Pausing screen capture scheduler");
         const module = screenCaptureModule;
+        await userSettingService.setCaptureManualOverride("force_off");
         module.pause();
         return { success: true };
       } catch (error) {

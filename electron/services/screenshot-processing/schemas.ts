@@ -1,257 +1,303 @@
-/**
- * Screenshot Processing Schemas
- *
- * Zod schemas for validating VLM/LLM outputs and other structured data.
- * These schemas ensure type safety and provide runtime validation.
- */
-
 import { z } from "zod";
 
-import { CONTEXT_KIND_VALUES, EDGE_TYPE_VALUES } from "../../database/schema";
 import { DEFAULT_WINDOW_FILTER_CONFIG } from "../screen-capture/types";
+import { CONTEXT_KIND_VALUES, ENTITY_TYPE_VALUES, type EntityRef } from "@shared/context-types";
 
-// ============================================================================
-// Context Kind and Edge Type Enums
-// ============================================================================
+// =========================================================================
+// VLM Output Schemas (Alpha - One Node per Screenshot)
+// =========================================================================
 
-/**
- * Context node kinds
- */
-const ContextKindEnum = z.enum([...CONTEXT_KIND_VALUES]);
-
-/**
- * Edge types for context graph relationships
- */
-const EdgeTypeEnum = z.enum([...EDGE_TYPE_VALUES]);
-
-/**
- * Entity types
- */
-const EntityTypeSchema = z.string().min(1).max(32);
-
-/**
- * Merge decision values
- */
-const MergeDecisionEnum = z.enum(["NEW", "MERGE"]);
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-const CANONICAL_APP_CANDIDATES = Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
-const ALLOWED_APP_GUESSES: [string, ...string[]] = [
-  "unknown",
-  "other",
-  ...CANONICAL_APP_CANDIDATES,
-];
-
-// ============================================================================
-// VLM Output Schemas
-// ============================================================================
-
-/**
- * Helper to create a string schema that truncates instead of rejecting.
- * Use for post-processing.
- */
 function truncateTo(maxLen: number) {
   return (s: string) => (s.length > maxLen ? s.slice(0, maxLen) : s);
 }
 
-/**
- * Schema for derived items (knowledge, state, procedure, plan)
- */
-const DerivedItemSchema = z.object({
-  title: z.string(),
-  /** Summary of the derived item (≤500 chars) */
-  summary: z.string(),
-  /** Steps for procedures (optional) */
-  steps: z.array(z.string().max(80)).optional(),
-  /** Object being tracked for state snapshots (optional) */
-  object: z.string().optional(),
-});
+function normalizeProjectKey(val: unknown): string | null {
+  if (typeof val !== "string") return null;
+  const s = val.trim();
+  if (!s || s.toLowerCase() === "null") return null;
+  const key = s
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9._\-/]/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 80);
+  return key ? key : null;
+}
 
-const DerivedItemProcessedSchema = DerivedItemSchema.transform((val) => {
-  const result: z.infer<typeof DerivedItemSchema> = {
-    ...val,
-    title: truncateTo(200)(val.title),
-    summary: truncateTo(500)(val.summary),
-  };
-  if (val.steps) {
-    result.steps = val.steps.map(truncateTo(80));
+export const EntityTypeSchema = z.preprocess((val) => {
+  if (typeof val === "string" && (ENTITY_TYPE_VALUES as readonly string[]).includes(val)) {
+    return val;
   }
-  return result;
+  return "other";
+}, z.enum(ENTITY_TYPE_VALUES));
+
+export const EntityRefSchema: z.ZodType<EntityRef> = z.object({
+  name: z.string(),
+  type: EntityTypeSchema,
+  raw: z.string().optional(),
+  confidence: z.number().optional(),
 });
 
-export type DerivedItem = z.infer<typeof DerivedItemSchema>;
+const normalizeEntityRefs = (
+  entities: z.infer<typeof EntityRefSchema>[],
+  limit: number
+): z.infer<typeof EntityRefSchema>[] => {
+  const normalized: z.infer<typeof EntityRefSchema>[] = [];
 
-/**
- * Schema for VLM segment event
- */
-const VLMEventSchema = z.object({
-  title: z.string(),
-  /** Event summary (≤500 chars) */
-  summary: z.string(),
-  /** Confidence score (0-10) */
-  confidence: z.number(),
-  /** Importance score (0-10) */
-  importance: z.number(),
-});
+  for (const entity of entities) {
+    const name = entity.name.trim();
+    if (!name) {
+      continue;
+    }
 
-const VLMEventProcessedSchema = VLMEventSchema.transform((val) => ({
-  ...val,
-  title: truncateTo(200)(val.title),
-  summary: truncateTo(500)(val.summary),
-  confidence: Math.max(0, Math.min(10, val.confidence)),
-  importance: Math.max(0, Math.min(10, val.importance)),
-}));
+    const normalizedEntity: z.infer<typeof EntityRefSchema> = {
+      name: truncateTo(120)(name),
+      type: entity.type,
+    };
 
-/**
- * Schema for derived nodes in a segment
- */
-const DerivedNodesSchema = z.object({
-  /** Knowledge items extracted */
-  knowledge: z.array(DerivedItemSchema).default([]),
-  /** State snapshots captured */
-  state: z.array(DerivedItemSchema).default([]),
-  /** Procedures identified */
-  procedure: z.array(DerivedItemSchema).default([]),
-  /** Plans detected */
-  plan: z.array(DerivedItemSchema).default([]),
-});
+    if (entity.raw) {
+      normalizedEntity.raw = truncateTo(200)(entity.raw.trim());
+    }
 
-const DerivedNodesProcessedSchema = DerivedNodesSchema.transform((val) => {
-  const result: z.infer<typeof DerivedNodesSchema> = {
-    knowledge: val.knowledge.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
-    state: val.state.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
-    procedure: val.procedure.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
-    plan: val.plan.slice(0, 2).map((item) => DerivedItemProcessedSchema.parse(item)),
-  };
-  return result;
-});
+    if (entity.confidence !== undefined) {
+      normalizedEntity.confidence = Math.max(0, Math.min(1, entity.confidence));
+    }
 
-/**
- * Schema for merge hint
- */
-const MergeHintSchema = z.object({
-  /** Decision: NEW for new thread, MERGE for existing thread */
-  decision: MergeDecisionEnum,
-  /** Thread ID to merge with (required if decision is MERGE) */
-  thread_id: z.string().optional(),
-});
-
-const MergeHintProcessedSchema = MergeHintSchema.transform((val) => {
-  if (val.decision === "MERGE" && !val.thread_id) {
-    // Gracefully downgrade to NEW when thread_id is missing to avoid hard failure
-    return { decision: "NEW" as const };
+    normalized.push(normalizedEntity);
+    if (normalized.length >= limit) {
+      break;
+    }
   }
-  return val;
-});
 
-/**
- * Schema for a VLM segment
- */
-const VLMSegmentSchema = z.object({
-  /** Unique segment identifier */
-  segment_id: z.string(),
-  /** Screenshot IDs (1-based indices) included in this segment */
-  screen_ids: z.array(z.number().int().positive()),
-  /** Event information */
-  event: VLMEventSchema,
-  /** Derived nodes */
-  derived: DerivedNodesSchema,
-  /** Merge hint for thread continuity */
-  merge_hint: MergeHintSchema,
-  /** Keywords for search (optional) */
-  keywords: z.array(z.string()).optional(),
-});
+  return normalized;
+};
 
-const VLMSegmentProcessedSchema = VLMSegmentSchema.transform((val) => {
-  const result: z.infer<typeof VLMSegmentSchema> = {
-    ...val,
-    event: VLMEventProcessedSchema.parse(val.event),
-    derived: DerivedNodesProcessedSchema.parse(val.derived),
-    merge_hint: MergeHintProcessedSchema.parse(val.merge_hint),
-  };
-  if (val.keywords) {
-    result.keywords = val.keywords.slice(0, 10);
+const normalizeEntityNames = (entities?: string[], limit = 20): string[] | undefined => {
+  if (!entities) {
+    return undefined;
   }
-  return result;
-});
 
-export type VLMSegment = z.infer<typeof VLMSegmentSchema>;
+  const normalized = entities
+    .map((entity) => entity.trim())
+    .filter((entity) => entity.length > 0)
+    .slice(0, limit);
 
-/**
- * Schema for complete VLM index result
- */
-export const VLMIndexResultSchema = z.object({
-  /** Segments extracted from the batch (max 4) */
-  segments: z.array(VLMSegmentSchema),
-  /** Entities mentioned across all segments (max 20) */
-  entities: z.array(z.string()).default([]),
-  /** Per-screenshot OCR results */
-  screenshots: z
-    .array(
-      z.object({
-        /** Screenshot database ID (must match screenshot_id in the input metadata) */
-        screenshot_id: z.coerce.number().int().positive(),
-        app_guess: z
-          .object({
-            name: z.string(),
-            confidence: z.number(),
-          })
-          .optional(),
-        /** Full OCR text (trimmed, ≤8000 chars) */
-        ocr_text: z.string().optional(),
-        /** High-value UI text snippets (≤20, each ≤200 chars) */
-        ui_text_snippets: z.array(z.string().nullable()).optional(),
-      })
-    )
-    .default([]),
-  /** Optional notes from VLM */
-  notes: z.string().nullish(),
-});
+  return normalized.length > 0 ? normalized : undefined;
+};
 
-export const VLMIndexResultProcessedSchema = VLMIndexResultSchema.transform((val) => {
-  const result: z.infer<typeof VLMIndexResultSchema> = {
-    ...val,
-    segments: val.segments.slice(0, 4).map((s) => VLMSegmentProcessedSchema.parse(s)),
-    entities: val.entities.slice(0, 20),
-    screenshots: val.screenshots.map((s) => {
-      const ss: z.infer<typeof VLMIndexResultSchema>["screenshots"][number] = { ...s };
-      if (s.app_guess) {
-        let normalizedName = s.app_guess.name;
-        // Try to match canonical name if possible
-        const lowerName = s.app_guess.name.toLowerCase();
-        for (const candidate of ALLOWED_APP_GUESSES) {
-          if (candidate.toLowerCase() === lowerName) {
-            normalizedName = candidate;
-            break;
+export const CANONICAL_APP_CANDIDATES = Object.keys(DEFAULT_WINDOW_FILTER_CONFIG.appAliases);
+
+export const KnowledgeSchema = z
+  .object({
+    content_type: z.string().default("general"),
+    source_url: z.string().optional(),
+    project_or_library: z.string().optional(),
+    key_insights: z.array(z.string()).default([]),
+    language: z.preprocess(
+      (val) => {
+        if (typeof val !== "string") return "other";
+        const s = val.toLowerCase();
+        if (s.includes("en")) return "en";
+        if (s.includes("zh") || s.includes("cn") || s.includes("中文")) return "zh";
+        return "other";
+      },
+      z.enum(["en", "zh", "other"])
+    ),
+    text_region: z
+      .preprocess(
+        (val) => {
+          if (typeof val === "string") {
+            return {
+              description: val,
+              box: { top: 0, left: 0, width: 0, height: 0 },
+              confidence: 0,
+            };
           }
-        }
-        ss.app_guess = {
-          name: truncateTo(100)(normalizedName),
-          confidence: Math.max(0, Math.min(1, s.app_guess.confidence)),
-        };
-      }
-      if (s.ocr_text) {
-        ss.ocr_text = truncateTo(8000)(s.ocr_text);
-      }
-      if (s.ui_text_snippets) {
-        ss.ui_text_snippets = (Array.isArray(s.ui_text_snippets) ? s.ui_text_snippets : [])
-          .filter((v): v is string => typeof v === "string")
-          .slice(0, 20)
-          .map(truncateTo(200));
-      }
-      return ss;
-    }),
-  };
-  return result;
+          return val;
+        },
+        z.object({
+          box: z
+            .object({
+              top: z.number().default(0),
+              left: z.number().default(0),
+              width: z.number().default(0),
+              height: z.number().default(0),
+            })
+            .default({ top: 0, left: 0, width: 0, height: 0 }),
+          description: z.string().optional(),
+          confidence: z.number().default(0),
+        })
+      )
+      .optional(),
+  })
+  .nullable();
+
+export const StateSnapshotSchema = z
+  .object({
+    subject_type: z.string().default("general"),
+    subject: z.string().default("unknown"),
+    current_state: z.string().default("active"),
+    metrics: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
+    issue: z
+      .object({
+        detected: z.boolean().nullable().optional(),
+        type: z
+          .preprocess(
+            (val) => {
+              if (val === null || val === undefined) return null;
+              if (typeof val !== "string") return "warning";
+              const s = val.toLowerCase();
+              if (["error", "bug", "blocker", "question", "warning"].includes(s)) return s;
+              if (s.includes("fail") || s.includes("err")) return "error";
+              return "warning";
+            },
+            z.enum(["error", "bug", "blocker", "question", "warning"]).nullable()
+          )
+          .optional(),
+        description: z.string().nullable().optional(),
+        severity: z.number().nullable().optional(),
+      })
+      .nullable()
+      .optional(),
+  })
+  .nullable();
+
+export const ActionItemSchema = z.object({
+  action: z.string(),
+  priority: z
+    .preprocess(
+      (val) => {
+        if (typeof val !== "string") return "medium";
+        const s = val.toLowerCase();
+        if (["high", "medium", "low"].includes(s)) return s;
+        if (s.includes("urgent") || s.includes("critical")) return "high";
+        return "medium";
+      },
+      z.enum(["high", "medium", "low"])
+    )
+    .optional(),
+  source: z.preprocess(
+    (val) => {
+      if (typeof val !== "string") return "inferred";
+      const s = val.toLowerCase();
+      if (["explicit", "inferred"].includes(s)) return s;
+      return "inferred";
+    },
+    z.enum(["explicit", "inferred"])
+  ),
 });
 
-export type VLMIndexResult = z.infer<typeof VLMIndexResultSchema>;
+export const VLMContextNodeSchema = z.object({
+  screenshot_index: z.number().int().positive(),
+  title: z.string(),
+  summary: z.string(),
+  app_context: z.object({
+    app_hint: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      if (!s || s.toLowerCase() === "null") return null;
+      return s;
+    }, z.string().nullable()),
+    window_title: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      return s || null;
+    }, z.string().nullable()),
+    source_key: z.string(),
+    project_name: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      return s && s.toLowerCase() !== "null" ? s : null;
+    }, z.string().nullable().optional()),
+    project_key: z.preprocess((val) => {
+      if (typeof val !== "string") return null;
+      const s = val.trim();
+      return s && s.toLowerCase() !== "null" ? s : null;
+    }, z.string().nullable().optional()),
+  }),
+  knowledge: KnowledgeSchema,
+  state_snapshot: StateSnapshotSchema,
+  entities: z.array(EntityRefSchema).default([]),
+  action_items: z.array(ActionItemSchema).nullable().optional(),
+  ui_text_snippets: z.array(z.string()).default([]),
+  importance: z.number(),
+  confidence: z.number(),
+  keywords: z.array(z.string()).default([]),
+});
+
+export const VLMOutputSchema = z.object({
+  nodes: z.array(VLMContextNodeSchema),
+});
+
+export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
+  const nodes = val.nodes.map((node) => ({
+    screenshotIndex: node.screenshot_index,
+    title: truncateTo(100)(node.title),
+    summary: truncateTo(500)(node.summary),
+    appContext: {
+      appHint: (() => {
+        const hint = node.app_context.app_hint;
+        if (!hint) return null;
+        const lowerHint = hint.toLowerCase();
+        for (const canonical of CANONICAL_APP_CANDIDATES) {
+          if (canonical.toLowerCase() === lowerHint) return canonical;
+        }
+        return hint;
+      })(),
+      windowTitle: node.app_context.window_title,
+      sourceKey: node.app_context.source_key,
+      projectName: node.app_context.project_name
+        ? truncateTo(120)(node.app_context.project_name)
+        : null,
+      projectKey:
+        normalizeProjectKey(node.app_context.project_key) ??
+        normalizeProjectKey(node.app_context.project_name) ??
+        null,
+    },
+    knowledge: node.knowledge
+      ? {
+          contentType: node.knowledge.content_type,
+          sourceUrl: node.knowledge.source_url,
+          projectOrLibrary: node.knowledge.project_or_library,
+          keyInsights: node.knowledge.key_insights,
+          language: node.knowledge.language,
+          textRegion: node.knowledge.text_region
+            ? {
+                box: node.knowledge.text_region.box,
+                description: node.knowledge.text_region.description,
+                confidence: node.knowledge.text_region.confidence,
+              }
+            : undefined,
+        }
+      : null,
+    stateSnapshot: node.state_snapshot
+      ? {
+          subjectType: node.state_snapshot.subject_type,
+          subject: node.state_snapshot.subject,
+          currentState: node.state_snapshot.current_state,
+          metrics: node.state_snapshot.metrics,
+          issue: node.state_snapshot.issue,
+        }
+      : null,
+    entities: normalizeEntityRefs(node.entities, 10),
+    actionItems: node.action_items ? node.action_items.slice(0, 5) : null,
+    uiTextSnippets: node.ui_text_snippets.slice(0, 5).map(truncateTo(200)),
+    importance: Math.max(0, Math.min(10, node.importance)),
+    confidence: Math.max(0, Math.min(10, node.confidence)),
+    keywords: node.keywords.slice(0, 5).map(truncateTo(64)),
+  }));
+
+  return { nodes };
+});
+
+export type VLMOutputRaw = z.infer<typeof VLMOutputSchema>;
+export type VLMContextNodeRaw = z.infer<typeof VLMContextNodeSchema>;
+
+export type VLMOutput = z.infer<typeof VLMOutputProcessedSchema>;
+export type VLMContextNode = VLMOutput["nodes"][number];
 
 export type VLMScreenshotMeta = {
-  index: number;
+  screenshot_index: number;
   screenshot_id: number;
   captured_at: string;
   source_key: string;
@@ -259,253 +305,258 @@ export type VLMScreenshotMeta = {
   window_title: string | null;
 };
 
-// ============================================================================
-// Entity Schemas
-// ============================================================================
+// =========================================================================
+// Thread LLM Output Schemas
+// =========================================================================
 
-/**
- * Schema for entity reference
- */
-const EntityRefSchema = z.object({
-  /** Entity ID (if matched) */
-  entityId: z.number().int().positive().optional(),
-  /** Entity name */
-  name: z.string(),
-  /** Entity type */
-  entityType: EntityTypeSchema.optional(),
-  /** Confidence score (0-1) */
-  confidence: z.number().optional(),
+const ThreadAssignmentSchema = z.object({
+  node_index: z.number().int().nonnegative(),
+  thread_id: z.string().min(1),
+  reason: z.string(),
 });
 
-const EntityRefProcessedSchema = EntityRefSchema.transform((val) => ({
-  ...val,
-  confidence: val.confidence !== undefined ? Math.max(0, Math.min(1, val.confidence)) : undefined,
-}));
-
-// ============================================================================
-// Text LLM Expand Output Schema
-// ============================================================================
-
-/**
- * Schema for expanded context node from Text LLM
- */
-const ExpandedNodeSchema = z.object({
-  /** Node kind */
-  kind: ContextKindEnum,
-  /** Thread ID */
-  thread_id: z.string().optional(),
-  /** Title (LLM may exceed 100, we truncate later) */
-  title: z.string(),
-  /** Summary (LLM may exceed 200, we truncate later) */
-  summary: z.string(),
-  /** Keywords */
-  keywords: z.array(z.string()).default([]),
-  /** Entity references */
-  entities: z.array(EntityRefSchema).default([]),
-  /** Importance (0-10) */
-  importance: z.number().default(5),
-  /** Confidence (0-10) */
-  confidence: z.number().default(5),
-  /** Screenshot IDs */
-  screenshot_ids: z.array(z.number().int().positive()).default([]),
-  /** Event timestamp */
-  event_time: z.number().optional(),
-});
-
-const ExpandedNodeProcessedSchema = ExpandedNodeSchema.transform((val) => {
-  return {
-    ...val,
-    title: truncateTo(100)(val.title),
-    summary: truncateTo(200)(val.summary),
-    keywords: (val.keywords ?? []).slice(0, 10),
-    importance: Math.max(0, Math.min(10, Math.round(val.importance))),
-    confidence: Math.max(0, Math.min(10, Math.round(val.confidence))),
-    entities: (val.entities ?? []).map((e) => EntityRefProcessedSchema.parse(e)),
-  };
-});
-
-/**
- * Schema for Text LLM expand result
- */
-export const TextLLMExpandResultSchema = z.object({
-  /** Expanded nodes */
-  nodes: z.array(ExpandedNodeSchema),
-  /** Edges to create */
-  edges: z
-    .array(
-      z.object({
-        from_index: z.number().int().min(0),
-        to_index: z.number().int().min(0),
-        edge_type: EdgeTypeEnum,
-      })
+const ThreadUpdateSchema = z.object({
+  thread_id: z.string().min(1),
+  title: z.string().optional(),
+  summary: z.string().optional(),
+  current_phase: z.string().optional(),
+  current_focus: z.string().optional(),
+  new_milestone: z
+    .preprocess(
+      (val) => {
+        if (typeof val === "string") return { description: val };
+        return val;
+      },
+      z.object({ description: z.string() })
     )
-    .default([]),
+    .optional(),
 });
 
-export const TextLLMExpandResultProcessedSchema = TextLLMExpandResultSchema.transform((val) => {
-  return {
-    ...val,
-    nodes: val.nodes.map((n) => ExpandedNodeProcessedSchema.parse(n)),
-  };
-});
-
-export type TextLLMExpandResult = z.infer<typeof TextLLMExpandResultProcessedSchema>;
-
-/**
- * Schema for Text LLM merge result (subset of ExpandedNode)
- */
-export const TextLLMMergeResultSchema = z.object({
+const NewThreadSchema = z.object({
   title: z.string(),
   summary: z.string(),
-  keywords: z.array(z.string()).default([]),
-  entities: z.array(EntityRefSchema).default([]),
+  current_phase: z.string().optional(),
+  node_indices: z.array(z.number().int().nonnegative()),
+  milestones: z.array(z.string()),
 });
 
-export const TextLLMMergeResultProcessedSchema = TextLLMMergeResultSchema.transform((val) => {
+export const ThreadLLMOutputSchema = z.object({
+  assignments: z.array(ThreadAssignmentSchema),
+  thread_updates: z.array(ThreadUpdateSchema).default([]),
+  new_threads: z.array(NewThreadSchema).default([]),
+});
+
+export type ThreadLLMOutputRaw = z.infer<typeof ThreadLLMOutputSchema>;
+
+export const ThreadLLMOutputProcessedSchema = ThreadLLMOutputSchema.transform((val) => {
   return {
-    ...val,
-    title: truncateTo(100)(val.title),
-    summary: truncateTo(200)(val.summary),
-    keywords: (val.keywords ?? []).slice(0, 10),
-    entities: (val.entities ?? []).map((e) => EntityRefProcessedSchema.parse(e)),
+    assignments: val.assignments.map((a) => ({
+      nodeIndex: a.node_index,
+      threadId: a.thread_id,
+      reason: a.reason,
+    })),
+    threadUpdates: val.thread_updates.map((u) => ({
+      threadId: u.thread_id,
+      title: u.title,
+      summary: u.summary,
+      currentPhase: u.current_phase,
+      currentFocus: u.current_focus,
+      newMilestone: u.new_milestone ? { description: u.new_milestone.description } : undefined,
+    })),
+    newThreads: val.new_threads.map((t) => ({
+      title: t.title,
+      summary: t.summary,
+      currentPhase: t.current_phase,
+      nodeIndices: t.node_indices,
+      milestones: t.milestones,
+    })),
   };
 });
 
-export type TextLLMMergeResult = z.infer<typeof TextLLMMergeResultProcessedSchema>;
-// ============================================================================
-// Activity Monitor LLM Output Schemas
-// ============================================================================
+export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;
 
-/**
- * Event candidate from LLM window analysis
- */
+// =========================================================================
+// Activity Monitor LLM Output Schemas
+// =========================================================================
+const ActivityEventKindSchema = z.preprocess(
+  (val) => {
+    if (typeof val !== "string") return "work";
+    const s = val.toLowerCase();
+    const allowed = ["focus", "work", "meeting", "break", "browse", "coding", "debugging"];
+    if (allowed.includes(s)) return s;
+    if (s.includes("code") || s.includes("dev")) return "coding";
+    if (s.includes("debug") || s.includes("test")) return "debugging";
+    if (s.includes("meet") || s.includes("call")) return "meeting";
+    if (s.includes("rest") || s.includes("pause")) return "break";
+    if (s.includes("surf") || s.includes("web")) return "browse";
+    return "work";
+  },
+  z.enum(["focus", "work", "meeting", "break", "browse", "coding", "debugging"])
+);
+
 const ActivityEventCandidateSchema = z.object({
   title: z.string(),
-  kind: z.enum(["focus", "work", "meeting", "break", "browse", "coding", "debugging"]),
-  // LLM-provided minute offsets relative to the current windowStart (0..windowDurationMinutes)
-  start_offset_min: z.number().min(0).max(20),
-  end_offset_min: z.number().min(0).max(20),
-  confidence: z.number().min(0).max(10),
-  importance: z.number().min(0).max(10),
+  kind: ActivityEventKindSchema,
+  start_offset_min: z.number(),
+  end_offset_min: z.number(),
+  confidence: z.number(),
+  importance: z.number(),
   description: z.string(),
   node_ids: z.array(z.number().int().positive()),
+  thread_id: z.string().nullable().optional(),
 });
 
-/**
- * Schema for LLM-generated window summary
- */
 export const ActivityWindowSummaryLLMSchema = z.object({
   title: z.string(),
-  summary: z.string(), // Markdown with four fixed sections
+  summary: z.string(),
   highlights: z.array(z.string()).max(5),
   stats: z.object({
     top_apps: z.array(z.string()).max(5),
     top_entities: z.array(z.string()).max(5),
   }),
-  events: z.array(ActivityEventCandidateSchema),
+  events: z.array(ActivityEventCandidateSchema).max(3),
 });
 
 export const ActivityWindowSummaryLLMProcessedSchema = ActivityWindowSummaryLLMSchema.transform(
   (val) => ({
-    ...val,
     title: truncateTo(100)(val.title),
+    summary: val.summary,
     highlights: val.highlights.map(truncateTo(100)),
+    stats: {
+      topApps: val.stats.top_apps,
+      topEntities: val.stats.top_entities,
+    },
+    events: val.events.map((event) => ({
+      title: truncateTo(100)(event.title),
+      kind: event.kind,
+      startOffsetMin: event.start_offset_min,
+      endOffsetMin: event.end_offset_min,
+      confidence: Math.max(0, Math.min(10, event.confidence)),
+      importance: Math.max(0, Math.min(10, event.importance)),
+      description: truncateTo(200)(event.description),
+      nodeIds: event.node_ids,
+      threadId: event.thread_id,
+    })),
   })
 );
 
-/**
- * Schema for LLM-generated event details
- */
 export const ActivityEventDetailsLLMSchema = z.object({
-  details: z.string(), // Markdown detailed report
+  details: z.string(),
 });
 
 export const ActivityEventDetailsLLMProcessedSchema = ActivityEventDetailsLLMSchema;
 
-// ============================================================================
+// =========================================================================
 // Deep Search Schemas
-// ============================================================================
+// =========================================================================
 
-/**
- * Schema for search query plan from LLM
- */
 export const SearchQueryPlanSchema = z.object({
-  embeddingText: z.string().min(1),
-  filtersPatch: z
+  embedding_text: z.string().min(1),
+  filters_patch: z
     .object({
-      timeRange: z
+      time_range: z
         .object({
           start: z.number(),
           end: z.number(),
         })
+        .nullable()
         .optional(),
-      appHint: z.string().optional(),
-      entities: z.array(z.string()).optional(),
+      app_hint: z.string().nullable().optional(),
+      entities: z.array(z.string()).nullable().optional(),
     })
+    .nullable()
     .optional(),
-  kindHint: z
-    .enum(["event", "knowledge", "state_snapshot", "procedure", "plan", "entity_profile"])
-    .optional(),
-  extractedEntities: z.array(EntityRefSchema).optional(),
-  keywords: z.array(z.string()).optional(),
-  timeRangeReasoning: z.string().optional(),
+  kind_hint: z.enum(CONTEXT_KIND_VALUES).nullable().optional(),
+  extracted_entities: z.array(EntityRefSchema).nullable().optional(),
+  keywords: z.array(z.string()).nullable().optional(),
+  time_range_reasoning: z.string().nullable().optional(),
   confidence: z.number(),
 });
 
 export const SearchQueryPlanProcessedSchema = SearchQueryPlanSchema.transform((val) => {
-  const result: z.infer<typeof SearchQueryPlanSchema> = { ...val };
-  if (val.filtersPatch?.appHint && !CANONICAL_APP_CANDIDATES.includes(val.filtersPatch.appHint)) {
-    // Silently remove non-canonical appHint or could refine and throw
-    if (result.filtersPatch) {
+  const result: {
+    embeddingText: string;
+    filtersPatch?: {
+      timeRange?: { start: number; end: number };
+      appHint?: string;
+      entities?: string[];
+    };
+    kindHint?: (typeof CONTEXT_KIND_VALUES)[number];
+    extractedEntities?: z.infer<typeof EntityRefSchema>[];
+    keywords?: string[];
+    timeRangeReasoning?: string;
+    confidence: number;
+  } = {
+    embeddingText: val.embedding_text,
+    confidence: Math.max(0, Math.min(1, val.confidence)),
+  };
+
+  if (val.filters_patch) {
+    result.filtersPatch = {
+      timeRange: val.filters_patch.time_range ?? undefined,
+      appHint: val.filters_patch.app_hint ?? undefined,
+      entities: normalizeEntityNames(val.filters_patch.entities ?? undefined),
+    };
+    if (
+      result.filtersPatch.appHint &&
+      !CANONICAL_APP_CANDIDATES.includes(result.filtersPatch.appHint)
+    ) {
       delete result.filtersPatch.appHint;
     }
   }
-  if (val.filtersPatch?.entities) {
-    if (result.filtersPatch) {
-      result.filtersPatch.entities = val.filtersPatch.entities.slice(0, 20);
-    }
+
+  if (val.kind_hint) {
+    result.kindHint = val.kind_hint;
   }
-  if (val.extractedEntities) {
-    result.extractedEntities = val.extractedEntities.slice(0, 20);
+
+  if (val.extracted_entities) {
+    result.extractedEntities = normalizeEntityRefs(val.extracted_entities, 20);
   }
-  result.confidence = Math.max(0, Math.min(1, val.confidence));
+
+  if (val.keywords) {
+    result.keywords = val.keywords.slice(0, 10);
+  }
+
+  if (val.time_range_reasoning) {
+    result.timeRangeReasoning = val.time_range_reasoning;
+  }
+
   return result;
 });
 
-/**
- * Citation schema for search answers
- */
 const SearchAnswerCitationSchema = z.object({
-  nodeId: z.number().int().positive().optional(),
-  screenshotId: z.number().int().positive().optional(),
-  quote: z.string().optional(),
+  node_id: z.number().int().positive().nullable().optional(),
+  screenshot_id: z.number().int().positive().nullable().optional(),
+  quote: z.string().nullable().optional(),
 });
 
-/**
- * Schema for search answer from LLM
- */
 export const SearchAnswerSchema = z.object({
-  answerTitle: z.string().optional(),
+  answer_title: z.string().nullable().optional(),
   answer: z.string().min(1),
-  bullets: z.array(z.string()).optional(),
+  bullets: z.array(z.string()).nullable().optional(),
   citations: z.array(SearchAnswerCitationSchema).default([]),
   confidence: z.number(),
 });
 
 export const SearchAnswerProcessedSchema = SearchAnswerSchema.transform((val) => {
-  const result: z.infer<typeof SearchAnswerSchema> = { ...val };
-  result.confidence = Math.max(0, Math.min(1, val.confidence));
-  if (val.bullets) {
-    result.bullets = val.bullets.slice(0, 8);
-  }
-  if (val.citations) {
-    result.citations = val.citations.slice(0, 20);
-  }
+  const result = {
+    answerTitle: val.answer_title ?? undefined,
+    answer: val.answer,
+    bullets: val.bullets ? val.bullets.slice(0, 8) : undefined,
+    citations: val.citations.map((citation) => ({
+      nodeId: citation.node_id ?? undefined,
+      screenshotId: citation.screenshot_id ?? undefined,
+      quote: citation.quote ?? undefined,
+    })),
+    confidence: Math.max(0, Math.min(1, val.confidence)),
+  };
 
-  // Cross-field validation: if high confidence but no citations, lower confidence
   if (result.confidence > 0.2 && result.citations.length === 0) {
     result.confidence = 0.2;
   }
 
   return result;
 });
+
+export type SearchQueryPlanRaw = z.infer<typeof SearchQueryPlanSchema>;
+export type SearchAnswerRaw = z.infer<typeof SearchAnswerSchema>;

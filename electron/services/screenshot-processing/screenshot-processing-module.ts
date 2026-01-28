@@ -1,34 +1,42 @@
 import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
-import { getLogger } from "../logger";
-
+import { and, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
 import { getDb } from "../../database";
-import { screenshots } from "../../database/schema";
+import { batches, screenshots } from "../../database/schema";
+import { getLogger } from "../logger";
+import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
+import { screenCaptureEventBus, type ScreenCaptureModuleType } from "../screen-capture";
+import { aiRuntimeService } from "../ai-runtime-service";
+
+import { batchBuilder } from "./batch-builder";
+import { processingConfig } from "./config";
 import type { AcceptedScreenshot, SourceKey } from "./types";
-import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { ScreenshotInput } from "./source-buffer-registry";
+import { sourceBufferRegistry } from "./source-buffer-registry";
 import type { BatchPersistedEvent, BatchReadyEvent } from "./events";
 import { screenshotProcessingEventBus } from "./event-bus";
-import { batchBuilder } from "./batch-builder";
-import { screenshotPipelineScheduler } from "./screenshot-pipeline-scheduler";
-import { activityTimelineScheduler } from "./activity-timeline-scheduler";
-import { vectorDocumentScheduler } from "./vector-document-scheduler";
-import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
-import { ScreenCaptureModuleType } from "../screen-capture";
-import { screenCaptureEventBus } from "../screen-capture";
-import { aiRuntimeService } from "../ai-runtime-service";
+import { batchVlmScheduler } from "./schedulers/batch-vlm-scheduler";
+import { ocrScheduler } from "./schedulers/ocr-scheduler";
+import { threadScheduler } from "./schedulers/thread-scheduler";
+import { activityTimelineScheduler } from "./schedulers/activity-timeline-scheduler";
+import { vectorDocumentScheduler } from "./schedulers/vector-document-scheduler";
+import { ocrService } from "./ocr-service";
+
+type InitializeArgs = {
+  screenCapture: ScreenCaptureModuleType;
+};
 
 export class ScreenshotProcessingModule {
   private readonly logger = getLogger("screenshot-processing-module");
   private initialized = false;
+  private fallbackCleanupTimer: NodeJS.Timeout | null = null;
+  private fallbackCleanupInProgress = false;
 
-  private cleanupInterval: NodeJS.Timeout | null = null;
-  private cleanupInProgress = false;
-
-  initialize(options: { screenCapture: ScreenCaptureModuleType }): void {
+  initialize(options: InitializeArgs): void {
     if (this.initialized) {
       this.dispose();
     }
+
     const screenCapture = options.screenCapture;
     aiRuntimeService.registerCaptureControlCallbacks({
       stop: async () => {
@@ -39,6 +47,7 @@ export class ScreenshotProcessingModule {
       },
       getState: () => screenCapture.getState(),
     });
+
     sourceBufferRegistry.initialize(this.onPersistAcceptedScreenshot);
 
     screenCaptureEventBus.on("preferences:changed", this.onPreferencesChanged);
@@ -46,10 +55,12 @@ export class ScreenshotProcessingModule {
     screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
 
-    screenshotPipelineScheduler.start();
+    batchVlmScheduler.start();
+    ocrScheduler.start();
+    threadScheduler.start();
     activityTimelineScheduler.start();
     vectorDocumentScheduler.start();
-
+    this.startFallbackCleanup();
     this.initialized = true;
   }
 
@@ -63,14 +74,100 @@ export class ScreenshotProcessingModule {
     screenshotProcessingEventBus.off("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.off("batch:persisted", this.onBatchPersisted);
 
-    this.stopCleanupLoop();
-
     sourceBufferRegistry.dispose();
 
-    screenshotPipelineScheduler.stop();
+    batchVlmScheduler.stop();
+    ocrScheduler.stop();
+    threadScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
+    this.stopFallbackCleanup();
+
     this.initialized = false;
+  }
+
+  private startFallbackCleanup(): void {
+    this.stopFallbackCleanup();
+    const intervalMs = processingConfig.cleanup.fallbackIntervalMs;
+    this.fallbackCleanupTimer = setInterval(() => {
+      void this.fallbackCleanup();
+    }, intervalMs);
+    void this.fallbackCleanup();
+  }
+
+  private stopFallbackCleanup(): void {
+    if (this.fallbackCleanupTimer) {
+      clearInterval(this.fallbackCleanupTimer);
+      this.fallbackCleanupTimer = null;
+    }
+  }
+
+  private async fallbackCleanup(): Promise<void> {
+    if (this.fallbackCleanupInProgress) {
+      return;
+    }
+    this.fallbackCleanupInProgress = true;
+    try {
+      const db = getDb();
+      const now = Date.now();
+      const cutoff = now - processingConfig.cleanup.fallbackEphemeralMaxAgeMs;
+      const batchSize = processingConfig.cleanup.fallbackBatchSize;
+
+      const candidates = db
+        .select({ id: screenshots.id, filePath: screenshots.filePath })
+        .from(screenshots)
+        .innerJoin(batches, eq(screenshots.batchId, batches.id))
+        .where(
+          and(
+            eq(screenshots.storageState, "ephemeral"),
+            lt(screenshots.createdAt, cutoff),
+            isNotNull(screenshots.filePath),
+            eq(batches.vlmStatus, "succeeded"),
+            or(
+              isNull(screenshots.ocrStatus),
+              inArray(screenshots.ocrStatus, ["succeeded", "failed_permanent"])
+            )
+          )
+        )
+        .limit(batchSize)
+        .all();
+
+      if (candidates.length === 0) {
+        return;
+      }
+
+      let deletedCount = 0;
+      for (const ss of candidates) {
+        const filePath = ss.filePath;
+        if (!filePath) {
+          continue;
+        }
+        const ok = await safeDeleteCaptureFile(filePath);
+        if (!ok) {
+          continue;
+        }
+        const res = db
+          .update(screenshots)
+          .set({ storageState: "deleted", updatedAt: now })
+          .where(and(eq(screenshots.id, ss.id), eq(screenshots.storageState, "ephemeral")))
+          .run();
+        if (res.changes > 0) {
+          deletedCount += 1;
+        }
+      }
+
+      if (deletedCount > 0) {
+        this.logger.info({ deletedCount }, "Fallback cleanup deleted stale ephemeral screenshots");
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Fallback cleanup failed");
+    } finally {
+      this.fallbackCleanupInProgress = false;
+    }
+  }
+
+  async ocrWarmup(): Promise<void> {
+    await ocrService.warmup();
   }
 
   private readonly onPreferencesChanged = async (event: PreferencesChangedEvent) => {
@@ -99,21 +196,25 @@ export class ScreenshotProcessingModule {
         height: accepted.meta.height ?? null,
         appHint: accepted.meta.appHint ?? null,
         windowTitle: accepted.meta.windowTitle ?? null,
-        ocrText: null,
-        ocrStatus: null,
-        ocrAttempts: 0,
-        ocrNextRunAt: null,
-        batchId: null,
-        createdAt: now,
-        updatedAt: now,
         filePath: accepted.filePath,
         storageState: "ephemeral",
+        createdAt: now,
+        updatedAt: now,
       })
       .returning({ id: screenshots.id })
       .get();
 
     return inserted.id;
   };
+
+  /**
+   * Update the pHash Hamming distance threshold for deduplication.
+   * Called by BackpressureMonitor via ScreenCaptureModule.
+   */
+  setPhashThreshold(threshold: number): void {
+    this.logger.info({ threshold }, "Updating pHash threshold in SourceBufferRegistry");
+    sourceBufferRegistry.setPhashThreshold?.(threshold);
+  }
 
   private readonly onCaptureComplete = async (event: CaptureCompleteEvent) => {
     try {
@@ -158,9 +259,12 @@ export class ScreenshotProcessingModule {
         [SourceKey, BatchReadyEvent["batches"][SourceKey]]
       >;
 
-      for (const [sourceKey, screenshots] of entries) {
+      for (const [sourceKey, screenshotsForSource] of entries) {
         try {
-          const { batch } = await batchBuilder.createAndPersistBatch(sourceKey, screenshots);
+          const { batch } = await batchBuilder.createAndPersistBatch(
+            sourceKey,
+            screenshotsForSource
+          );
           this.logger.info({ batchId: batch.batchId, sourceKey }, "Batch persisted");
         } catch (error) {
           this.logger.error(
@@ -179,23 +283,13 @@ export class ScreenshotProcessingModule {
     try {
       this.logger.info(
         { batchId: event.batchId, batchDbId: event.batchDbId, sourceKey: event.sourceKey },
-        "Waking screenshot pipeline scheduler"
+        "Waking batch VLM scheduler"
       );
-      screenshotPipelineScheduler.wake();
+      batchVlmScheduler.wake();
     } catch (error) {
-      this.logger.error(
-        { error },
-        "Failed to wake screenshot pipeline scheduler on batch:persisted"
-      );
+      this.logger.error({ error }, "Failed to wake batch VLM scheduler on batch:persisted");
     }
   };
-
-  private stopCleanupLoop(): void {
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-  }
 }
 
 export const screenshotProcessingModule = new ScreenshotProcessingModule();

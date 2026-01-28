@@ -10,7 +10,7 @@
 import type { IpcMainInvokeEvent } from "electron";
 import { IPC_CHANNELS, type IPCResult, toIPCError } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { activityMonitorService } from "../services/screenshot-processing-alpha/activity-monitor-service";
+import { activityMonitorService } from "../services/screenshot-processing/activity-monitor-service";
 import type {
   TimelineRequest,
   TimelineResponse,

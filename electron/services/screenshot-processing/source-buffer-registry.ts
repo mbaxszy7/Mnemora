@@ -1,36 +1,16 @@
-/**
- * Source Buffer Registry
- *
- * Manages per-source screenshot buffers with:
- * - Automatic periodic refresh via AutoRefreshCache
- * - pHash deduplication integrated in add()
- * - Grace period handling for inactive sources
- *
- * Public interface: add(), get(), refresh()
- *
- */
-
 import { screen } from "electron";
 
 import type { CapturePreferences } from "@shared/capture-source-types";
-import { AutoRefreshCache } from "../screen-capture/auto-refresh-cache";
+import { getLogger } from "../logger";
 import { processingConfig } from "./config";
 import { computeHash, isDuplicateByLast } from "./phash-dedup";
 import type { AcceptedScreenshot, SourceKey } from "./types";
 import { isValidSourceKey } from "./types";
-import { getLogger } from "../logger";
 import type { BatchReadyEvent } from "./events";
 import { screenshotProcessingEventBus } from "./event-bus";
 
 const logger = getLogger("source-buffer-registry");
 
-// ============================================================================
-// Types
-// ============================================================================
-
-/**
- * Buffer state for a single capture source
- */
 export interface SourceBuffer {
   sourceKey: SourceKey;
   screenshots: AcceptedScreenshot[];
@@ -39,87 +19,47 @@ export interface SourceBuffer {
   batchStartTs: number | null;
 }
 
-/**
- * Result of adding a screenshot
- */
 export interface AddResult {
-  /** Whether the screenshot was accepted (not a duplicate) */
   accepted: boolean;
-  /** Reason for rejection if not accepted */
   reason?: "duplicate" | "source_inactive";
 }
 
-/**
- * Screenshot input for add() method
- */
 export interface ScreenshotInput {
-  /** Source identifier */
   sourceKey: SourceKey;
-  /** Image buffer for pHash computation */
   imageBuffer: Buffer;
-  /** Pre-computed pHash (optional, will be computed if not provided) */
   phash?: string;
-  /** Screenshot data to store */
   screenshot: Omit<AcceptedScreenshot, "id" | "phash"> & { id?: number; phash?: string };
 }
 
-// ============================================================================
-// SourceBufferRegistry Class
-// ============================================================================
-
-/**
- * Source Buffer Registry
- *
- * Simplified public interface:
- * - add(input): Add screenshot with pHash dedup
- * - get(sourceKey): Get buffer for a source
- * - refresh(): Manually trigger source refresh
- *
- * Automatic behaviors:
- * - Grace period cleanup for inactive sources
- * - pHash deduplication within same source
- * - Batch timeout timer
- */
 export class SourceBufferRegistry {
   private buffers = new Map<SourceKey, SourceBuffer>();
   private activeSources = new Set<SourceKey>();
+  private batchTimeoutTimers = new Map<SourceKey, NodeJS.Timeout>();
   private disposed = false;
   private processingBatches = false;
   private persistAcceptedScreenshot:
     | ((screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>)
     | null = null;
 
-  // Services
   private preferences: CapturePreferences | null = null;
-  private batchTriggerCache: AutoRefreshCache<void> | null = null;
 
-  // Config
-  private readonly batchSize = processingConfig.batch.batchSize;
-  private readonly batchTimeoutMs = processingConfig.batch.batchTimeoutMs;
-  private readonly gracePeriodMs = processingConfig.captureSource.gracePeriodMs;
+  private readonly batchSize = processingConfig.batch.minSize;
+  private readonly batchTimeoutMs = processingConfig.batch.timeoutMs;
+  private phashThreshold = processingConfig.backpressure.levels[0].phashThreshold;
+  private readonly gracePeriodMs = 60 * 1000;
   private readonly computeHashFn: (imageBuffer: Buffer) => Promise<string>;
 
   constructor(computeHashFn: (imageBuffer: Buffer) => Promise<string> = computeHash) {
     this.computeHashFn = computeHashFn;
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Initialization
-  // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Initialize the registry with CapturePreferencesService
-   * Starts automatic periodic refresh
-   */
   initialize(
     onPersistAcceptedScreenshot: (screenshot: Omit<AcceptedScreenshot, "id">) => Promise<number>
   ): void {
     this.preferences = null;
     this.persistAcceptedScreenshot = onPersistAcceptedScreenshot;
 
-    // Ensure idempotent initialization (e.g., dev hot reload)
-    this.batchTriggerCache?.dispose();
-    this.batchTriggerCache = null;
+    this.clearAllBatchTimeouts();
     this.disposed = false;
 
     try {
@@ -127,39 +67,18 @@ export class SourceBufferRegistry {
     } catch (error) {
       logger.error({ error }, "Failed to perform initial source refresh");
     }
-
-    this.batchTriggerCache = new AutoRefreshCache<void>({
-      fetchFn: async () => {
-        this.processReadyBatches("timeout");
-      },
-      interval: this.batchTimeoutMs,
-      immediate: false,
-      onError: (error) => {
-        logger.error({ error }, "Failed to process batch timeouts");
-      },
-    });
-
-    logger.info({ gracePeriodMs: this.gracePeriodMs }, "SourceBufferRegistry initialized");
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Public API: add, get, refresh
-  // ──────────────────────────────────────────────────────────────────────────
-
   /**
-   * Add a screenshot to the buffer with pHash deduplication
-   *
-   * Process:
-   * 1. Check if source is active (reject if not)
-   * 2. Compute pHash if not provided
-   * 3. Check for duplicates within same source
-   * 4. Add to buffer if unique
-   * 5. Internally trigger batch processing if needed
+   * Update the pHash Hamming distance threshold for deduplication.
    */
+  setPhashThreshold(threshold: number): void {
+    this.phashThreshold = threshold;
+  }
+
   async add(input: ScreenshotInput): Promise<AddResult> {
     const { sourceKey, imageBuffer, screenshot } = input;
 
-    // Check if source is active
     if (!this.isSourceActive(sourceKey)) {
       logger.debug({ sourceKey }, "Rejected screenshot: source inactive");
       return { accepted: false, reason: "source_inactive" };
@@ -167,12 +86,10 @@ export class SourceBufferRegistry {
 
     const buffer = this.getOrCreateBuffer(sourceKey);
 
-    // Compute pHash if not provided
     const phash: string =
       input.phash ?? screenshot.phash ?? (await this.computeHashFn(imageBuffer));
 
-    // Check for duplicates within same source
-    if (isDuplicateByLast(phash, buffer.lastPHash)) {
+    if (isDuplicateByLast(phash, buffer.lastPHash, this.phashThreshold)) {
       logger.debug({ sourceKey, phash }, "Rejected screenshot: duplicate");
       return { accepted: false, reason: "duplicate" };
     }
@@ -192,6 +109,7 @@ export class SourceBufferRegistry {
 
       id = await this.persistAcceptedScreenshot(payload);
     }
+
     if (typeof id !== "number") {
       throw new Error("Accepted screenshot is missing database id");
     }
@@ -212,29 +130,15 @@ export class SourceBufferRegistry {
     }
 
     this.processReadyBatches("add");
-
-    logger.debug(
-      { sourceKey, phash, bufferSize: buffer.screenshots.length },
-      "Screenshot added to buffer"
-    );
+    this.ensureBatchTimeout(sourceKey, buffer);
 
     return { accepted: true };
   }
 
-  /**
-   * Get buffer for a source
-   *
-   * @param sourceKey - Source identifier
-   * @returns Buffer if exists, undefined otherwise
-   */
   get(sourceKey: SourceKey): SourceBuffer | undefined {
     return this.buffers.get(sourceKey);
   }
 
-  /**
-   * Manually trigger source refresh
-   * Also performs grace period cleanup
-   */
   async refresh(): Promise<void> {
     await this.doRefresh();
   }
@@ -247,14 +151,15 @@ export class SourceBufferRegistry {
     this.doRefresh();
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Batch Operations
-  // ──────────────────────────────────────────────────────────────────────────
+  dispose(): void {
+    if (this.disposed) return;
 
-  /**
-   * Consume screenshots from buffer for batch processing
-   * Returns screenshots in FIFO order and clears the buffer
-   */
+    this.disposed = true;
+    this.clearAllBatchTimeouts();
+    this.buffers.clear();
+    this.activeSources.clear();
+  }
+
   private drainForBatch(sourceKey: SourceKey): AcceptedScreenshot[] {
     const buffer = this.buffers.get(sourceKey);
 
@@ -265,57 +170,24 @@ export class SourceBufferRegistry {
     const screenshots = [...buffer.screenshots];
     buffer.screenshots = [];
     buffer.batchStartTs = null;
-
-    logger.debug({ sourceKey, count: screenshots.length }, "Drained screenshots for batch");
+    this.clearBatchTimeout(sourceKey);
 
     return screenshots;
   }
 
-  /**
-   * Check if a source is currently active
-   */
   private isSourceActive(sourceKey: SourceKey): boolean {
     return this.activeSources.has(sourceKey);
   }
 
-  // ──────────────────────────────────────────────────────────────────────────
-  // Lifecycle
-  // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Dispose the registry and stop automatic refresh
-   */
-  dispose(): void {
-    if (this.disposed) return;
-
-    this.disposed = true;
-    this.batchTriggerCache?.dispose();
-    this.batchTriggerCache = null;
-    this.buffers.clear();
-    this.activeSources.clear();
-
-    logger.info("SourceBufferRegistry disposed");
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Internal Methods
-  // ──────────────────────────────────────────────────────────────────────────
-
-  /**
-   * Perform source refresh and grace period cleanup
-   */
-  doRefresh(): Set<SourceKey> {
+  private doRefresh(): Set<SourceKey> {
     const now = Date.now();
     const currentSources = this.fetchActiveSources();
 
-    // Update active sources set
-    // For sources in currentSources: create buffer if not exists, update lastSeenAt
     for (const sourceKey of currentSources) {
       const buffer = this.getOrCreateBuffer(sourceKey);
       buffer.lastSeenAt = now;
     }
 
-    // Grace period cleanup: remove buffers not seen within grace period
     const keysToRemove: SourceKey[] = [];
     for (const [key, buffer] of this.buffers) {
       if (!currentSources.has(key) && now - buffer.lastSeenAt >= this.gracePeriodMs) {
@@ -324,32 +196,16 @@ export class SourceBufferRegistry {
     }
 
     for (const key of keysToRemove) {
-      const discarded = this.drainForBatch(key);
+      this.drainForBatch(key);
+      this.clearBatchTimeout(key);
       this.buffers.delete(key);
-      logger.debug(
-        { sourceKey: key, discardedCount: discarded.length },
-        "Removed inactive source buffer after grace period"
-      );
     }
 
-    // Update active sources
     this.activeSources = currentSources;
-
-    logger.debug(
-      {
-        activeCount: currentSources.size,
-        bufferedCount: this.buffers.size,
-        removedCount: keysToRemove.length,
-      },
-      "Source refresh completed"
-    );
 
     return currentSources;
   }
 
-  /**
-   * Fetch active sources from CapturePreferencesService
-   */
   private fetchActiveSources(): Set<SourceKey> {
     if (!this.preferences) {
       return new Set();
@@ -389,9 +245,6 @@ export class SourceBufferRegistry {
     return sources;
   }
 
-  /**
-   * Get or create a buffer for the given source
-   */
   private getOrCreateBuffer(sourceKey: SourceKey): SourceBuffer {
     let buffer = this.buffers.get(sourceKey);
 
@@ -404,19 +257,89 @@ export class SourceBufferRegistry {
         batchStartTs: null,
       };
       this.buffers.set(sourceKey, buffer);
-      logger.debug({ sourceKey }, "Created new source buffer");
     }
 
     return buffer;
   }
 
-  /**
-   * Process any sources that are ready to form a batch.
-   *
-   * NOTE: The orchestration (BatchBuilder/VLM pipeline) should be done in
-   * ScreenshotProcessingModule.initialize(). This registry only owns buffering
-   * and trigger detection.
-   */
+  private ensureBatchTimeout(sourceKey: SourceKey, buffer: SourceBuffer): void {
+    if (buffer.batchStartTs === null) {
+      return;
+    }
+
+    if (this.batchTimeoutTimers.has(sourceKey)) {
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - buffer.batchStartTs;
+    const delayMs = Math.max(0, this.batchTimeoutMs - elapsed);
+
+    const timer = setTimeout(() => {
+      this.batchTimeoutTimers.delete(sourceKey);
+      this.handleBatchTimeout(sourceKey);
+    }, delayMs);
+
+    this.batchTimeoutTimers.set(sourceKey, timer);
+  }
+
+  private handleBatchTimeout(sourceKey: SourceKey): void {
+    if (this.disposed) {
+      return;
+    }
+
+    const buffer = this.buffers.get(sourceKey);
+    if (!buffer || buffer.screenshots.length === 0 || buffer.batchStartTs === null) {
+      return;
+    }
+
+    if (this.processingBatches) {
+      this.scheduleBatchTimeoutRetry(sourceKey);
+      return;
+    }
+
+    this.processReadyBatches("timeout");
+    this.rescheduleBatchTimeoutIfNeeded(sourceKey);
+  }
+
+  private rescheduleBatchTimeoutIfNeeded(sourceKey: SourceKey): void {
+    const buffer = this.buffers.get(sourceKey);
+    if (!buffer || buffer.screenshots.length === 0 || buffer.batchStartTs === null) {
+      return;
+    }
+
+    this.ensureBatchTimeout(sourceKey, buffer);
+  }
+
+  private scheduleBatchTimeoutRetry(sourceKey: SourceKey): void {
+    if (this.batchTimeoutTimers.has(sourceKey)) {
+      return;
+    }
+
+    const delayMs = Math.min(250, this.batchTimeoutMs);
+    const timer = setTimeout(() => {
+      this.batchTimeoutTimers.delete(sourceKey);
+      this.handleBatchTimeout(sourceKey);
+    }, delayMs);
+
+    this.batchTimeoutTimers.set(sourceKey, timer);
+  }
+
+  private clearBatchTimeout(sourceKey: SourceKey): void {
+    const timer = this.batchTimeoutTimers.get(sourceKey);
+    if (timer) {
+      clearTimeout(timer);
+      this.batchTimeoutTimers.delete(sourceKey);
+    }
+  }
+
+  private clearAllBatchTimeouts(): void {
+    for (const timer of this.batchTimeoutTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.batchTimeoutTimers.clear();
+  }
+
   private processReadyBatches(trigger: "add" | "timeout"): void {
     if (this.processingBatches) {
       return;
@@ -436,11 +359,6 @@ export class SourceBufferRegistry {
         }
 
         batches[sourceKey] = screenshots;
-
-        logger.info(
-          { sourceKey, count: screenshots.length, trigger },
-          "Batch ready from source buffer"
-        );
       }
 
       const batchKeys = Object.keys(batches);
@@ -449,7 +367,7 @@ export class SourceBufferRegistry {
           type: "batch:ready",
           timestamp: now,
           trigger,
-          batches,
+          batches: batches as Record<SourceKey, AcceptedScreenshot[]>,
         };
 
         screenshotProcessingEventBus.emit("batch:ready", event);

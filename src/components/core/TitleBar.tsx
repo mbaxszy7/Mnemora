@@ -2,12 +2,18 @@ import React, { useEffect, useState } from "react";
 import { useTheme } from "@/providers/theme-provider";
 import { cn } from "@/lib/utils";
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Camera, Loader2, PauseCircle, PlayCircle } from "lucide-react";
 
 export const TitleBar: React.FC = () => {
   const { effectiveTheme } = useTheme();
   const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
-  const [isCapturingAction, setIsCapturingAction] = useState(false);
+  const [captureStatus, setCaptureStatus] = useState<
+    "idle" | "running" | "paused" | "stopped" | null
+  >(null);
+  const [isTogglingCapture, setIsTogglingCapture] = useState(false);
 
   useEffect(() => {
     // Update native title bar overlay on Windows
@@ -27,28 +33,48 @@ export const TitleBar: React.FC = () => {
     window.screenCaptureApi.getState().then((result) => {
       if (result.success && result.data) {
         setIsRecording(result.data.status === "running");
+        setCaptureStatus(result.data.status);
       }
     });
 
     // Listen for state changes (Running/Paused/Stopped)
     const unsubState = window.screenCaptureApi.onStateChanged((payload) => {
       setIsRecording(payload.status === "running");
+      setCaptureStatus(payload.status);
     });
-
-    // Listen for actual capture pulses (the "taking a screenshot" action)
-    const unsubStarted = window.screenCaptureApi.onCapturingStarted(() =>
-      setIsCapturingAction(true)
-    );
-    const unsubFinished = window.screenCaptureApi.onCapturingFinished(() =>
-      setIsCapturingAction(false)
-    );
 
     return () => {
       unsubState();
-      unsubStarted();
-      unsubFinished();
     };
   }, []);
+
+  const handleToggleCapture = async () => {
+    if (isTogglingCapture) return;
+
+    setIsTogglingCapture(true);
+    try {
+      const before = await window.screenCaptureApi.getState();
+      const status = before.success && before.data ? before.data.status : captureStatus;
+
+      if (status === "running") {
+        await window.screenCaptureApi.pause();
+      } else if (status === "paused") {
+        await window.screenCaptureApi.resume();
+      } else {
+        await window.screenCaptureApi.start();
+      }
+
+      const after = await window.screenCaptureApi.getState();
+      if (after.success && after.data) {
+        setIsRecording(after.data.status === "running");
+        setCaptureStatus(after.data.status);
+      }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setIsTogglingCapture(false);
+    }
+  };
 
   return (
     <div
@@ -73,13 +99,9 @@ export const TitleBar: React.FC = () => {
           <div className="flex items-center gap-1.5 ml-2">
             <div
               className={cn(
-                "w-2 h-2 rounded-full bg-red-500 animate-pulse transition-all duration-1000",
-                isCapturingAction ? "scale-125 shadow-[0_0_8px_rgba(239,68,68,0.6)]" : "opacity-80"
+                "w-2 h-2 rounded-full bg-red-500 animate-pulse transition-all duration-1000 opacity-80"
               )}
-              style={{
-                // Smoother breathing effect by lengthening the pulse period
-                animationDuration: isCapturingAction ? "1s" : "3s",
-              }}
+              style={{ animationDuration: "3s" }}
             />
             <span className="text-[10px] font-semibold text-red-500/80 uppercase tracking-wider">
               {t("nav.recording")}
@@ -91,9 +113,53 @@ export const TitleBar: React.FC = () => {
       {/* Spacing for Windows control buttons which are overlaid on the right */}
       <div className="flex-1" />
       <div
-        className="w-[120px] h-full no-drag"
+        className="flex items-center gap-2 h-full no-drag"
         style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-      />
+      >
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleToggleCapture}
+                disabled={isTogglingCapture}
+                className={cn(
+                  "h-7 px-3 rounded-full text-xs",
+                  isRecording
+                    ? "border-green-500/30 bg-green-500/5 text-green-600 hover:bg-green-500/10 dark:text-green-400"
+                    : "border-primary/20 bg-primary/5 text-primary hover:bg-primary/10"
+                )}
+              >
+                {isTogglingCapture ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : isRecording ? (
+                  <PauseCircle className="h-3.5 w-3.5" />
+                ) : captureStatus === "paused" ? (
+                  <PlayCircle className="h-3.5 w-3.5" />
+                ) : (
+                  <Camera className="h-3.5 w-3.5" />
+                )}
+                <span>
+                  {isRecording
+                    ? t("activityMonitor.empty.pause", "Pause capture")
+                    : captureStatus === "paused"
+                      ? t("activityMonitor.empty.resume")
+                      : t("activityMonitor.empty.start")}
+                </span>
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {isRecording
+                ? t("activityMonitor.empty.pause", "Pause capture")
+                : captureStatus === "paused"
+                  ? t("activityMonitor.empty.resume")
+                  : t("activityMonitor.empty.start")}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <div className="w-[120px] h-full" />
+      </div>
     </div>
   );
 };

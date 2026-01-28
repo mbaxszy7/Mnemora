@@ -94,6 +94,8 @@ export class ThreadLlmService {
           appHint: null,
           windowTitle: null,
           sourceKey: "",
+          projectName: null,
+          projectKey: null,
         });
         const keywords = this.safeJsonParse<string[]>(n.keywords, []);
         const knowledge = this.safeJsonParse<KnowledgePayload | null>(n.knowledge, null);
@@ -112,6 +114,9 @@ export class ThreadLlmService {
           title: n.title,
           summary: n.summary,
           app_hint: appContext.appHint ?? null,
+          window_title: appContext.windowTitle ?? null,
+          project_key: appContext.projectKey ?? null,
+          project_name: appContext.projectName ?? null,
           keywords,
           entities: derivedEntities,
           event_time: n.eventTime,
@@ -302,6 +307,8 @@ export class ThreadLlmService {
             appHint: null,
             windowTitle: null,
             sourceKey: "",
+            projectName: null,
+            projectKey: null,
           });
           const keywords = this.safeJsonParse<string[]>(r.keywords, []);
           const knowledge = this.safeJsonParse<KnowledgePayload | null>(r.knowledge, null);
@@ -322,6 +329,9 @@ export class ThreadLlmService {
               title: r.title,
               summary: r.summary,
               app_hint: appContext.appHint ?? null,
+              window_title: appContext.windowTitle ?? null,
+              project_key: appContext.projectKey ?? null,
+              project_name: appContext.projectName ?? null,
               keywords,
               entities: derivedEntities,
               event_time: r.eventTime,

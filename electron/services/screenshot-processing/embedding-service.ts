@@ -9,28 +9,19 @@ import { aiRuntimeService } from "../ai-runtime-service";
 const logger = getLogger("embedding-service");
 
 export class EmbeddingService {
-  /**
-   * Generate embedding for text using the configured embedding model
-   */
   async embed(text: string, abortSignal?: AbortSignal): Promise<Float32Array> {
     const embeddingClient = AISDKService.getInstance().getEmbeddingClient();
     const modelName = AISDKService.getInstance().getEmbeddingModelName();
 
-    // Acquire global embedding semaphore
     const release = await aiRuntimeService.acquire("embedding");
-
-    // Start timing AFTER acquiring semaphore so durationMs reflects actual API call time
     const startTime = Date.now();
 
-    // Setup timeout with AbortController (combine with external signal if provided)
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), processingConfig.ai.embeddingTimeoutMs);
-    // If external abort signal is provided, forward abort to our controller
     const onAbort = () => controller.abort();
     abortSignal?.addEventListener("abort", onAbort);
 
     try {
-      // Using ai sdk embed function
       const result = await embed({
         model: embeddingClient,
         value: text,
@@ -45,7 +36,6 @@ export class EmbeddingService {
       clearTimeout(timeoutId);
       const durationMs = Date.now() - startTime;
 
-      // Log usage
       llmUsageService.logEvent({
         ts: Date.now(),
         capability: "embedding",
@@ -57,7 +47,6 @@ export class EmbeddingService {
         usageStatus: result.usage ? "present" : "missing",
       });
 
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "embedding",
@@ -80,7 +69,6 @@ export class EmbeddingService {
         "Failed to generate embedding"
       );
 
-      // Record trace for monitoring dashboard
       aiRequestTraceBuffer.record({
         ts: Date.now(),
         capability: "embedding",

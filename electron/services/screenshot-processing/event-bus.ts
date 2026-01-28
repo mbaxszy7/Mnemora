@@ -1,5 +1,5 @@
-import type { ScreenshotProcessingEventMap } from "./events";
 import { getLogger } from "../logger";
+import type { ScreenshotProcessingEventMap } from "./events";
 
 type EventName<EventMap> = Extract<keyof EventMap, string>;
 

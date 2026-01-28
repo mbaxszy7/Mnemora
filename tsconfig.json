@@ -28,6 +28,5 @@
     }
   },
   "include": ["src", "electron", "shared"],
-  "exclude": ["electron/services/screenshot-processing"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

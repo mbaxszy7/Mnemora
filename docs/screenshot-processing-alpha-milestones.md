@@ -205,6 +205,7 @@ async fallbackCleanup(): Promise<void> {
 
 - M0 — DB Schema/Migrations + shared types/IPC 适配（移除 edges，引入 threads，补 OCR 状态）
 - M1 — Pipeline 落地方式与入口切换（只启动 schedulers）
+- M1.5 — Settings: Context Rules（Markdown 强约束注入）
 - M2 — BatchScheduler(VLM)：batch → VLM (Stateless) → 单图单 node 入库 + **图片删除（无 OCR 场景）**
 - M3 — OCRScheduler：knowledge(en/zh) → 本地 OCR (Region optimized) + **图片删除（OCR 场景）** → 与 M4 并行执行
 - M4 — ThreadScheduler：thread assignment + continuity tracking + snapshot → 与 M3 并行执行
@@ -216,6 +217,117 @@ async fallbackCleanup(): Promise<void> {
 > 📁 **截图文件生命周期**：详见上方 [截图文件生命周期（Image Lifecycle）](#截图文件生命周期image-lifecycle) 章节，横跨 M2 和 M3。
 
 ---
+
+## Active Thread Lens（Active Threads / Thread Brief / Activity Monitor Open Thread）
+
+> 本节总结“利用 threads 数据”的 UI/交互功能设计与实施路线。
+> 这些功能依赖本文件前述的 Thread/Activity/Search 数据基座（尤其是 M4/M6 产出）。
+
+### 目标（来自需求）
+
+- **Active Thread 本线索简报**：围绕用户当前关注的 thread 生成简报（brief report）。
+- **Activity Monitor 联动 Open Thread**：在 Activity Monitor 的事件卡片上，基于 `threadId` 一键打开 thread。
+- **优先级**：默认自动推导 active thread，但**用户手动 pin 的 thread 优先级最高**。
+- **交互确认**：点击候选 thread 仅是**临时切换焦点**（不写入 pinned）。
+
+### 现有能力复用点（强复用）
+
+- `activity_events.thread_id` 已存在，renderer `ActivityEvent.threadId` 已暴露，可直接用于 “Open Thread”。
+- `ContextSearchService.getThread(threadId)` 已支持按 thread 拉取 `ExpandedContextNode[]`，且 IPC 已有 `CONTEXT_GET_THREAD`。
+- search 逻辑已支持 `filters.threadId`（`ContextSearchService.applyFilters()`），但 Query Understanding prompt 明确 `thread_id` 必须是**用户控制**（不得由 LLM 生成到 filters_patch）。
+- `ThreadLlmService.loadActiveThreads()` 已能按 `threads.lastActiveAt` 获取候选 threads，可作为 auto 推导的基础。
+- `processingConfig.thread.maxActiveThreads`（当前为 `3`）已存在，且用于 Thread LLM prompt 的 active threads 数量上限。
+
+### 概念与规则定义
+
+#### 1) Active Threads（候选集合）
+
+- **定义**：用于 UI 展示与 Thread LLM prompt 的“候选线程集合”。
+- **数量约束**：长度严格 `<= processingConfig.thread.maxActiveThreads`，并与 Thread LLM 保持一致（同一份数据来源）。
+
+**候选生成规则（建议实现为 `getActiveThreadCandidates(max)`）**：
+
+- 若存在 `pinnedThreadId`：先放入 candidates[0]
+- 然后按现有 `loadActiveThreads()` 规则追加（active 优先；否则 recent 非 closed 回退）
+- 去重（避免 pinned 重复）
+- 截断到 `maxActiveThreads`
+
+> 关键点：pinned thread **计入** maxActiveThreads（避免 UI 看到 4 条但 LLM 只看到 3 条的割裂）。
+
+#### 2) Resolved Active Thread（当前焦点 thread）
+
+- **定义**：当前 UI/简报/搜索作用域所使用的 thread。
+- **解析规则**：`pinnedThreadId` 存在时返回 pinned，否则返回 candidates[0]（最近活跃）。
+
+#### 3) Focus Thread（临时切换）
+
+- **定义**：用户在 UI 中点击候选卡片的“临时焦点”。
+- **确认规则**：点击只改变当前 focus（renderer state），**不写入 pinned**。
+- **建议行为**：focus 失效条件可先简化为“页面刷新/重启即失效”。
+
+### Pin 行为与 Thread LLM prompt 携带策略
+
+- **结论**：用户手动 pin 时，Thread LLM 应携带该 thread 信息。
+- **推荐方式**：不新增复杂参数，直接将 pinned thread 放到 `activeThreadsJson` 的第一个位置（并保证总数仍为 `maxActiveThreads`）。
+- **Prompt 护栏（必须）**：
+  - pinned 仅代表用户主观焦点，应作为“强偏置”而非“强制归属”。
+  - 若 batch nodes 明显属于其他 thread / 新 thread，允许分配到非 pinned。
+
+### IPC / API（草案）
+
+> 目标：让 UI 能读到 threads 列表/详情、active candidates、pinned 状态，并触发 pin/unpin。
+
+- **threadsApi**（新增 preload 暴露，main process 实现）
+  - `getActiveThreadState()` → `{ pinnedThreadId?: string | null, updatedAt: number }`
+  - `getActiveThreadCandidates()` → `Thread[]`（长度 `<= maxActiveThreads`）
+  - `getResolvedActiveThread()` → `Thread | null`
+  - `pinActiveThread(threadId: string)` / `unpinActiveThread()`
+  - `getThreadById(threadId: string)` / `listThreads(...)`（用于详情页与展示）
+
+- **contextGraphApi.search(...)**
+  - 扩展 IPC 允许传入 `filters.threadId`（用户选择的 scope），但保持：LLM Query Understanding **不得**生成 thread_id patch。
+
+### UI / 交互（避免“普通列表”）
+
+推荐组件：**Focus Lens / Thread Stack（线程栈）**
+
+- 默认只显示 1 张“栈顶”主卡（Resolved Active Thread）
+- 背后以层叠方式露出 1-2 张候选卡边缘（暗示还有候选，但不显式列表）
+- 交互：
+  - 点击非栈顶卡片：仅临时切换 focus（不 pin）
+  - Pin/Unpin：明确按钮触发，pin 后该 thread 固定成为栈顶
+  - Open：进入 Thread Details
+  - Brief：展示/刷新本线索简报
+
+### Thread Brief（本线索简报）
+
+- **输入数据（建议最小化）**：thread 元数据 + 最近 N 个 nodes（例如 50，或 24h 内上限 80）。
+- **输出结构**：`brief_markdown` + `highlights[]` + `current_focus` + `next_steps[]`（可选带 nodeIds 证据）。
+- **缓存策略（建议）**：以 `threadId + lastActiveAt` 作为缓存 key；`lastActiveAt` 未变化则复用 brief。
+  - MVP：内存缓存
+  - 增强：DB 表持久化（例如 `thread_briefs`）
+
+### 分阶段实施路线（建议）
+
+- **Phase 1（MVP：打通链路）**
+  - threads 读取 API（list/get）+ active candidates/resolved + pin/unpin（pinned 持久化在 user_setting）
+  - Activity Monitor：EventCard 增加 `Open Thread`（threadId != null 时显示）
+  - Thread Details 页：展示 thread 元数据 + `getThread(threadId)` nodes
+
+- **Phase 2（Brief）**
+  - `getThreadBrief(threadId, force?)` + 缓存
+  - Active Thread 主卡展示 brief（或 brief 摘要）
+
+- **Phase 3（Scope & polish）**
+  - SearchBar 增加 scope（All / Focus Thread），用 `filters.threadId` 控制 search
+  - Focus Lens 动效/快捷键/更好的候选排序策略
+
+### 风险与测试点
+
+- `threadId` 为空或 thread 已 closed/inactive 的降级显示。
+- `getThread(threadId)` 可能返回大量 nodes：后续可加 limit/paging。
+- pinned 偏置导致误分配：必须依赖 prompt 护栏 + 允许新 thread。
+- brief 的过期与一致性：缓存必须与 `lastActiveAt` 绑定。
 
 ## M0 — DB Schema/Migrations + shared types/IPC 适配
 
@@ -467,6 +579,131 @@ async fallbackCleanup(): Promise<void> {
 - **[事件路由]** `batch:persisted` 是否稳定唤醒 batch VLM scheduler
 - **[Preferences]** preferences 改变后 active sources 是否即时更新（`SourceBufferRegistry.setPreferences()`）
 - **[背压]** pending batch 增多时采集 interval 与 pHash 阈值是否按设计动态调整
+
+---
+
+## M1.5 — Settings: Context Rules（Markdown 强约束注入）
+
+### 目的
+
+在 Settings 中提供一个 **Context Rules** 功能：用户可输入一段 Markdown（例如个人偏好、输出口径、术语表、禁止事项），并在后续所有 AI 调用中作为“强约束上下文”注入到 prompt（优先注入到 **system prompt**）中。
+
+目标效果：
+
+- 用户可以用 Markdown 写“必须遵守的规则/偏好”，并且 **每次** VLM / Text LLM 调用都会携带。
+- 规则对模型是强约束，但 **不得破坏既定的硬性输出协议**（例如 VLM 必须输出 JSON、字段 schema 等）。
+
+### 依赖
+
+- 需要 M0 的 DB migrations 机制可用（本 Milestone 会新增 `user_setting` 字段）。
+
+### 范围与交互（UI/UX）
+
+- **入口**：`/settings` 页面新增一个入口项：`Context Rules`（与 `LLM Configuration` 同级）。
+- **页面**：新增路由 `/settings/context-rules`。
+- **编辑器**：
+  - 纯文本编辑（textarea）输入 Markdown。
+  - placeholder（示例，直接可用）：
+
+    ```markdown
+    # Context Rules (MUST FOLLOW)
+
+    ## Output style
+
+    - Use concise Chinese.
+    - Prefer bullet points and short paragraphs.
+
+    ## Terminology
+
+    - Treat "Mnemora" as the product name.
+    - When referring to screenshot processing, use the term "pipeline".
+
+    ## Hard constraints
+
+    - Do NOT invent URLs, filenames, IDs, or logs.
+    - If information is not visible in the screenshot, say "not visible".
+    - IMPORTANT: Never break the required output format (e.g., VLM must output valid JSON only).
+    ```
+
+  - `Enable` 开关：启用/禁用规则注入。
+  - 字符数统计与上限提示（避免 prompt 过长）。
+  - 保存按钮（显式保存；避免每次输入都写 DB）。
+  - （可选）预览：Markdown 渲染预览（禁用 HTML）。
+
+### 数据模型与持久化（DB / shared types / IPC）
+
+推荐直接扩展现有 singleton 表 `user_setting`（避免引入新表与额外 IPC）：
+
+- **[schema.ts]** `user_setting` 增加字段：
+  - `contextRulesEnabled`（BOOLEAN，default `false`）
+  - `contextRulesMarkdown`（TEXT，default `""`）
+  - （可选）`contextRulesUpdatedAt`（INTEGER，可空）
+
+- **[shared]** 扩展 `shared/user-settings-types.ts`：
+  - `UserSettings` 增加 `contextRulesEnabled/contextRulesMarkdown/contextRulesUpdatedAt?`
+  - `UpdateUserSettingsRequest.settings` 允许 patch 这些字段
+
+- **[main]** `electron/services/user-setting-service.ts`：
+  - `ensureSingletonRecord()` 初始化新字段默认值
+  - `recordToSettings()` / `updateSettings()` 支持读写新字段
+
+- **[ipc]** 复用现有：`USER_SETTINGS_GET/USER_SETTINGS_UPDATE`
+  - `electron/ipc/user-settings-handlers.ts` 无需新 channel（类型变化即可）
+
+- **[renderer]** 新增 settings 子页面：
+  - 使用现有 `useUserSettings()` 查询/保存（与 capture settings 同一份 settings source-of-truth）
+
+### Prompt 注入策略（强约束）
+
+#### 1) 注入范围
+
+首版建议：仅对 screenshot-processing pipeline 的 AI 调用统一注入（避免“有的 prompt 有规则、有的没有”的认知成本）。至少覆盖：
+
+- VLM：`promptTemplates.getVLMSystemPrompt()`
+- Thread LLM：`promptTemplates.getThreadLLMSystemPrompt()`
+- Activity Summary / Event Details 等 text prompts（同一处封装注入）
+
+#### 2) 注入位置与格式
+
+统一在 system prompt 末尾追加一个明确的段落（保持 base system prompt 的 JSON/Schema 硬规则依然生效）：
+
+- 追加段落标题建议：`## User Context Rules (MUST FOLLOW)`
+- 规则内容以“原样 Markdown”插入（不做 markdown 渲染，只作为文本进入 prompt）
+- system prompt 中明确：
+  - 这些规则是强约束
+  - 若与“输出格式硬规则/Schema”冲突，必须以硬规则为准（否则会导致解析失败）
+
+#### 3) 性能与工程实现建议
+
+由于当前 `prompt-templates.ts` 多为 sync 字符串拼接，建议使用“主进程缓存快照”的方式避免把 prompt 构建改成 async：
+
+- app 启动时从 `userSettingService.getSettings()` 读取一次，缓存 `contextRulesEnabled/contextRulesMarkdown`
+- `USER_SETTINGS_UPDATE` 成功后更新缓存（同进程内可直接更新）
+- prompt 构建时直接读取缓存快照并注入
+
+同时建议在 observability 中记录：
+
+- `llmUsageService.logEvent(...)` 增加字段：是否启用 rules、rulesLength、rulesHash（仅 hash，不记录原文）
+
+### 约束与边界（必须明确）
+
+- **长度上限**：建议 `contextRulesMarkdown` 设定上限（例如 4k~8k chars），UI 与服务端双重校验。
+- **安全**：UI 预览如做 Markdown 渲染，必须禁用 HTML（避免 XSS）。
+- **不可破坏协议**：Context Rules 不得导致模型输出格式偏离（例如 VLM 输出必须是 JSON）。
+
+### 验收标准（DoD）
+
+- Settings 中可以进入 Context Rules 页面，编辑并保存 Markdown。
+- 重启应用后规则仍存在（DB 持久化）。
+- 当 `contextRulesEnabled=true` 时：
+  - 任意一次 VLM / Text LLM 调用的 system prompt 均包含注入段落
+  - 在 `llm_usage_events` / trace 中可定位该次调用是否启用了 rules（通过 hash/length）
+- 当 `contextRulesEnabled=false` 时：不注入任何用户规则。
+
+### Confirmed Decisions（已确认）
+
+- 规则作用范围：**仅 screenshot-processing pipeline**（VLM/Thread/Summary/Details）。
+- 规则形态：**单段 Markdown**（不做多条规则/排序/单条开关）。
 
 ---
 

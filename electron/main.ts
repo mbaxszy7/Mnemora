@@ -25,6 +25,7 @@ import { screenshotProcessingModule } from "./services/screenshot-processing/scr
 import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 import { monitoringServer } from "./services/monitoring";
+import { userSettingService } from "./services/user-setting-service";
 
 // ============================================================================
 // Environment Setup
@@ -299,6 +300,7 @@ class AppLifecycleController {
     this.registerIPCHandlers();
     // 2. Initialize database (critical, must succeed)
     this.initDatabaseService();
+    await userSettingService.getSettings();
     captureScheduleController.initialize({ screenCapture: screenCaptureModule });
     captureScheduleController.start();
     // 3. Initialize i18n (required before UI)

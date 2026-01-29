@@ -1,4 +1,5 @@
 import { mainI18n } from "../i18n-service";
+import { contextRulesStore } from "../context-rules-store";
 
 export interface VLMUserPromptArgs {
   count: number;
@@ -76,6 +77,27 @@ export interface ActivitySummaryUserPromptArgs {
 
 export interface EventDetailsUserPromptArgs {
   userPromptJson: string;
+}
+
+function injectContextRules(baseSystemPrompt: string): string {
+  const snapshot = contextRulesStore.getSnapshot();
+  if (!snapshot.enabled) {
+    return baseSystemPrompt;
+  }
+  const rules = snapshot.markdown.trim();
+  if (!rules) {
+    return baseSystemPrompt;
+  }
+
+  return `${baseSystemPrompt}
+
+## User Context Rules (MUST FOLLOW)
+
+${rules}
+
+IMPORTANT:
+- You MUST still follow the required output format (e.g., JSON-only). Do NOT add extra prose or markdown fences.
+- If these rules conflict with any required output format / schema constraints in this system prompt, the required output format / schema constraints take priority.`;
 }
 
 // ============================================================================
@@ -1186,17 +1208,17 @@ Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 2
 
 The \`details\` field MUST contain exactly these three sections in order:
 
-### 1. Session Activity (本阶段工作)
+### 1. Session Activity
 - **Scope**: Focus ONLY on the activities captured in \`window_nodes\` (THIS specific time window).
 - **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
 - **Style**: Bullet points preferred.
 
-### 2. Current Status & Progress (当前最新进度)
+### 2. Current Status & Progress 
 - **Scope**: Use \`thread_latest_nodes\` and \`thread\` context to determine the absolute latest state.
 - **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
 - **Style**: Descriptive summary.
 
-### 3. Future Focus & Next Steps (后续关注)
+### 3. Future Focus & Next Steps
 - **Scope**: Infer based on \`action_items_json\` and overall thread trajectory.
 - **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
 - **Style**: Actionable tasks list.
@@ -1224,17 +1246,17 @@ const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手�
 
 \`details\` 字段必须按顺序准确包含这三个部分：
 
-### 1. 本阶段工作 (Session Activity)
+### 1. 本阶段工作
 - **范围**：仅关注 \`window_nodes\` 中捕捉到的活动（此特定时间窗口）。
 - **内容**：总结用户在本阶段取得的成就、修改的具体文件、做出的关键决定以及遇到的技术问题。
 - **风格**：建议使用列表（Bullet points）。
 
-### 2. 当前最新进度 (Current Status & Progress)
+### 2. 当前最新进度
 - **范围**：使用 \`thread_latest_nodes\` 和 \`thread\` 上下文来确定绝对的最新状态。
 - **内容**：此任务/项目的确定性当前状态是什么？总体上已经达到了哪些里程碑？是否存在活跃的阻碍因素或待处理的审查？
 - **风格**：描述性总结。
 
-### 3. 后续关注 (Future Focus & Next Steps)
+### 3. 后续关注
 - **范围**：基于 \`action_items_json\` 和整体线索轨迹进行推断。
 - **内容**：明确列出用户下一步应该关注的内容。包含帮助用户快速“重拾进度”的上下文。
 - **风格**：可操作的任务列表。
@@ -1258,7 +1280,9 @@ const EVENT_DETAILS_USER_PROMPT_ZH = (args: EventDetailsUserPromptArgs) => `${ar
 
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getVLMUserPrompt(args: VLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1266,9 +1290,11 @@ export const promptTemplates = {
       : VLM_USER_PROMPT_EN(args);
   },
   getThreadLlmSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? THREAD_LLM_SYSTEM_PROMPT_ZH
-      : THREAD_LLM_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? THREAD_LLM_SYSTEM_PROMPT_ZH
+        : THREAD_LLM_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getThreadLlmUserPrompt(args: ThreadLLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1296,9 +1322,11 @@ export const promptTemplates = {
       : ANSWER_SYNTHESIS_USER_PROMPT_EN(args);
   },
   getActivitySummarySystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
-      : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
+        : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getActivitySummaryUserPrompt(args: ActivitySummaryUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1306,9 +1334,11 @@ export const promptTemplates = {
       : ACTIVITY_SUMMARY_USER_PROMPT_EN(args);
   },
   getEventDetailsSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
-      : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
+        : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getEventDetailsUserPrompt(args: EventDetailsUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"

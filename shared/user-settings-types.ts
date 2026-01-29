@@ -1,5 +1,7 @@
 export type CaptureManualOverride = "none" | "force_on" | "force_off";
 
+export const CONTEXT_RULES_MAX_CHARS = 8000;
+
 export interface CaptureAllowedWindow {
   start: string;
   end: string;
@@ -11,6 +13,10 @@ export interface UserSettings {
   captureAllowedWindows: CaptureAllowedWindow[];
   captureManualOverride: CaptureManualOverride;
   captureManualOverrideUpdatedAt: number | null;
+
+  contextRulesEnabled: boolean;
+  contextRulesMarkdown: string;
+  contextRulesUpdatedAt: number | null;
 }
 
 export interface UserSettingsResponse {
@@ -21,7 +27,11 @@ export interface UpdateUserSettingsRequest {
   settings: Partial<
     Pick<
       UserSettings,
-      "capturePrimaryScreenOnly" | "captureScheduleEnabled" | "captureAllowedWindows"
+      | "capturePrimaryScreenOnly"
+      | "captureScheduleEnabled"
+      | "captureAllowedWindows"
+      | "contextRulesEnabled"
+      | "contextRulesMarkdown"
     >
   >;
 }

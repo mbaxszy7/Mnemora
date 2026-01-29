@@ -16,6 +16,10 @@ const DEFAULT_SETTINGS: UserSettings = {
   captureAllowedWindows: DEFAULT_CAPTURE_ALLOWED_WINDOWS,
   captureManualOverride: "none",
   captureManualOverrideUpdatedAt: null,
+
+  contextRulesEnabled: false,
+  contextRulesMarkdown: "",
+  contextRulesUpdatedAt: null,
 };
 
 export function useUserSettings() {
@@ -79,6 +83,7 @@ export function useUserSettings() {
     ...query,
     settings,
     updateSettings: mutation.mutate,
+    updateSettingsAsync: mutation.mutateAsync,
     isUpdating: mutation.isPending,
   };
 }

@@ -179,6 +179,8 @@ export abstract class BaseScheduler {
       );
       earliestNextRun = null;
     }
+
+    if (!this.isRunning) return;
     const now = Date.now();
 
     const defaultIntervalMs = this.getDefaultIntervalMs();

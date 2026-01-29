@@ -3,10 +3,11 @@ import { eq } from "drizzle-orm";
 import { getDb, userSetting } from "../database";
 import type { UserSettingRecord } from "../database";
 import { getLogger } from "./logger";
-import type {
-  CaptureAllowedWindow,
-  CaptureManualOverride,
-  UserSettings,
+import {
+  CONTEXT_RULES_MAX_CHARS,
+  type CaptureAllowedWindow,
+  type CaptureManualOverride,
+  type UserSettings,
 } from "@shared/user-settings-types";
 import {
   DEFAULT_CAPTURE_ALLOWED_WINDOWS,
@@ -14,18 +15,27 @@ import {
   parseAllowedWindowsJson,
 } from "@shared/user-settings-utils";
 
+import { contextRulesStore } from "./context-rules-store";
+
 const logger = getLogger("user-setting-service");
 
 function recordToSettings(record: UserSettingRecord): UserSettings {
   const windows = parseAllowedWindowsJson(record.captureAllowedWindowsJson);
-  return {
+  const settings: UserSettings = {
     capturePrimaryScreenOnly: record.capturePrimaryScreenOnly,
     captureScheduleEnabled: record.captureScheduleEnabled,
     captureAllowedWindows:
       windows.length > 0 ? windows : (DEFAULT_CAPTURE_ALLOWED_WINDOWS as CaptureAllowedWindow[]),
     captureManualOverride: record.captureManualOverride,
     captureManualOverrideUpdatedAt: record.captureManualOverrideUpdatedAt ?? null,
+
+    contextRulesEnabled: record.contextRulesEnabled,
+    contextRulesMarkdown: record.contextRulesMarkdown,
+    contextRulesUpdatedAt: record.contextRulesUpdatedAt ?? null,
   };
+
+  contextRulesStore.updateFromUserSettings(settings);
+  return settings;
 }
 
 export class UserSettingService {
@@ -58,6 +68,11 @@ export class UserSettingService {
         captureAllowedWindowsJson: DEFAULT_CAPTURE_ALLOWED_WINDOWS_JSON,
         captureManualOverride: "none",
         captureManualOverrideUpdatedAt: null,
+
+        contextRulesEnabled: false,
+        contextRulesMarkdown: "",
+        contextRulesUpdatedAt: null,
+
         createdAt: now,
         updatedAt: now,
       })
@@ -81,6 +96,8 @@ export class UserSettingService {
     capturePrimaryScreenOnly?: boolean;
     captureScheduleEnabled?: boolean;
     captureAllowedWindows?: CaptureAllowedWindow[];
+    contextRulesEnabled?: boolean;
+    contextRulesMarkdown?: string;
   }): Promise<UserSettings> {
     const db = getDb();
     const existing = this.ensureSingletonRecord();
@@ -100,6 +117,26 @@ export class UserSettingService {
 
     if (patch.captureAllowedWindows != null) {
       next.captureAllowedWindowsJson = JSON.stringify(patch.captureAllowedWindows);
+    }
+
+    const hasAnyContextRulesChange =
+      patch.contextRulesEnabled != null || patch.contextRulesMarkdown != null;
+
+    if (patch.contextRulesEnabled != null) {
+      next.contextRulesEnabled = patch.contextRulesEnabled;
+    }
+
+    if (patch.contextRulesMarkdown != null) {
+      if (patch.contextRulesMarkdown.length > CONTEXT_RULES_MAX_CHARS) {
+        throw new Error(
+          `contextRulesMarkdown exceeds max length (${patch.contextRulesMarkdown.length} > ${CONTEXT_RULES_MAX_CHARS})`
+        );
+      }
+      next.contextRulesMarkdown = patch.contextRulesMarkdown;
+    }
+
+    if (hasAnyContextRulesChange) {
+      next.contextRulesUpdatedAt = now;
     }
 
     db.update(userSetting).set(next).where(eq(userSetting.id, existing.id)).run();

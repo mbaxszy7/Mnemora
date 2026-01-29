@@ -79,7 +79,7 @@ export const TitleBar: React.FC = () => {
   return (
     <div
       className={cn(
-        "h-[38px] w-full flex items-center px-4 shrink-0 select-none transition-colors duration-200 sticky top-0 z-99999",
+        "h-[38px] w-full flex items-center px-4 shrink-0 select-none transition-colors duration-200 sticky top-0 z-99999 mb-4 ",
         effectiveTheme === "dark" ? "bg-[#09090b]" : "bg-[#f1f5f9]",
         "border-b border-border/40",
         // This is crucial for Electron draggability

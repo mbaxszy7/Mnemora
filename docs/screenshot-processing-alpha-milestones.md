@@ -227,6 +227,7 @@ async fallbackCleanup(): Promise<void> {
 
 - **Active Thread 本线索简报**：围绕用户当前关注的 thread 生成简报（brief report）。
 - **Activity Monitor 联动 Open Thread**：在 Activity Monitor 的事件卡片上，基于 `threadId` 一键打开 thread。
+- **Long Event 展示策略**：long event 仅作为 thread 级别的跨窗口 marker 展示；不提供 long event 的 “details 点击生成” 路径（由 Thread Brief / Thread Details 承担“更全面信息”的呈现）。
 - **优先级**：默认自动推导 active thread，但**用户手动 pin 的 thread 优先级最高**。
 - **交互确认**：点击候选 thread 仅是**临时切换焦点**（不写入 pinned）。
 
@@ -234,7 +235,6 @@ async fallbackCleanup(): Promise<void> {
 
 - `activity_events.thread_id` 已存在，renderer `ActivityEvent.threadId` 已暴露，可直接用于 “Open Thread”。
 - `ContextSearchService.getThread(threadId)` 已支持按 thread 拉取 `ExpandedContextNode[]`，且 IPC 已有 `CONTEXT_GET_THREAD`。
-- search 逻辑已支持 `filters.threadId`（`ContextSearchService.applyFilters()`），但 Query Understanding prompt 明确 `thread_id` 必须是**用户控制**（不得由 LLM 生成到 filters_patch）。
 - `ThreadLlmService.loadActiveThreads()` 已能按 `threads.lastActiveAt` 获取候选 threads，可作为 auto 推导的基础。
 - `processingConfig.thread.maxActiveThreads`（当前为 `3`）已存在，且用于 Thread LLM prompt 的 active threads 数量上限。
 
@@ -256,7 +256,7 @@ async fallbackCleanup(): Promise<void> {
 
 #### 2) Resolved Active Thread（当前焦点 thread）
 
-- **定义**：当前 UI/简报/搜索作用域所使用的 thread。
+- **定义**：当前 UI/简报所使用的 thread。
 - **解析规则**：`pinnedThreadId` 存在时返回 pinned，否则返回 candidates[0]（最近活跃）。
 
 #### 3) Focus Thread（临时切换）
@@ -284,9 +284,6 @@ async fallbackCleanup(): Promise<void> {
   - `pinActiveThread(threadId: string)` / `unpinActiveThread()`
   - `getThreadById(threadId: string)` / `listThreads(...)`（用于详情页与展示）
 
-- **contextGraphApi.search(...)**
-  - 扩展 IPC 允许传入 `filters.threadId`（用户选择的 scope），但保持：LLM Query Understanding **不得**生成 thread_id patch。
-
 ### UI / 交互（避免“普通列表”）
 
 推荐组件：**Focus Lens / Thread Stack（线程栈）**
@@ -299,6 +296,8 @@ async fallbackCleanup(): Promise<void> {
   - Open：进入 Thread Details
   - Brief：展示/刷新本线索简报
 
+> 说明：Activity Monitor 的 long event 卡片应优先提供 `Open Thread`（threadId != null），不提供 “details 点击生成”。
+
 ### Thread Brief（本线索简报）
 
 - **输入数据（建议最小化）**：thread 元数据 + 最近 N 个 nodes（例如 50，或 24h 内上限 80）。
@@ -306,6 +305,16 @@ async fallbackCleanup(): Promise<void> {
 - **缓存策略（建议）**：以 `threadId + lastActiveAt` 作为缓存 key；`lastActiveAt` 未变化则复用 brief。
   - MVP：内存缓存
   - 增强：DB 表持久化（例如 `thread_briefs`）
+
+> 关键点：当用户从 long event 进入 thread 时，Brief 是 “替代 long event details” 的轻量入口，应确保随 `lastActiveAt` 推进自动失效。
+
+### Thread Details（防止信息不更新）
+
+- **刷新判定（必须）**：以 `threads.lastActiveAt` 作为“数据版本号”。
+  - 进入 Thread Details 时读取一次 thread 元数据（含 `lastActiveAt`），并在 UI 上展示最近更新时间。
+  - 当 `lastActiveAt` 变化时（例如 ActivityTimeline 事件总线触发刷新，或用户手动刷新），必须重新拉取 `getThread(threadId)` 的 nodes。
+- **缓存策略（可选）**：如果 Thread Details 做任何形式的 nodes 缓存，缓存 key 必须至少包含 `threadId + lastActiveAt`（避免复用旧 nodes）。
+- **强制刷新（建议）**：Thread Details 提供 `force` 或 “Refresh” 行为以绕过缓存（即便 `lastActiveAt` 未变化，也允许用户手动刷新）。
 
 ### 分阶段实施路线（建议）
 
@@ -319,7 +328,6 @@ async fallbackCleanup(): Promise<void> {
   - Active Thread 主卡展示 brief（或 brief 摘要）
 
 - **Phase 3（Scope & polish）**
-  - SearchBar 增加 scope（All / Focus Thread），用 `filters.threadId` 控制 search
   - Focus Lens 动效/快捷键/更好的候选排序策略
 
 ### 风险与测试点

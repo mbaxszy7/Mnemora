@@ -1000,7 +1000,7 @@ MUST contain exactly these 4 sections in order:
 
 #### ## Documents
 - Wiki, docs, Confluence, README, API docs.
-- **CRITICAL**: If a context node has non-null \`knowledge_json\`, summarize its content using its specific fields: \`content_type\`, \`source_url\`, \`project_or_library\`, and \`key_insights\`. Provide a coherent summary of what was learned or referenced.
+- **CRITICAL**: If an evidence item includes a non-null knowledge block, summarize what was learned or referenced (type of content, source, related project/library, and key takeaways) in natural language. Do NOT mention any JSON key names in the generated text.
 - EXCLUDE source code files (.ts, .js, etc.).
 - Include URLs ONLY if visible.
 - If none, output: "- None"
@@ -1023,18 +1023,19 @@ MUST contain exactly these 4 sections in order:
 - Identify distinct activity periods within the window
 - kind: Match activity type
 - start_offset_min / end_offset_min: Minutes from window start (0-20)
-- node_ids: Context node IDs that belong to this event
-- **MANDATORY**: For each thread in \`long_threads\` input, you MUST generate an event with its \`thread_id\`. Use the thread's title, summary, and context to generate accurate event title and description.
+- node_ids: IDs of the evidence items included in this event (use the id values from the provided evidence list)
+- **MANDATORY**: For each required ongoing thread in the input, you MUST generate an event and populate its \`thread_id\`. Use the thread's title, summary, and evidence to generate accurate event title and description.
 - For non-long-thread events, \`thread_id\` can be omitted
 
 ## Hard Rules
 
 1. Output MUST be valid JSON only. No markdown fences.
-2. All claims MUST be grounded in provided context nodes.
+2. All claims MUST be grounded in provided evidence.
 3. summary MUST contain exactly 4 sections in specified order.
 4. stats MUST match input - do NOT invent apps/entities.
 5. NEVER invent URLs not visible in evidence.
-6. **CRITICAL**: For each thread in \`long_threads\` input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.`;
+6. **CRITICAL**: For each required ongoing thread in the input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.
+7. In all generated text fields (title, summary, highlights, description), NEVER mention the names of any input fields/keys, internal schema names, or variable names. Do NOT talk about data formats (JSON/arrays/objects/fields/keys). Refer to them generically as evidence/records/notes.`;
 
 const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在 20 分钟时间窗口内的活动。
 
@@ -1096,7 +1097,7 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 
 #### ## 文档
 - Wiki, 文档, Confluence, README, API 文档。
-- **关键点**：如果上下文节点有非空的 \`knowledge_json\`，请使用其特定字段总结其内容：\`content_type\`、\`source_url\`、\`project_or_library\` 和 \`key_insights\`。提供对所学或所引用内容连贯的总结。
+- **关键点**：如果某条证据包含非空的知识块，请用自然语言总结其内容（内容类型、来源、相关项目/库、关键要点），并给出连贯的“学到了/参考了什么”。不要在生成的文本中提到任何 JSON 字段名。
 - 排除源代码文件（.ts, .js 等）。
 - 仅在可见时包含 URL。
 - 如果没有，输出："- 无"
@@ -1119,18 +1120,19 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 - 识别时间窗口内不同的活动阶段
 - kind：匹配活动类型
 - start_offset_min / end_offset_min：距离窗口开始的分钟数 (0-20)
-- node_ids：属于此事件的上下文节点 ID
-- **强制性**：对于输入中 \`long_threads\` 的每个线索，你必须使用其 \`thread_id\` 生成一个事件。使用该线索的标题、总结和上下文来生成准确的事件标题和描述。
+- node_ids：此事件包含的证据条目 ID（使用提供的证据列表里的 id 值）
+- **强制性**：对于输入中标记为“必须覆盖”的每个长线索，你必须生成一个事件并填入其 \`thread_id\`。使用该线索的标题、总结和证据来生成准确的事件标题和描述。
 - 对于非长线索事件，可以省略 \`thread_id\`
 
 ## 硬性规则
 
 1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
-2. 所有声明必须基于提供的上下文节点。
+2. 所有声明必须基于提供的证据。
 3. summary 必须以指定的顺序包含准确的 4 个部分。
 4. stats 必须匹配输入 - 不要编造应用/实体。
 5. 绝不编造证据中不可见的 URL。
-6. **关键点**：对于输入中 \`long_threads\` 的每个线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。`;
+6. **关键点**：对于输入中标记为“必须覆盖”的每个长线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。
+7. 在所有生成的文本字段（title、summary、highlights、description）中，绝不提及任何输入 JSON 的字段名/键名、内部 schema 名称或变量名；也不要讨论数据格式（JSON/数组/对象/字段/键）。请用“证据/记录/线索/笔记”等自然语言泛称。`;
 
 const ACTIVITY_SUMMARY_USER_PROMPT_EN = (
   args: ActivitySummaryUserPromptArgs
@@ -1150,19 +1152,19 @@ Current Unix timestamp (ms): ${args.nowTs}
 - Start: ${args.windowStart} (${args.windowStartLocal})
 - End: ${args.windowEnd} (${args.windowEndLocal})
 
-## Context Nodes in This Window
+## Evidence in This Window
 ${args.contextNodesJson}
 
-## Long Threads (MUST generate events for these)
+## Required Ongoing Threads (MUST generate one event per thread)
 ${args.longThreadsJson}
 
 ## Statistics
 ${args.statsJson}
 
 ## Instructions
-1. Analyze all context nodes within this window.
+1. Analyze all evidence within this window.
 2. Generate a comprehensive summary with exactly 4 sections.
-3. **MANDATORY**: For each thread in "Long Threads", generate an event with its thread_id.
+3. **MANDATORY**: For each thread in "Required Ongoing Threads", generate an event with its thread_id.
 4. Identify additional distinct activity events (total 1-3 events including long thread events).
 5. Return ONLY the JSON object.`;
 
@@ -1184,19 +1186,19 @@ const ACTIVITY_SUMMARY_USER_PROMPT_ZH = (
 - 开始：${args.windowStart} (${args.windowStartLocal})
 - 结束：${args.windowEnd} (${args.windowEndLocal})
 
-## 此窗口内的上下文节点
+## 此窗口内的证据条目
 ${args.contextNodesJson}
 
-## 长线索 (必须为这些生成事件)
+## 必须覆盖的长线索 (每个线索都必须生成 1 个事件)
 ${args.longThreadsJson}
 
 ## 统计数据
 ${args.statsJson}
 
 ## 指令
-1. 分析此窗口内的所有上下文节点。
+1. 分析此窗口内的所有证据条目。
 2. 生成包含准确 4 个部分的综合总结。
-3. **强制性**：对于 “长线索” 中的每个线索，生成一个带有其 thread_id 的事件。
+3. **强制性**：对于“必须覆盖的长线索”中的每个线索，生成一个带有其 thread_id 的事件。
 4. 识别额外的不同活动事件（总计 1-3 个事件，包含长线索事件）。
 5. 仅返回 JSON 对象。`;
 
@@ -1209,25 +1211,26 @@ Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 2
 The \`details\` field MUST contain exactly these three sections in order:
 
 ### 1. Session Activity
-- **Scope**: Focus ONLY on the activities captured in \`window_nodes\` (THIS specific time window).
-- **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
-- **Style**: Bullet points preferred.
+- **Scope**: Focus ONLY on the session evidence from this specific time window, and only what is relevant to the event's thread.
+- **Content**: Capture the most important actions/outcomes (e.g. what was changed, decisions, issues), but do NOT enumerate everything.
+- **Style**: Bullet list with a maximum of 6 top-level bullets. No nested bullets. If there are more candidates, pick the most important.
 
 ### 2. Current Status & Progress 
-- **Scope**: Use \`thread_latest_nodes\` and \`thread\` context to determine the absolute latest state.
-- **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
-- **Style**: Descriptive summary.
+- **Scope**: Use the latest thread-related evidence provided to determine the absolute current state.
+- **Content**: State the most important progress, current state, and any key blocker/uncertainty.
+- **Style**: Bullet list with a maximum of 6 top-level bullets. No nested bullets. If there are more candidates, pick the most important.
 
 ### 3. Future Focus & Next Steps
-- **Scope**: Infer based on \`action_items_json\` and overall thread trajectory.
-- **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
-- **Style**: Actionable tasks list.
+- **Scope**: Infer based on the provided action items (if any) and the overall thread trajectory.
+- **Content**: List only the highest-impact next steps to help the user pick up quickly.
+- **Style**: Actionable task list with a maximum of 3 top-level bullets. No nested bullets. Pick the most important.
 
 ## Quality Requirements
 
-- **Faithful**: Do NOT invent facts. Only use provided context nodes.
+- **Faithful**: Do NOT invent facts. Only use provided evidence.
 - **Concise**: Use high-information density language. Avoid generic phrases.
 - **Context-Aware**: Clearly distinguish between what happened *now* vs the *overall* progress.
+- **No Field Names**: Never mention any input field/key names or internal schema names in the Markdown content.
 
 ## Hard Output Requirements
 
@@ -1247,25 +1250,26 @@ const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手�
 \`details\` 字段必须按顺序准确包含这三个部分：
 
 ### 1. 本阶段工作
-- **范围**：仅关注 \`window_nodes\` 中捕捉到的活动（此特定时间窗口）。
-- **内容**：总结用户在本阶段取得的成就、修改的具体文件、做出的关键决定以及遇到的技术问题。
-- **风格**：建议使用列表（Bullet points）。
+- **范围**：仅关注此特定时间窗口内的证据，并且只写与该事件所对应线索相关的内容。
+- **内容**：提炼最重要的动作/结果（例如改了什么、关键决定、遇到的问题），不要穷举所有细节。
+- **风格**：列表（Bullet points），最多 6 条（仅顶层条目，不要嵌套）。如候选过多，只保留最重要的。
 
 ### 2. 当前最新进度
-- **范围**：使用 \`thread_latest_nodes\` 和 \`thread\` 上下文来确定绝对的最新状态。
-- **内容**：此任务/项目的确定性当前状态是什么？总体上已经达到了哪些里程碑？是否存在活跃的阻碍因素或待处理的审查？
-- **风格**：描述性总结。
+- **范围**：使用提供的“线索最新证据”来判断绝对的最新状态。
+- **内容**：只保留最重要的进展、当前状态、以及关键阻碍/不确定点。
+- **风格**：列表（Bullet points），最多 6 条（仅顶层条目，不要嵌套）。如候选过多，只保留最重要的。
 
 ### 3. 后续关注
-- **范围**：基于 \`action_items_json\` 和整体线索轨迹进行推断。
-- **内容**：明确列出用户下一步应该关注的内容。包含帮助用户快速“重拾进度”的上下文。
-- **风格**：可操作的任务列表。
+- **范围**：基于提供的行动项（如有）以及整体线索轨迹推断。
+- **内容**：只给出最重要、最有影响力的后续关注点，帮助用户快速“重拾进度”。
+- **风格**：可操作的任务列表，最多 3 条（仅顶层条目，不要嵌套）。只保留最重要的。
 
 ## 质量要求
 
-- **忠实度**：不要编造事实。仅使用提供的上下文节点。
+- **忠实度**：不要编造事实。仅使用提供的证据条目。
 - **简洁性**：使用高信息密度的语言。避免使用空洞的短语。
 - **上下文感知**：清晰区分“现在”发生的活动与“整体”进度。
+- **不提字段名**：在 Markdown 内容中绝不提及任何输入 JSON 的字段名/键名或内部 schema 名称。
 
 ## 硬性输出要求
 

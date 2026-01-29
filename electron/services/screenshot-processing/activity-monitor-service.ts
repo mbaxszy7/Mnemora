@@ -850,13 +850,23 @@ class ActivityMonitorService {
         const nodeIdsJson = JSON.stringify(latestNodeIds.map((r) => r.id));
 
         const existingMarker = await db
-          .select({ id: activityEvents.id })
+          .select({
+            id: activityEvents.id,
+            endTs: activityEvents.endTs,
+            nodeIds: activityEvents.nodeIds,
+            detailsText: activityEvents.detailsText,
+          })
           .from(activityEvents)
           .where(eq(activityEvents.eventKey, markerKey))
           .limit(1);
 
         const nowTs = Date.now();
         if (existingMarker.length > 0) {
+          const marker = existingMarker[0];
+          const shouldInvalidateDetails =
+            marker.detailsText != null &&
+            (marker.endTs !== thread.last_active_at || (marker.nodeIds ?? null) !== nodeIdsJson);
+
           await db
             .update(activityEvents)
             .set({
@@ -867,9 +877,17 @@ class ActivityMonitorService {
               isLong: true,
               threadId,
               nodeIds: nodeIdsJson,
+              ...(shouldInvalidateDetails
+                ? {
+                    detailsText: null,
+                    detailsStatus: "pending",
+                    detailsAttempts: 0,
+                    detailsNextRunAt: nowTs,
+                  }
+                : {}),
               updatedAt: nowTs,
             })
-            .where(eq(activityEvents.id, existingMarker[0].id))
+            .where(eq(activityEvents.id, marker.id))
             .run();
         } else {
           const kind =
@@ -1068,15 +1086,24 @@ class ActivityMonitorService {
 
       const nodeIds = parseJsonSafe<number[]>(event.nodeIds, []);
       if (nodeIds.length === 0) {
-        await db
+        const committed = await db
           .update(activityEvents)
           .set({
             detailsText: "No evidence found for this event.",
             detailsStatus: "succeeded",
             updatedAt: Date.now(),
           })
-          .where(eq(activityEvents.id, eventId))
+          .where(
+            and(
+              eq(activityEvents.id, eventId),
+              eq(activityEvents.detailsStatus, "running"),
+              eq(activityEvents.detailsAttempts, nextAttempts)
+            )
+          )
           .run();
+        if (committed.changes === 0) {
+          return false;
+        }
         return true;
       }
 
@@ -1221,15 +1248,25 @@ class ActivityMonitorService {
         responsePreview: JSON.stringify(data, null, 2),
       });
 
-      await db
+      const committed = await db
         .update(activityEvents)
         .set({
           detailsText: data.details,
           detailsStatus: "succeeded",
           updatedAt: Date.now(),
         })
-        .where(eq(activityEvents.id, eventId))
+        .where(
+          and(
+            eq(activityEvents.id, eventId),
+            eq(activityEvents.detailsStatus, "running"),
+            eq(activityEvents.detailsAttempts, nextAttempts)
+          )
+        )
         .run();
+
+      if (committed.changes === 0) {
+        return false;
+      }
 
       emitActivityTimelineChanged(event.startTs, event.endTs);
       return true;

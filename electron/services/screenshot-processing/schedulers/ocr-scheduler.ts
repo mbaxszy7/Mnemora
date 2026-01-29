@@ -57,30 +57,42 @@ export class OcrScheduler extends BaseScheduler {
   }
 
   protected computeEarliestNextRun(): number | null {
-    const db = getDb();
-    const now = Date.now();
+    try {
+      const db = getDb();
+      const now = Date.now();
 
-    const row = db
-      .select({ nextRunAt: screenshots.ocrNextRunAt })
-      .from(screenshots)
-      .where(
-        and(
-          or(eq(screenshots.ocrStatus, "pending"), eq(screenshots.ocrStatus, "failed")),
-          lt(screenshots.ocrAttempts, processingConfig.retry.maxAttempts),
-          or(isNull(screenshots.ocrNextRunAt), lte(screenshots.ocrNextRunAt, now)),
-          isNotNull(screenshots.filePath),
-          or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
+      const row = db
+        .select({ nextRunAt: screenshots.ocrNextRunAt })
+        .from(screenshots)
+        .where(
+          and(
+            or(eq(screenshots.ocrStatus, "pending"), eq(screenshots.ocrStatus, "failed")),
+            lt(screenshots.ocrAttempts, processingConfig.retry.maxAttempts),
+            or(isNull(screenshots.ocrNextRunAt), lte(screenshots.ocrNextRunAt, now)),
+            isNotNull(screenshots.filePath),
+            or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
+          )
         )
-      )
-      .orderBy(asc(screenshots.ocrNextRunAt))
-      .limit(1)
-      .get();
+        .orderBy(asc(screenshots.ocrNextRunAt))
+        .limit(1)
+        .get();
 
-    if (!row) {
-      return null;
+      if (!row) {
+        return null;
+      }
+
+      return row.nextRunAt ?? now;
+    } catch (error) {
+      if (isSqliteCorruptionError(error)) {
+        logger.error(
+          { error, scheduler: this.name },
+          "SQLite corruption detected while computing next OCR run; stopping OCR scheduler"
+        );
+        this.stop();
+        return null;
+      }
+      throw error;
     }
-
-    return row.nextRunAt ?? now;
   }
 
   protected async runCycle(): Promise<void> {
@@ -117,6 +129,13 @@ export class OcrScheduler extends BaseScheduler {
     } catch (error) {
       cycleError = error instanceof Error ? error.message : String(error);
       logger.error({ error }, "Error in OCR scheduler cycle");
+      if (isSqliteCorruptionError(error)) {
+        logger.error(
+          { error, scheduler: this.name },
+          "SQLite corruption detected during OCR cycle; stopping OCR scheduler"
+        );
+        this.stop();
+      }
     } finally {
       this.emit("scheduler:cycle:end", {
         scheduler: this.name,
@@ -189,6 +208,13 @@ export class OcrScheduler extends BaseScheduler {
       }
     } catch (error) {
       logger.error({ error }, "Failed to recover stale OCR screenshots");
+      if (isSqliteCorruptionError(error)) {
+        logger.error(
+          { error, scheduler: this.name },
+          "SQLite corruption detected while recovering stale OCR screenshots; stopping OCR scheduler"
+        );
+        this.stop();
+      }
     }
   }
 
@@ -273,70 +299,112 @@ export class OcrScheduler extends BaseScheduler {
     const now = Date.now();
     const attempts = record.ocrAttempts + 1;
 
-    const claimed = db
-      .update(screenshots)
-      .set({
-        ocrStatus: "running",
-        ocrAttempts: attempts,
-        ocrNextRunAt: null,
-        updatedAt: now,
-      })
-      .where(
-        and(
-          eq(screenshots.id, record.id),
-          or(eq(screenshots.ocrStatus, "pending"), eq(screenshots.ocrStatus, "failed")),
-          lt(screenshots.ocrAttempts, processingConfig.retry.maxAttempts),
-          or(isNull(screenshots.ocrNextRunAt), lte(screenshots.ocrNextRunAt, now)),
-          isNotNull(screenshots.filePath),
-          or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
-        )
-      )
-      .run();
-
-    if (claimed.changes === 0) {
-      return;
-    }
-
-    const screenshot = db.select().from(screenshots).where(eq(screenshots.id, record.id)).get();
-    if (!screenshot || !screenshot.filePath || screenshot.storageState === "deleted") {
-      await this.failScreenshot(record.id, attempts, "Screenshot file not available");
-      return;
-    }
-
-    const textRegion = this.loadTextRegion(screenshot.id);
-
     try {
-      const result = await ocrService.recognize({
-        filePath: screenshot.filePath,
-        textRegion,
-      });
-
-      db.update(screenshots)
+      const claimed = db
+        .update(screenshots)
         .set({
-          ocrText: result.text,
-          ocrStatus: "succeeded",
+          ocrStatus: "running",
+          ocrAttempts: attempts,
           ocrNextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: now,
         })
-        .where(eq(screenshots.id, screenshot.id))
+        .where(
+          and(
+            eq(screenshots.id, record.id),
+            or(eq(screenshots.ocrStatus, "pending"), eq(screenshots.ocrStatus, "failed")),
+            lt(screenshots.ocrAttempts, processingConfig.retry.maxAttempts),
+            or(isNull(screenshots.ocrNextRunAt), lte(screenshots.ocrNextRunAt, now)),
+            isNotNull(screenshots.filePath),
+            or(isNull(screenshots.storageState), ne(screenshots.storageState, "deleted"))
+          )
+        )
         .run();
 
-      this.emit("screenshot:ocr:succeeded", {
-        screenshotId: screenshot.id,
-        timestamp: Date.now(),
-        attempts,
-      });
+      if (claimed.changes === 0) {
+        return;
+      }
 
-      const deleted = await safeDeleteCaptureFile(screenshot.filePath);
-      if (deleted) {
+      const screenshot = db.select().from(screenshots).where(eq(screenshots.id, record.id)).get();
+      if (!screenshot || !screenshot.filePath || screenshot.storageState === "deleted") {
+        const permanent = attempts >= processingConfig.retry.maxAttempts;
+        const payload = {
+          screenshotId: record.id,
+          attempts,
+          permanent,
+          filePath: screenshot?.filePath ?? null,
+          storageState: screenshot?.storageState ?? null,
+        };
+        logger.error(payload, "OCR screenshot file not available");
+        await this.failScreenshot(record.id, attempts, "Screenshot file not available");
+        return;
+      }
+
+      const textRegion = this.loadTextRegion(screenshot.id);
+
+      try {
+        const result = await ocrService.recognize({
+          filePath: screenshot.filePath,
+          textRegion,
+        });
+
         db.update(screenshots)
-          .set({ storageState: "deleted", updatedAt: Date.now() })
+          .set({
+            ocrText: result.text,
+            ocrStatus: "succeeded",
+            ocrNextRunAt: null,
+            updatedAt: Date.now(),
+          })
           .where(eq(screenshots.id, screenshot.id))
           .run();
+
+        this.emit("screenshot:ocr:succeeded", {
+          screenshotId: screenshot.id,
+          timestamp: Date.now(),
+          attempts,
+        });
+
+        const deleted = await safeDeleteCaptureFile(screenshot.filePath);
+        if (deleted) {
+          db.update(screenshots)
+            .set({ storageState: "deleted", updatedAt: Date.now() })
+            .where(eq(screenshots.id, screenshot.id))
+            .run();
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const permanent = attempts >= processingConfig.retry.maxAttempts;
+        const payload = {
+          screenshotId: record.id,
+          attempts,
+          permanent,
+          filePath: screenshot.filePath,
+          errorName: error instanceof Error ? error.name : "UnknownError",
+          errorMessage: message,
+          stack: error instanceof Error ? error.stack : undefined,
+        };
+        logger.error(payload, "OCR processing failed");
+
+        if (isSqliteCorruptionError(error)) {
+          logger.error(
+            { error, scheduler: this.name, screenshotId: record.id },
+            "SQLite corruption detected; stopping OCR scheduler"
+          );
+          this.stop();
+          return;
+        }
+
+        await this.failScreenshot(record.id, attempts, message);
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.failScreenshot(record.id, attempts, message);
+      if (isSqliteCorruptionError(error)) {
+        logger.error(
+          { error, scheduler: this.name, screenshotId: record.id },
+          "SQLite corruption detected; stopping OCR scheduler"
+        );
+        this.stop();
+        return;
+      }
+      throw error;
     }
   }
 
@@ -347,14 +415,26 @@ export class OcrScheduler extends BaseScheduler {
     const nextRunAt = exceeded ? null : now + processingConfig.retry.delayMs;
     const status = exceeded ? "failed_permanent" : "failed";
 
-    db.update(screenshots)
-      .set({
-        ocrStatus: status,
-        ocrNextRunAt: nextRunAt,
-        updatedAt: now,
-      })
-      .where(eq(screenshots.id, id))
-      .run();
+    try {
+      db.update(screenshots)
+        .set({
+          ocrStatus: status,
+          ocrNextRunAt: nextRunAt,
+          updatedAt: now,
+        })
+        .where(eq(screenshots.id, id))
+        .run();
+    } catch (error) {
+      if (isSqliteCorruptionError(error)) {
+        logger.error(
+          { error, scheduler: this.name, screenshotId: id },
+          "SQLite corruption detected while updating OCR status; stopping OCR scheduler"
+        );
+        this.stop();
+        return;
+      }
+      throw error;
+    }
 
     this.emit("screenshot:ocr:failed", {
       screenshotId: id,
@@ -395,6 +475,22 @@ export class OcrScheduler extends BaseScheduler {
       return null;
     }
   }
+}
+
+function isSqliteCorruptionError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : JSON.stringify(error);
+  const code = (error as { code?: unknown } | null)?.code;
+
+  if (code === "SQLITE_CORRUPT") {
+    return true;
+  }
+
+  return /disk image is malformed|SQLITE_CORRUPT|file is not a database/i.test(message);
 }
 
 export const ocrScheduler = new OcrScheduler();

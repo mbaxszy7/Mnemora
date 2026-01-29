@@ -12,6 +12,7 @@ const HomePage = lazy(() => import("@/pages/Home"));
 const SettingsPage = lazy(() => import("@/pages/Settings"));
 const SettingsLLMConfigPage = lazy(() => import("@/pages/SettingsLLMConfig"));
 const CaptureSourceSettingsPage = lazy(() => import("@/pages/settings/CaptureSourceSettings"));
+const ContextRulesPage = lazy(() => import("@/pages/settings/ContextRules"));
 const UsagePage = lazy(() => import("@/pages/settings/UsagePage"));
 const SearchResultsPage = lazy(() => import("@/pages/SearchResults"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
@@ -26,6 +27,24 @@ function PageShellSkeleton() {
           <Skeleton className="h-[420px] w-full rounded-xl" />
         </div>
       </main>
+    </div>
+  );
+}
+
+function ContextRulesPageSkeleton() {
+  return (
+    <div className="max-w-4xl mx-auto space-y-6 pb-10">
+      <div className="flex items-center gap-4">
+        <Skeleton className="h-10 w-10 rounded-md" />
+        <div className="space-y-2">
+          <Skeleton className="h-9 w-56" />
+          <Skeleton className="h-4 w-96" />
+        </div>
+        <div className="ml-auto">
+          <Skeleton className="h-9 w-28 rounded-md" />
+        </div>
+      </div>
+      <Skeleton className="w-full h-[520px] rounded-lg" />
     </div>
   );
 }
@@ -195,6 +214,10 @@ export const router = createHashRouter([
           {
             path: "settings/llm-config",
             element: withSuspense(<SettingsLLMConfigPage />, <LLMConfigPageSkeleton />),
+          },
+          {
+            path: "settings/context-rules",
+            element: withSuspense(<ContextRulesPage />, <ContextRulesPageSkeleton />),
           },
           {
             path: "settings/capture-sources",

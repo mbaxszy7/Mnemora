@@ -60,6 +60,40 @@
       }
     }
   },
+  "contextRules": {
+    "title": "Context Rules",
+    "description": "Add markdown rules that will be injected into screenshot-processing prompts",
+    "warning": "These rules are treated as strong constraints, but required output formats (e.g., JSON-only schemas) must still be followed.",
+    "lastUpdated": "Last updated",
+    "enable": {
+      "title": "Enable",
+      "description": "When enabled, rules will be appended to screenshot-processing system prompts."
+    },
+    "tabs": {
+      "edit": "Edit",
+      "preview": "Preview"
+    },
+    "editor": {
+      "label": "Markdown",
+      "characters": "Characters",
+      "placeholder": "{{defaultValue}}"
+    },
+    "buttons": {
+      "reset": "Reset",
+      "save": "Save"
+    },
+    "messages": {
+      "saved": "Saved",
+      "saveFailed": "Failed to save"
+    },
+    "errors": {
+      "tooLong": "Rules are too long",
+      "tooLongDetailed": "Please keep rules within {{max}} characters."
+    },
+    "preview": {
+      "empty": "(empty)"
+    }
+  },
   "dialogs": {
     "confirmExit": {
       "title": "Confirm Exit",

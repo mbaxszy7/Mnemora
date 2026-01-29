@@ -97,6 +97,12 @@ export const userSetting = sqliteTable("user_setting", {
     .default("none"),
   captureManualOverrideUpdatedAt: integer("capture_manual_override_updated_at"),
 
+  contextRulesEnabled: integer("context_rules_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  contextRulesMarkdown: text("context_rules_markdown").notNull().default(""),
+  contextRulesUpdatedAt: integer("context_rules_updated_at"),
+
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

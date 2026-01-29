@@ -19,8 +19,9 @@ export default function RootLayout() {
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       <TitleBar />
+
       <main
-        className="flex-1 container mx-auto px-4 pt-[62px] pb-6 overflow-auto"
+        className="flex-1 container mx-auto px-4 pb-6 overflow-auto"
         style={{ viewTransitionName: "main-content" }}
       >
         <Outlet />

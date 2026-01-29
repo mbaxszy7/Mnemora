@@ -1,4 +1,5 @@
 import { mainI18n } from "../i18n-service";
+import { contextRulesStore } from "../context-rules-store";
 
 export interface VLMUserPromptArgs {
   count: number;
@@ -76,6 +77,27 @@ export interface ActivitySummaryUserPromptArgs {
 
 export interface EventDetailsUserPromptArgs {
   userPromptJson: string;
+}
+
+function injectContextRules(baseSystemPrompt: string): string {
+  const snapshot = contextRulesStore.getSnapshot();
+  if (!snapshot.enabled) {
+    return baseSystemPrompt;
+  }
+  const rules = snapshot.markdown.trim();
+  if (!rules) {
+    return baseSystemPrompt;
+  }
+
+  return `${baseSystemPrompt}
+
+## User Context Rules (MUST FOLLOW)
+
+${rules}
+
+IMPORTANT:
+- You MUST still follow the required output format (e.g., JSON-only). Do NOT add extra prose or markdown fences.
+- If these rules conflict with any required output format / schema constraints in this system prompt, the required output format / schema constraints take priority.`;
 }
 
 // ============================================================================
@@ -266,8 +288,8 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
 
 ### knowledge (可选)
 - 仅当用户正在阅读文档、博客、教程时填充
-- content_type: tech_doc|blog|product_doc|tutorial|api_doc|wiki|other
-- language: "en" | "zh" | "other" ("en"/"zh" 会触发 OCR)
+- content_type：tech_doc|blog|product_doc|tutorial|api_doc|wiki|other
+- language："en" | "zh" | "other" ("en"/"zh" 会触发 OCR)
 - text_region：对 OCR 优化非常重要
 
 ### state_snapshot (可选)
@@ -281,8 +303,8 @@ const VLM_SYSTEM_PROMPT_ZH = `你是一个个人活动追踪系统的专家级�
 
 ### action_items (可选, 中文)
 - 仅当可见明确的待办事项/下一步时
-- priority: "high" | "medium" | "low"
-- source: "explicit" 或 "inferred"
+- priority："high" | "medium" | "low"
+- source："explicit" 或 "inferred"
 - action 字段使用中文描述
 
 ### ui_text_snippets (最多 5 个, 每个 ≤200 字符)
@@ -383,9 +405,9 @@ ${args.appCandidatesJson}
 - 如果无法自信地映射到一个规范应用，请将 app_hint 设置为 null。
 
 ## 项目/工作区识别规则 (关键)
-- 对于编程相关应用（如 VS Code、Cursor、Windsurf、Antigravity），你必须尽力提取 app_context.project_name 与 app_context.project_key，依据可见的窗口标题和屏幕上的项目/工作区提示。
+- 对于编程相关应用（如 VS Code、Cursor、Windsurf、Antigravity），你必须尽力提取 app_context.project_name 和 app_context.project_key，使用可见的窗口标题和屏幕上的项目/工作区提示。
 - 在 IDE 场景中，窗口标题通常包含工作区/仓库信息。优先提取工作区/仓库名，而不是当前文件名。
-- project_key 必须代表项目/工作区身份（跨时间稳定，用于分线索）。如果同时存在多个项目，请选择当前窗口明确所属的那个。
+- project_key 必须代表项目/工作区身份（跨时间稳定）。如果有多个打开的项目，请选择当前窗口明确属于的那个。
 - 如果无法高置信度识别项目，请将 project_name 和 project_key 设为 null。
 
 ## 指令
@@ -495,9 +517,9 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 
 ## 核心概念
 
-- **Thread (线索)**：相关用户活动的连续流（例如，"正在进行 auth-service 重构"）
-- **Node (节点)**：来自单张截图的单个活动快照
-- **Assignment (分配)**：将节点连接到现有的或新的线索
+- **线索 (Thread)**：相关用户活动的连续流（例如，"正在进行 auth-service 重构"）
+- **节点 (Node)**：来自单张截图的单个活动快照
+- **分配 (Assignment)**：将节点连接到现有的或新的线索
 
 ## 原则
 
@@ -510,7 +532,7 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 1. **相同的 project_key** - 最强信号（node.project_key 与 thread.main_project 一致）
 2. **相同的应用上下文** - 强信号
 3. **相关的主题/技术** - 中等信号
-4. **时间接近性**（30 分钟内） - 仅此一项为弱信号
+4. **时间接近性**（30 分钟内）- 仅此一项为弱信号
 
 ## 输出 JSON 模式
 
@@ -530,18 +552,18 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
   "thread_updates": [
     {
       "thread_id": "existing-uuid-here",
-      "current_phase": "正在调试 OAuth2 token 刷新逻辑",
-      "current_focus": "解决 token 刷新时的竞态条件问题"
+      "current_phase": "调试",
+      "current_focus": "OAuth2 token 刷新问题"
     }
   ],
   "new_threads": [
     {
-      "title": "研究 PostgreSQL 查询优化",
-      "summary": "探索分析管道的数据库查询优化技术，提升查询性能",
-      "current_phase": "技术调研阶段",
+      "title": "研究 PostgreSQL 优化",
+      "summary": "探索分析管道的数据库查询优化技术",
+      "current_phase": "研究",
       "node_indices": [1],
       "milestones": [
-        "开始研究 PostgreSQL 查询优化技术以改进分析管道性能"
+        "开始研究 PostgreSQL 查询优化技术"
       ]
     }
   ]
@@ -552,15 +574,15 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 ### assignments (必填，每个输入节点对应一个)
 - node_index：必须匹配输入批次节点的索引（从 0 开始）
 - thread_id：使用 active_threads 中确切的 UUID，或对于新线索使用 "NEW"
-- reason：简要说明为什么这样分配是合理的（**用中文**）
+- reason：简要说明（≤100 字符）为什么这样分配是合理的
 
 ### thread_updates (可选, 所有文本字段用中文)
 - 仅当节点活动改变了线索状态时包含
 - title：如果活动揭示了更好的线索描述，请更新（中文）
 - summary：更新以反映最新进展（中文）
-- current_phase：必须是高信息量的文本（例如，"正在设计 OAuth2 刷新逻辑" 而不仅仅是 "编码"）
+- current_phase：必须是高信息量的文本（例如，"设计 OAuth2 刷新逻辑" 而不仅仅是 "编码"）
 - current_focus：当前具体的关注领域（高信息量，中文）
-- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，"经过 2 小时的调试，成功解决了 auth-service 的 token 刷新竞态条件"）
+- new_milestone：如果检测到重大进展，请添加。必须提供丰富且具有描述性的里程碑（例如，"成功解决了 auth-service 的 token 刷新竞态条件问题"）
 
 ### new_threads (如果任何节点的 thread_id 为 "NEW"，则必填)
 - title：描述性标题（中文）
@@ -622,10 +644,10 @@ const THREAD_LLM_USER_PROMPT_ZH = (
 
 ## 当前时间上下文
 当前时间：${args.now.toISOString()}
-当前 Unix 时间戳 (ms)：${args.nowTs}
+当前 Unix 时间戳（毫秒）：${args.nowTs}
 时区：${args.timeZone}
 
-## 时间参考点 (Unix 毫秒，请使用这些进行时间计算！)
+## 时间参考点（Unix 毫秒，用于时间计算！）
 - 今天开始 (00:00:00 本地)：${args.todayStart}
 - 今天结束 (23:59:59 本地)：${args.todayEnd}
 - 昨天开始：${args.yesterdayStart}
@@ -718,11 +740,11 @@ const QUERY_UNDERSTANDING_SYSTEM_PROMPT_ZH = `你是一个搜索查询分析器�
 3. **filters_patch.app_hint**：仅当用户提到特定应用程序时才包含。如果提供，它必须在提示中提供的“规范应用候选”列表中。
 4. **不要在 filters_patch 中包含 thread_id** - 这是受用户控制的上下文。
 5. **kind_hint**：推断用户正在寻找的信息类型。
-6. **confidence**：如果查询含糊不清或对提取不确定，请设置较低的置信度。
+6. **confidence**：如果查询含糊不清或你对提取不确定，请设置较低的置信度。
 7. **extracted_entities** 规则：
    - 整个查询中 0-20 个规范的命名实体。
-   - 仅包含有意义的命名实体（人物/项目/团队/组织/应用/仓库/Issue/任务单，如 "ABC-123"）。
-   - type 必须为：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other
+   - 仅包含有意义的命名实体（人物/项目/团队/组织/应用/仓库/问题/任务单，如 "ABC-123"）。
+   - type 必须为：person, project, team, org, jira_id, pr_id, commit, document_id, url, repo, other。
    - 排除通用技术术语、库、命令、文件路径和文件夹，如 "npm", "node_modules", "dist", ".git"。
    - 排除没有意义名称的 URL。
    - 去重并优先使用规范名称。
@@ -798,7 +820,7 @@ const ANSWER_SYNTHESIS_SYSTEM_PROMPT_ZH = `你是一个上下文感知的答案�
 
 ## 规则
 
-1. **忠实度**：仅使用提供的上下文中的信息。不得捏造事实。
+1. **忠实度**：仅使用提供的上下文中的信息。不要编造事实。
 2. **本地时间强制要求**：答案（正文、要点）中的所有时间必须采用用户的本地时间格式（例如 "14:30" 或 "2:30 PM"）。
 3. **必须包含引用**：每个声明必须至少有一个引用。使用输入中的 node_id 或 screenshot_id。
 4. **引用文段**：来自源的短摘录 (≤80 字符) 作为证据。不得包含敏感信息。
@@ -864,8 +886,8 @@ ${args.canonicalCandidatesJson}
 
 ## 时间计算规则（关键）
 - 始终使用上面的时间参考点计算 filters_patch.time_range。
-- 对于 "今天" (today)，直接使用今天开始和今天结束时间戳。
-- 对于 "昨天" (yesterday)，直接使用昨天开始和昨天结束时间戳。
+- 对于 "今天"，直接使用今天开始和今天结束时间戳。
+- 对于 "昨天"，直接使用昨天开始和昨天结束时间戳。
 - 不要从头开始计算 Unix 时间戳 - 使用提供的参考点！
 
 用户查询："${args.userQuery}"
@@ -978,7 +1000,7 @@ MUST contain exactly these 4 sections in order:
 
 #### ## Documents
 - Wiki, docs, Confluence, README, API docs.
-- **CRITICAL**: If a context node has non-null \`knowledge_json\`, summarize its content using its specific fields: \`content_type\`, \`source_url\`, \`project_or_library\`, and \`key_insights\`. Provide a coherent summary of what was learned or referenced.
+- **CRITICAL**: If a context node includes a non-null knowledge block, summarize what was learned or referenced (type of content, source, related project/library, and key takeaways) in natural language. Do NOT mention any JSON key names in the generated text.
 - EXCLUDE source code files (.ts, .js, etc.).
 - Include URLs ONLY if visible.
 - If none, output: "- None"
@@ -1001,18 +1023,19 @@ MUST contain exactly these 4 sections in order:
 - Identify distinct activity periods within the window
 - kind: Match activity type
 - start_offset_min / end_offset_min: Minutes from window start (0-20)
-- node_ids: Context node IDs that belong to this event
-- **MANDATORY**: For each thread in \`long_threads\` input, you MUST generate an event with its \`thread_id\`. Use the thread's title, summary, and context to generate accurate event title and description.
+- node_ids: IDs of the evidence items included in this event (use the id values from the provided evidence list)
+- **MANDATORY**: For each required ongoing thread in the input, you MUST generate an event and populate its \`thread_id\`. Use the thread's title, summary, and evidence to generate accurate event title and description.
 - For non-long-thread events, \`thread_id\` can be omitted
 
 ## Hard Rules
 
 1. Output MUST be valid JSON only. No markdown fences.
-2. All claims MUST be grounded in provided context nodes.
+2. All claims MUST be grounded in provided evidence.
 3. summary MUST contain exactly 4 sections in specified order.
 4. stats MUST match input - do NOT invent apps/entities.
 5. NEVER invent URLs not visible in evidence.
-6. **CRITICAL**: For each thread in \`long_threads\` input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.`;
+6. **CRITICAL**: For each required ongoing thread in the input, you MUST generate a corresponding event with that \`thread_id\`. This is non-negotiable.
+7. In all generated text fields (title, summary, highlights, description), NEVER mention the names of any input fields/keys, internal schema names, or variable names. Do NOT talk about data formats (JSON/arrays/objects/fields/keys). Refer to them generically as evidence/records/notes.`;
 
 const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手。你的工作是总结用户在 20 分钟时间窗口内的活动。
 
@@ -1029,7 +1052,7 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 
 {
   "title": "调试 auth-service 的 OAuth 实现",
-  "summary": "## 核心任务与项目\\n- 在 auth-service 中调试 OAuth2 token 刷新问题...",
+  "summary": "## 核心任务与项目\n- 调试 auth-service 的 OAuth2 token 刷新问题...",
   "highlights": [
     "修复了 OAuth token 刷新 bug",
     "更新了 API 文档"
@@ -1041,7 +1064,7 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
   "events": [
     {
       "title": "调试 OAuth2 实现",
-      "kind": "debugging",
+      "kind": "调试",
       "start_offset_min": 0,
       "end_offset_min": 15,
       "confidence": 8,
@@ -1074,7 +1097,7 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 
 #### ## 文档
 - Wiki, 文档, Confluence, README, API 文档。
-- **关键点**：如果上下文节点有非空的 \`knowledge_json\`，请使用其特定字段总结其内容：\`content_type\`、\`source_url\`、\`project_or_library\` 和 \`key_insights\`。提供对所学或所引用内容连贯的总结。
+- **关键点**：如果某条证据包含非空的知识块，请用自然语言总结其内容（内容类型、来源、相关项目/库、关键要点），并给出连贯的“学到了/参考了什么”。不要在生成的文本中提到任何 JSON 字段名。
 - 排除源代码文件（.ts, .js 等）。
 - 仅在可见时包含 URL。
 - 如果没有，输出："- 无"
@@ -1097,18 +1120,19 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 - 识别时间窗口内不同的活动阶段
 - kind：匹配活动类型
 - start_offset_min / end_offset_min：距离窗口开始的分钟数 (0-20)
-- node_ids：属于此事件的上下文节点 ID
-- **强制性**：对于输入中 \`long_threads\` 的每个线索，你必须使用其 \`thread_id\` 生成一个事件。使用该线索的标题、总结和上下文来生成准确的事件标题和描述。
-- 对于非长线索事件，可以省略 \`thread_id\`
+- node_ids：此事件包含的证据条目 ID（使用提供的证据列表里的 id 值）
+- **强制性**：对于输入中标记为“必须覆盖”的每个长线索，你必须生成一个事件并填入其 \`thread_id\`。使用该线索的标题、总结和证据来生成准确的事件标题和描述。
+- 对于非长线索事件，\`thread_id\` 可以省略
 
 ## 硬性规则
 
 1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
-2. 所有声明必须基于提供的上下文节点。
+2. 所有声明必须基于提供的证据。
 3. summary 必须以指定的顺序包含准确的 4 个部分。
 4. stats 必须匹配输入 - 不要编造应用/实体。
 5. 绝不编造证据中不可见的 URL。
-6. **关键点**：对于输入中 \`long_threads\` 的每个线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。`;
+6. **关键点**：对于输入中标记为“必须覆盖”的每个长线索，你必须生成一个对应的事件并带上该 \`thread_id\`。这是不可商榷的。
+7. 在所有生成的文本字段（title、summary、highlights、description）中，绝不提及任何输入 JSON 的字段名/键名、内部 schema 名称或变量名。不要讨论数据格式（JSON/数组/对象/字段/键）。请用“证据/记录/线索/笔记”等自然语言泛称。`;
 
 const ACTIVITY_SUMMARY_USER_PROMPT_EN = (
   args: ActivitySummaryUserPromptArgs
@@ -1162,19 +1186,19 @@ const ACTIVITY_SUMMARY_USER_PROMPT_ZH = (
 - 开始：${args.windowStart} (${args.windowStartLocal})
 - 结束：${args.windowEnd} (${args.windowEndLocal})
 
-## 此窗口内的上下文节点
+## 此窗口内的证据条目
 ${args.contextNodesJson}
 
-## 长线索 (必须为这些生成事件)
+## 必须覆盖的长线索 (每个线索都必须生成 1 个事件)
 ${args.longThreadsJson}
 
 ## 统计数据
 ${args.statsJson}
 
 ## 指令
-1. 分析此窗口内的所有上下文节点。
+1. 分析此窗口内的所有证据条目。
 2. 生成包含准确 4 个部分的综合总结。
-3. **强制性**：对于 “长线索” 中的每个线索，生成一个带有其 thread_id 的事件。
+3. **强制性**：对于“必须覆盖的长线索”中的每个线索，生成一个带有其 thread_id 的事件。
 4. 识别额外的不同活动事件（总计 1-3 个事件，包含长线索事件）。
 5. 仅返回 JSON 对象。`;
 
@@ -1186,26 +1210,27 @@ Your job: Generate a structured Markdown report for a LONG EVENT (duration ≥ 2
 
 The \`details\` field MUST contain exactly these three sections in order:
 
-### 1. Session Activity (本阶段工作)
-- **Scope**: Focus ONLY on the activities captured in \`window_nodes\` (THIS specific time window).
-- **Content**: Summarize what the user achieved, specific files modified, key decisions made, and technical issues encountered during this session.
-- **Style**: Bullet points preferred.
+### 1. Session Activity
+- **Scope**: Focus ONLY on the session evidence from this specific time window, and only what is relevant to the event's thread.
+- **Content**: Capture the most important actions/outcomes (e.g. what was changed, decisions, issues), but do NOT enumerate everything.
+- **Style**: Bullet list with a maximum of 6 top-level bullets. No nested bullets. If there are more candidates, pick the most important.
 
-### 2. Current Status & Progress (当前最新进度)
-- **Scope**: Use \`thread_latest_nodes\` and \`thread\` context to determine the absolute latest state.
-- **Content**: What is the definitive current status of this task/project? What milestones have been reached overall? Are there active blockers or pending reviews?
-- **Style**: Descriptive summary.
+### 2. Current Status & Progress 
+- **Scope**: Use the latest thread-related evidence provided to determine the absolute current state.
+- **Content**: State the most important progress, current state, and any key blocker/uncertainty.
+- **Style**: Bullet list with a maximum of 6 top-level bullets. No nested bullets. If there are more candidates, pick the most important.
 
-### 3. Future Focus & Next Steps (后续关注)
-- **Scope**: Infer based on \`action_items_json\` and overall thread trajectory.
-- **Content**: Explicitly list what the user should focus on next. Include context that helps the user "pick up where they left off" quickly.
-- **Style**: Actionable tasks list.
+### 3. Future Focus & Next Steps
+- **Scope**: Infer based on the provided action items (if any) and the overall thread trajectory.
+- **Content**: List only the highest-impact next steps to help the user pick up quickly.
+- **Style**: Actionable task list with a maximum of 3 top-level bullets. No nested bullets. Pick the most important.
 
 ## Quality Requirements
 
-- **Faithful**: Do NOT invent facts. Only use provided context nodes.
+- **Faithful**: Do NOT invent facts. Only use provided evidence.
 - **Concise**: Use high-information density language. Avoid generic phrases.
 - **Context-Aware**: Clearly distinguish between what happened *now* vs the *overall* progress.
+- **No Field Names**: Never mention any input field/key names or internal schema names in the Markdown content.
 
 ## Hard Output Requirements
 
@@ -1224,26 +1249,27 @@ const EVENT_DETAILS_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助手�
 
 \`details\` 字段必须按顺序准确包含这三个部分：
 
-### 1. 本阶段工作 (Session Activity)
-- **范围**：仅关注 \`window_nodes\` 中捕捉到的活动（此特定时间窗口）。
-- **内容**：总结用户在本阶段取得的成就、修改的具体文件、做出的关键决定以及遇到的技术问题。
-- **风格**：建议使用列表（Bullet points）。
+### 1. 本阶段工作
+- **范围**：仅关注此特定时间窗口内的证据，并且只写与该事件所对应线索相关的内容。
+- **内容**：提炼最重要的动作/结果（例如改了什么、关键决定、遇到的问题），不要穷举所有细节。
+- **风格**：列表（Bullet points），最多 6 条（仅顶层条目，不要嵌套）。如候选过多，只保留最重要的。
 
-### 2. 当前最新进度 (Current Status & Progress)
-- **范围**：使用 \`thread_latest_nodes\` 和 \`thread\` 上下文来确定绝对的最新状态。
-- **内容**：此任务/项目的确定性当前状态是什么？总体上已经达到了哪些里程碑？是否存在活跃的阻碍因素或待处理的审查？
-- **风格**：描述性总结。
+### 2. 当前最新进度
+- **范围**：使用提供的“线索最新证据”来判断绝对的最新状态。
+- **内容**：只保留最重要的进展、当前状态、以及关键阻碍/不确定点。
+- **风格**：列表（Bullet points），最多 6 条（仅顶层条目，不要嵌套）。如候选过多，只保留最重要的。
 
-### 3. 后续关注 (Future Focus & Next Steps)
-- **范围**：基于 \`action_items_json\` 和整体线索轨迹进行推断。
-- **内容**：明确列出用户下一步应该关注的内容。包含帮助用户快速“重拾进度”的上下文。
-- **风格**：可操作的任务列表。
+### 3. 后续关注
+- **范围**：基于提供的行动项（如有）以及整体线索轨迹推断。
+- **内容**：只给出最重要、最有影响力的后续关注点，帮助用户快速“重拾进度”。
+- **风格**：可操作的任务列表，最多 3 条（仅顶层条目，不要嵌套）。只保留最重要的。
 
 ## 质量要求
 
-- **忠实度**：不要编造事实。仅使用提供的上下文节点。
+- **忠实度**：不要编造事实。仅使用提供的证据条目。
 - **简洁性**：使用高信息密度的语言。避免使用空洞的短语。
 - **上下文感知**：清晰区分“现在”发生的活动与“整体”进度。
+- **不提字段名**：在 Markdown 内容中绝不提及任何输入 JSON 的字段名/键名或内部 schema 名称。
 
 ## 硬性输出要求
 
@@ -1258,7 +1284,9 @@ const EVENT_DETAILS_USER_PROMPT_ZH = (args: EventDetailsUserPromptArgs) => `${ar
 
 export const promptTemplates = {
   getVLMSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN" ? VLM_SYSTEM_PROMPT_ZH : VLM_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getVLMUserPrompt(args: VLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1266,9 +1294,11 @@ export const promptTemplates = {
       : VLM_USER_PROMPT_EN(args);
   },
   getThreadLlmSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? THREAD_LLM_SYSTEM_PROMPT_ZH
-      : THREAD_LLM_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? THREAD_LLM_SYSTEM_PROMPT_ZH
+        : THREAD_LLM_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getThreadLlmUserPrompt(args: ThreadLLMUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1296,9 +1326,11 @@ export const promptTemplates = {
       : ANSWER_SYNTHESIS_USER_PROMPT_EN(args);
   },
   getActivitySummarySystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
-      : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH
+        : ACTIVITY_SUMMARY_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getActivitySummaryUserPrompt(args: ActivitySummaryUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"
@@ -1306,9 +1338,11 @@ export const promptTemplates = {
       : ACTIVITY_SUMMARY_USER_PROMPT_EN(args);
   },
   getEventDetailsSystemPrompt(): string {
-    return mainI18n.getCurrentLanguage() === "zh-CN"
-      ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
-      : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? EVENT_DETAILS_SYSTEM_PROMPT_ZH
+        : EVENT_DETAILS_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
   },
   getEventDetailsUserPrompt(args: EventDetailsUserPromptArgs): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"

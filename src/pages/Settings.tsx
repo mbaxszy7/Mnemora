@@ -16,6 +16,7 @@ import { useTheme } from "@/providers/theme-provider";
 import {
   Languages,
   Bot,
+  ScrollText,
   ChevronRight,
   Shield,
   CheckCircle,
@@ -347,6 +348,26 @@ export default function SettingsPage() {
               {t("llmConfig.title")}
             </Label>
             <p className="text-sm text-muted-foreground">{t("llmConfig.description")}</p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
+
+        {/* Context Rules */}
+        <button
+          onClick={() => navigate("/settings/context-rules", { type: "slide-left", duration: 300 })}
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <ScrollText className="h-4 w-4" />
+              {t("contextRules.title", "Context Rules")}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t(
+                "contextRules.description",
+                "Add markdown rules that will be injected into screenshot-processing prompts"
+              )}
+            </p>
           </div>
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>

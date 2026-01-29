@@ -60,6 +60,40 @@
       }
     }
   },
+  "contextRules": {
+    "title": "上下文规则",
+    "description": "输入 Markdown 规则，这些规则会注入到截图处理相关的提示词中",
+    "warning": "这些规则会被视为强约束，但仍必须遵循系统要求的输出格式（例如仅输出 JSON 的 schema）。",
+    "lastUpdated": "上次更新",
+    "enable": {
+      "title": "启用",
+      "description": "启用后，规则会附加到截图处理相关的系统提示词中。"
+    },
+    "tabs": {
+      "edit": "编辑",
+      "preview": "预览"
+    },
+    "editor": {
+      "label": "Markdown",
+      "characters": "字符数",
+      "placeholder": "{{defaultValue}}"
+    },
+    "buttons": {
+      "reset": "重置",
+      "save": "保存"
+    },
+    "messages": {
+      "saved": "已保存",
+      "saveFailed": "保存失败"
+    },
+    "errors": {
+      "tooLong": "规则内容过长",
+      "tooLongDetailed": "请将规则控制在 {{max}} 个字符以内。"
+    },
+    "preview": {
+      "empty": "（空）"
+    }
+  },
   "dialogs": {
     "confirmExit": {
       "title": "确认退出",

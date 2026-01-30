@@ -32,6 +32,11 @@ export interface ThreadLLMUserPromptArgs {
   weekAgo: number;
 }
 
+export interface ThreadBriefUserPromptArgs {
+  threadJson: string;
+  evidenceJson: string;
+}
+
 export interface QueryUnderstandingUserPromptArgs {
   nowDate: Date;
   nowTs: number;
@@ -509,7 +514,8 @@ const THREAD_LLM_SYSTEM_PROMPT_EN = `You are an activity thread analyzer. Your t
 8. assignments MUST be sorted by node_index ascending.
 9. Only use thread_id values that appear in the Active Threads input; do NOT invent UUIDs.
 10. Prefer fewer threads: if multiple batch nodes describe the same new activity, group them into one new_threads entry.
-11. new_threads[].node_indices MUST contain exactly the nodes assigned to that new thread (no extra nodes; no missing nodes).`;
+11. new_threads[].node_indices MUST contain exactly the nodes assigned to that new thread (no extra nodes; no missing nodes).
+12. If the first thread in Active Threads reflects the user's pinned focus, treat it as a strong bias, not a hard override. Only assign nodes to it if the evidence matches.`;
 
 const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的任务是将上下文节点组织成连贯的活动线索（Threads）。
 
@@ -604,7 +610,8 @@ const THREAD_LLM_SYSTEM_PROMPT_ZH = `你是一个活动线索分析器。你的�
 9. 仅使用 Active Threads 输入中出现的 thread_id 值；不要发明 UUID。
 10. 优先减少线索数量：如果多个批次节点描述相同的活动，请将它们归类到一个 new_threads 条目中。
 11. new_threads[].node_indices 必须准确包含分配给该新线索的节点（不得有多余节点，也不得缺失节点）。
-12. **所有描述性文本字段必须使用中文。**`;
+12. 如果 Active Threads 的第一个线索反映了用户的 pin 聚焦，请将其视为强偏置而非强制覆盖；只有当证据匹配时才分配到该线索。
+13. **所有描述性文本字段必须使用中文。**`;
 
 const THREAD_LLM_USER_PROMPT_EN = (
   args: ThreadLLMUserPromptArgs
@@ -669,6 +676,68 @@ ${args.batchNodesJson}
 3. 如果这显然是一个不同的活动，请使用 "NEW"。
 4. 使用高信息量、丰富的描述更新线索元数据（阶段、关注点、里程碑）。
 5. 仅返回 JSON 对象 - 不要有多余的文字。`;
+
+// =========================================================================
+// Thread Brief Prompts
+// =========================================================================
+
+const THREAD_BRIEF_SYSTEM_PROMPT_EN = `You are a professional assistant that writes a concise brief report for one activity thread.
+
+## Output JSON Schema
+
+{
+  "brief_markdown": string,
+  "highlights": string[],
+  "current_focus": string,
+  "next_steps": string[]
+}
+
+## Rules
+
+1. Output MUST be valid JSON only. No markdown fences.
+2. All claims MUST be grounded in the provided evidence.
+3. The brief_markdown must be short and high-information density.
+4. highlights: 0-5 items, each ≤ 120 chars.
+5. next_steps: 0-3 items, each ≤ 160 chars.
+6. NEVER mention input field/key names or internal schema names in generated text.`;
+
+const THREAD_BRIEF_SYSTEM_PROMPT_ZH = `你是一个专业助手，为单个活动线索撰写“本线索简报”。
+
+**重要：你必须使用中文撰写所有文本内容。**
+
+## 输出 JSON 模式
+
+{
+  "brief_markdown": string,
+  "highlights": string[],
+  "current_focus": string,
+  "next_steps": string[]
+}
+
+## 规则
+
+1. 输出必须仅为有效的 JSON。不要使用 markdown 围栏。
+2. 所有结论必须基于提供的证据条目。
+3. brief_markdown 必须简洁、高信息密度。
+4. highlights：0-5 条，每条 ≤ 120 字。
+5. next_steps：0-3 条，每条 ≤ 160 字。
+6. 在生成的文本中绝不提及任何输入字段/键名或内部 schema 名称。`;
+
+const THREAD_BRIEF_USER_PROMPT_EN = (args: ThreadBriefUserPromptArgs) => `## Thread
+${args.threadJson}
+
+## Evidence (chronological order)
+${args.evidenceJson}
+
+Write the brief strictly following the output schema.`;
+
+const THREAD_BRIEF_USER_PROMPT_ZH = (args: ThreadBriefUserPromptArgs) => `## 线索
+${args.threadJson}
+
+## 证据条目（按时间顺序输入；请只基于证据撰写）
+${args.evidenceJson}
+
+请严格按输出 JSON 模式撰写简报。`;
 
 // =========================================================================
 // Deep Search Prompts
@@ -1025,6 +1094,7 @@ MUST contain exactly these 4 sections in order:
 - start_offset_min / end_offset_min: Minutes from window start (0-20)
 - node_ids: IDs of the evidence items included in this event (use the id values from the provided evidence list)
 - **MANDATORY**: For each required ongoing thread in the input, you MUST generate an event and populate its \`thread_id\`. Use the thread's title, summary, and evidence to generate accurate event title and description.
+- For long-thread events, \`events[i].title\` MUST NOT copy the long thread title verbatim.
 - For non-long-thread events, \`thread_id\` can be omitted
 
 ## Hard Rules
@@ -1122,6 +1192,7 @@ const ACTIVITY_SUMMARY_SYSTEM_PROMPT_ZH = `你是一个专业的活动分析助�
 - start_offset_min / end_offset_min：距离窗口开始的分钟数 (0-20)
 - node_ids：此事件包含的证据条目 ID（使用提供的证据列表里的 id 值）
 - **强制性**：对于输入中标记为“必须覆盖”的每个长线索，你必须生成一个事件并填入其 \`thread_id\`。使用该线索的标题、总结和证据来生成准确的事件标题和描述。
+- 对于长线索事件，\`events[i].title\`不得原样复用该长线索的标题。
 - 对于非长线索事件，\`thread_id\` 可以省略
 
 ## 硬性规则
@@ -1304,6 +1375,18 @@ export const promptTemplates = {
     return mainI18n.getCurrentLanguage() === "zh-CN"
       ? THREAD_LLM_USER_PROMPT_ZH(args)
       : THREAD_LLM_USER_PROMPT_EN(args);
+  },
+  getThreadBriefSystemPrompt(): string {
+    const base =
+      mainI18n.getCurrentLanguage() === "zh-CN"
+        ? THREAD_BRIEF_SYSTEM_PROMPT_ZH
+        : THREAD_BRIEF_SYSTEM_PROMPT_EN;
+    return injectContextRules(base);
+  },
+  getThreadBriefUserPrompt(args: ThreadBriefUserPromptArgs): string {
+    return mainI18n.getCurrentLanguage() === "zh-CN"
+      ? THREAD_BRIEF_USER_PROMPT_ZH(args)
+      : THREAD_BRIEF_USER_PROMPT_EN(args);
   },
   getQueryUnderstandingSystemPrompt(): string {
     return mainI18n.getCurrentLanguage() === "zh-CN"

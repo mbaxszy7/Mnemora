@@ -12,6 +12,7 @@ import { registerPermissionHandlers } from "./ipc/permission-handlers";
 import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
 import { registerUserSettingsHandlers } from "./ipc/user-settings-handlers";
 import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
+import { registerThreadsHandlers } from "./ipc/threads-handlers";
 import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
 import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
@@ -266,6 +267,7 @@ class AppLifecycleController {
     registerCaptureSourceSettingsHandlers();
     registerUserSettingsHandlers();
     registerContextGraphHandlers();
+    registerThreadsHandlers();
     registerUsageHandlers();
     registerActivityMonitorHandlers();
     registerMonitoringHandlers();

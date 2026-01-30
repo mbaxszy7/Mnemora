@@ -412,6 +412,39 @@
       }
     }
   },
+  "threadLens": {
+    "title": "Active focus",
+    "state": {
+      "preview": "Preview",
+      "temporaryFocus": "Temporary focus",
+      "pinned": "Pinned",
+      "auto": "Auto"
+    },
+    "actions": {
+      "clearPreview": "Clear preview",
+      "clearTemporaryFocus": "Clear temporary focus",
+      "refresh": "Refresh",
+      "pin": "Pin",
+      "unpin": "Unpin"
+    },
+    "tooltips": {
+      "preview": "Temporary focus. You are previewing a different thread without pinning it.",
+      "temporaryFocus": "Temporary focus. You are viewing a different thread without pinning it.",
+      "pin": "Pinning sets a persistent focus thread. It will be preferred when resolving the active thread and used as context for the thread lens.",
+      "currentPhase": "Current phase: {{phase}}"
+    },
+    "untitled": "Untitled thread",
+    "brief": {
+      "title": "Thread brief",
+      "loading": "Loading…",
+      "unavailableTitle": "Brief unavailable",
+      "unavailableBody": "The brief could not be generated. Check LLM configuration or open Monitoring Dashboard for diagnostics.",
+      "errorTitle": "Brief failed",
+      "errorBody": "The brief request failed. Open Monitoring Dashboard to see the latest AI request error.",
+      "openMonitoring": "Monitoring",
+      "retry": "Retry"
+    }
+  },
   "searchResults": {
     "noResults": "No results",
     "noResultsDescription": "Your search did not return any results",

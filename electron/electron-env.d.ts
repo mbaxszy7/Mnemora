@@ -30,6 +30,56 @@ interface Window {
     getLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
     getSystemLanguage(): Promise<import("../shared/i18n-types").SupportedLanguage>;
   };
+  threadsApi: {
+    getActiveState: () => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetActiveStateResponse
+      >
+    >;
+    getActiveCandidates: () => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetActiveCandidatesResponse
+      >
+    >;
+    getResolvedActive: () => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetResolvedActiveResponse
+      >
+    >;
+    pin: (
+      req: import("../shared/thread-lens-types").ThreadsPinRequest
+    ) => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsPinResponse
+      >
+    >;
+    unpin: () => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsUnpinResponse
+      >
+    >;
+    get: (
+      req: import("../shared/thread-lens-types").ThreadsGetByIdRequest
+    ) => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetResponse
+      >
+    >;
+    list: (
+      req: import("../shared/thread-lens-types").ThreadsListRequest
+    ) => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsListResponse
+      >
+    >;
+    getBrief: (
+      req: import("../shared/thread-lens-types").ThreadsGetBriefRequest
+    ) => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetBriefResponse
+      >
+    >;
+  };
   databaseApi: {
     settings: {
       get(key: string): Promise<string | null>;

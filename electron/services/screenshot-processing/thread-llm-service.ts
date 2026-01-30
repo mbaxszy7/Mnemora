@@ -1,8 +1,8 @@
-import { desc, eq, ne } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { generateObject, NoObjectGeneratedError } from "ai";
 
 import { getDb } from "../../database";
-import { contextNodes, threads } from "../../database/schema";
+import { contextNodes } from "../../database/schema";
 import { getLogger } from "../logger";
 import { aiRuntimeService } from "../ai-runtime-service";
 import { AISDKService } from "../ai-sdk-service";
@@ -11,6 +11,7 @@ import { aiRequestTraceBuffer } from "../monitoring/ai-request-trace";
 
 import { processingConfig } from "./config";
 import { promptTemplates } from "./prompt-templates";
+import { threadsService } from "./threads-service";
 import {
   ThreadLLMOutputSchema,
   ThreadLLMOutputProcessedSchema,
@@ -33,20 +34,6 @@ type BatchNodeRow = {
   keywords: string;
 };
 
-type ThreadRow = {
-  id: string;
-  title: string;
-  summary: string;
-  currentPhase: string | null;
-  currentFocus: string | null;
-  startTime: number;
-  lastActiveAt: number;
-  durationMs: number;
-  nodeCount: number;
-  mainProject: string | null;
-  status: "active" | "inactive" | "closed";
-};
-
 export class ThreadLlmService {
   async assignForBatch(options: { batchDbId: number; batchNodes: BatchNodeRow[] }): Promise<{
     output: ThreadLLMOutput;
@@ -56,7 +43,7 @@ export class ThreadLlmService {
     void options.batchDbId;
     const now = new Date();
 
-    const activeThreads = this.loadActiveThreads(db);
+    const activeThreads = await threadsService.getActiveThreadCandidatesWithPinned();
     const threadRecentNodes = this.loadThreadRecentNodes(
       db,
       activeThreads.map((t) => t.id)
@@ -239,40 +226,6 @@ export class ThreadLlmService {
       clearTimeout(timeoutId);
       release();
     }
-  }
-
-  private loadActiveThreads(db: ReturnType<typeof getDb>): ThreadRow[] {
-    const base = db
-      .select({
-        id: threads.id,
-        title: threads.title,
-        summary: threads.summary,
-        currentPhase: threads.currentPhase,
-        currentFocus: threads.currentFocus,
-        startTime: threads.startTime,
-        lastActiveAt: threads.lastActiveAt,
-        durationMs: threads.durationMs,
-        nodeCount: threads.nodeCount,
-        mainProject: threads.mainProject,
-        status: threads.status,
-      })
-      .from(threads);
-
-    const active = base
-      .where(eq(threads.status, "active"))
-      .orderBy(desc(threads.lastActiveAt))
-      .limit(processingConfig.thread.maxActiveThreads)
-      .all();
-
-    if (active.length > 0) {
-      return active;
-    }
-
-    return base
-      .where(ne(threads.status, "closed"))
-      .orderBy(desc(threads.lastActiveAt))
-      .limit(processingConfig.thread.fallbackRecentThreads)
-      .all();
   }
 
   private loadThreadRecentNodes(

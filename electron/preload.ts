@@ -24,6 +24,20 @@ import type {
   ExpandedContextNode,
   ScreenshotEvidence,
 } from "@shared/context-types";
+import type {
+  ThreadsGetActiveCandidatesResponse,
+  ThreadsGetActiveStateResponse,
+  ThreadsGetBriefRequest,
+  ThreadsGetBriefResponse,
+  ThreadsGetByIdRequest,
+  ThreadsGetResolvedActiveResponse,
+  ThreadsGetResponse,
+  ThreadsListRequest,
+  ThreadsListResponse,
+  ThreadsPinRequest,
+  ThreadsPinResponse,
+  ThreadsUnpinResponse,
+} from "@shared/thread-lens-types";
 import type { SchedulerStatePayload } from "@shared/ipc-types";
 import type {
   TimelineRequest,
@@ -240,6 +254,46 @@ const userSettingsApi: UserSettingsApi = {
 };
 
 contextBridge.exposeInMainWorld("userSettingsApi", userSettingsApi);
+
+export interface ThreadsApi {
+  getActiveState(): Promise<IPCResult<ThreadsGetActiveStateResponse>>;
+  getActiveCandidates(): Promise<IPCResult<ThreadsGetActiveCandidatesResponse>>;
+  getResolvedActive(): Promise<IPCResult<ThreadsGetResolvedActiveResponse>>;
+  pin(request: ThreadsPinRequest): Promise<IPCResult<ThreadsPinResponse>>;
+  unpin(): Promise<IPCResult<ThreadsUnpinResponse>>;
+  get(request: ThreadsGetByIdRequest): Promise<IPCResult<ThreadsGetResponse>>;
+  list(request: ThreadsListRequest): Promise<IPCResult<ThreadsListResponse>>;
+  getBrief(request: ThreadsGetBriefRequest): Promise<IPCResult<ThreadsGetBriefResponse>>;
+}
+
+const threadsApi: ThreadsApi = {
+  async getActiveState(): Promise<IPCResult<ThreadsGetActiveStateResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_ACTIVE_STATE);
+  },
+  async getActiveCandidates(): Promise<IPCResult<ThreadsGetActiveCandidatesResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_ACTIVE_CANDIDATES);
+  },
+  async getResolvedActive(): Promise<IPCResult<ThreadsGetResolvedActiveResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_RESOLVED_ACTIVE);
+  },
+  async pin(request: ThreadsPinRequest): Promise<IPCResult<ThreadsPinResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_PIN, request);
+  },
+  async unpin(): Promise<IPCResult<ThreadsUnpinResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_UNPIN);
+  },
+  async get(request: ThreadsGetByIdRequest): Promise<IPCResult<ThreadsGetResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET, request);
+  },
+  async list(request: ThreadsListRequest): Promise<IPCResult<ThreadsListResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_LIST, request);
+  },
+  async getBrief(request: ThreadsGetBriefRequest): Promise<IPCResult<ThreadsGetBriefResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_BRIEF, request);
+  },
+};
+
+contextBridge.exposeInMainWorld("threadsApi", threadsApi);
 
 // --------- Expose Capture Source Settings API to the Renderer process ---------
 export interface CaptureSourceApi {

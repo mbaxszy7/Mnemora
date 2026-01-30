@@ -413,6 +413,39 @@
       }
     }
   },
+  "threadLens": {
+    "title": "当前焦点",
+    "state": {
+      "preview": "预览",
+      "temporaryFocus": "临时焦点",
+      "pinned": "已固定",
+      "auto": "自动"
+    },
+    "actions": {
+      "clearPreview": "清除预览",
+      "clearTemporaryFocus": "清除临时焦点",
+      "refresh": "刷新",
+      "pin": "固定",
+      "unpin": "取消固定"
+    },
+    "tooltips": {
+      "preview": "临时焦点：你正在查看另一个线程，但不会写入固定（Pin）。",
+      "temporaryFocus": "临时焦点：你正在查看另一个线程，但不会写入固定（Pin）。",
+      "pin": "固定后会设置一个持久焦点线程：解析当前 active thread 时会优先使用，并作为 Thread Lens 的上下文参考。",
+      "currentPhase": "当前阶段：{{phase}}"
+    },
+    "untitled": "未命名线程",
+    "brief": {
+      "title": "线程简报",
+      "loading": "生成中…",
+      "unavailableTitle": "简报不可用",
+      "unavailableBody": "当前无法生成简报。请检查 LLM 配置，或打开监控面板查看诊断信息。",
+      "errorTitle": "简报生成失败",
+      "errorBody": "简报请求失败。可打开监控面板查看最近一次 AI 请求错误。",
+      "openMonitoring": "监控面板",
+      "retry": "重试"
+    }
+  },
   "searchResults": {
     "noResults": "无结果",
     "noResultsDescription": "您的搜索没有返回任何结果",

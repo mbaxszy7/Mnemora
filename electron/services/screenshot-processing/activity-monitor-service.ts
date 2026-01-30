@@ -831,14 +831,47 @@ class ActivityMonitorService {
       }
 
       const kindByThreadId = new Map<string, ActivityEventKind>();
+      const titleByThreadId = new Map<string, string>();
+      const descriptionByThreadId = new Map<string, string>();
       for (const event of data.events) {
         if (!event.threadId) continue;
         kindByThreadId.set(event.threadId, event.kind as ActivityEventKind);
+        titleByThreadId.set(event.threadId, event.title);
+        if (event.description) {
+          descriptionByThreadId.set(event.threadId, event.description);
+        }
       }
 
       for (const thread of longThreads) {
         const threadId = thread.thread_id;
         const markerKey = `thr_${threadId}`;
+
+        const rawEventTitle = titleByThreadId.get(threadId) ?? null;
+        const rawEventDescription = descriptionByThreadId.get(threadId) ?? null;
+        const threadTitle = thread.title ?? "";
+        const kind = kindByThreadId.get(threadId) ?? null;
+
+        const normalize = (s: string) => s.trim().replace(/\s+/g, " ");
+        const shorten = (s: string) => {
+          const first = normalize(s).split(/\n|\.|。|!|！|\?|？/)[0] ?? "";
+          const clipped = first.length > 80 ? `${first.slice(0, 80).trim()}…` : first;
+          return clipped;
+        };
+
+        let markerTitle: string;
+        if (
+          rawEventTitle &&
+          normalize(rawEventTitle) &&
+          normalize(rawEventTitle) !== normalize(threadTitle)
+        ) {
+          markerTitle = rawEventTitle;
+        } else if (rawEventDescription && normalize(rawEventDescription)) {
+          markerTitle = shorten(rawEventDescription);
+        } else if (rawEventTitle && normalize(rawEventTitle)) {
+          markerTitle = kind ? `${kind}: ${rawEventTitle}` : rawEventTitle;
+        } else {
+          markerTitle = kind ? `${kind}: ${threadTitle}` : threadTitle;
+        }
 
         const latestNodeIds = await db
           .select({ id: contextNodes.id })
@@ -870,7 +903,7 @@ class ActivityMonitorService {
           await db
             .update(activityEvents)
             .set({
-              title: thread.title,
+              title: markerTitle,
               startTs: thread.start_time,
               endTs: thread.last_active_at,
               durationMs: thread.duration_ms,
@@ -893,7 +926,7 @@ class ActivityMonitorService {
           const kind =
             kindByThreadId.get(threadId) ??
             inferLongEventKindFromSnapshot({
-              title: thread.title,
+              title: markerTitle,
               currentPhase: thread.current_phase,
             });
 
@@ -901,7 +934,7 @@ class ActivityMonitorService {
             .insert(activityEvents)
             .values({
               eventKey: markerKey,
-              title: thread.title,
+              title: markerTitle,
               kind,
               startTs: thread.start_time,
               endTs: thread.last_active_at,

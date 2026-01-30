@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EventCard } from "./EventCard";
-import type { WindowSummary, ActivityEvent } from "./types";
+import type { WindowSummary } from "./types";
 
 const MarkdownContent = lazy(() =>
   import("./MarkdownContent").then((m) => ({
@@ -37,11 +37,10 @@ function MarkdownSkeleton() {
 interface SummaryPanelProps {
   summary: WindowSummary | null;
   isLoading?: boolean;
-  onFetchDetails?: (eventId: number) => Promise<ActivityEvent | null>;
   variants?: Variants;
 }
 
-export function SummaryPanel({ summary, isLoading, onFetchDetails, variants }: SummaryPanelProps) {
+export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps) {
   const { t } = useTranslation();
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -250,7 +249,7 @@ export function SummaryPanel({ summary, isLoading, onFetchDetails, variants }: S
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: 0.35 + i * 0.05 }}
                         >
-                          <EventCard event={event} onFetchDetails={onFetchDetails} />
+                          <EventCard event={event} />
                         </motion.div>
                       ))}
                     </div>

@@ -58,6 +58,15 @@ export const IPC_CHANNELS = {
   USER_SETTINGS_GET: "user-settings:get",
   USER_SETTINGS_UPDATE: "user-settings:update",
   USER_SETTINGS_SET_CAPTURE_OVERRIDE: "user-settings:set-capture-override",
+  // Threads / Active Thread Lens channels
+  THREADS_GET_ACTIVE_STATE: "threads:get-active-state",
+  THREADS_GET_ACTIVE_CANDIDATES: "threads:get-active-candidates",
+  THREADS_GET_RESOLVED_ACTIVE: "threads:get-resolved-active",
+  THREADS_PIN: "threads:pin",
+  THREADS_UNPIN: "threads:unpin",
+  THREADS_GET: "threads:get",
+  THREADS_LIST: "threads:list",
+  THREADS_GET_BRIEF: "threads:get-brief",
   // Context Graph channels
   CONTEXT_SEARCH: "context:search",
   CONTEXT_SEARCH_CANCEL: "context:search:cancel",

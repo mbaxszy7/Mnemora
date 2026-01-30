@@ -7,10 +7,6 @@ import { CONTEXT_KIND_VALUES, ENTITY_TYPE_VALUES, type EntityRef } from "@shared
 // VLM Output Schemas (Alpha - One Node per Screenshot)
 // =========================================================================
 
-function truncateTo(maxLen: number) {
-  return (s: string) => (s.length > maxLen ? s.slice(0, maxLen) : s);
-}
-
 function normalizeProjectKey(val: unknown): string | null {
   if (typeof val !== "string") return null;
   const s = val.trim();
@@ -51,12 +47,12 @@ const normalizeEntityRefs = (
     }
 
     const normalizedEntity: z.infer<typeof EntityRefSchema> = {
-      name: truncateTo(120)(name),
+      name,
       type: entity.type,
     };
 
     if (entity.raw) {
-      normalizedEntity.raw = truncateTo(200)(entity.raw.trim());
+      normalizedEntity.raw = entity.raw.trim();
     }
 
     if (entity.confidence !== undefined) {
@@ -232,8 +228,8 @@ export const VLMOutputSchema = z.object({
 export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
   const nodes = val.nodes.map((node) => ({
     screenshotIndex: node.screenshot_index,
-    title: truncateTo(100)(node.title),
-    summary: truncateTo(500)(node.summary),
+    title: node.title,
+    summary: node.summary,
     appContext: {
       appHint: (() => {
         const hint = node.app_context.app_hint;
@@ -246,9 +242,7 @@ export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
       })(),
       windowTitle: node.app_context.window_title,
       sourceKey: node.app_context.source_key,
-      projectName: node.app_context.project_name
-        ? truncateTo(120)(node.app_context.project_name)
-        : null,
+      projectName: node.app_context.project_name ? node.app_context.project_name : null,
       projectKey:
         normalizeProjectKey(node.app_context.project_key) ??
         normalizeProjectKey(node.app_context.project_name) ??
@@ -281,10 +275,10 @@ export const VLMOutputProcessedSchema = VLMOutputSchema.transform((val) => {
       : null,
     entities: normalizeEntityRefs(node.entities, 10),
     actionItems: node.action_items ? node.action_items.slice(0, 5) : null,
-    uiTextSnippets: node.ui_text_snippets.slice(0, 5).map(truncateTo(200)),
+    uiTextSnippets: node.ui_text_snippets.slice(0, 5),
     importance: Math.max(0, Math.min(10, node.importance)),
     confidence: Math.max(0, Math.min(10, node.confidence)),
-    keywords: node.keywords.slice(0, 5).map(truncateTo(64)),
+    keywords: node.keywords.slice(0, 5),
   }));
 
   return { nodes };
@@ -376,6 +370,26 @@ export const ThreadLLMOutputProcessedSchema = ThreadLLMOutputSchema.transform((v
 export type ThreadLLMOutput = z.infer<typeof ThreadLLMOutputProcessedSchema>;
 
 // =========================================================================
+// Thread Brief Schemas
+// =========================================================================
+
+export const ThreadBriefLLMSchema = z.object({
+  brief_markdown: z.string(),
+  highlights: z.array(z.string()).default([]),
+  current_focus: z.string().default(""),
+  next_steps: z.array(z.string()).default([]),
+});
+
+export const ThreadBriefLLMProcessedSchema = ThreadBriefLLMSchema.transform((val) => {
+  return {
+    briefMarkdown: val.brief_markdown,
+    highlights: val.highlights,
+    currentFocus: val.current_focus,
+    nextSteps: val.next_steps,
+  };
+});
+
+// =========================================================================
 // Activity Monitor LLM Output Schemas
 // =========================================================================
 const ActivityEventKindSchema = z.preprocess(
@@ -409,31 +423,31 @@ const ActivityEventCandidateSchema = z.object({
 export const ActivityWindowSummaryLLMSchema = z.object({
   title: z.string(),
   summary: z.string(),
-  highlights: z.array(z.string()).max(5),
+  highlights: z.array(z.string()),
   stats: z.object({
-    top_apps: z.array(z.string()).max(5),
-    top_entities: z.array(z.string()).max(5),
+    top_apps: z.array(z.string()),
+    top_entities: z.array(z.string()),
   }),
-  events: z.array(ActivityEventCandidateSchema).max(3),
+  events: z.array(ActivityEventCandidateSchema),
 });
 
 export const ActivityWindowSummaryLLMProcessedSchema = ActivityWindowSummaryLLMSchema.transform(
   (val) => ({
-    title: truncateTo(100)(val.title),
+    title: val.title,
     summary: val.summary,
-    highlights: val.highlights.map(truncateTo(100)),
+    highlights: val.highlights,
     stats: {
       topApps: val.stats.top_apps,
       topEntities: val.stats.top_entities,
     },
     events: val.events.map((event) => ({
-      title: truncateTo(100)(event.title),
+      title: event.title,
       kind: event.kind,
       startOffsetMin: event.start_offset_min,
       endOffsetMin: event.end_offset_min,
       confidence: Math.max(0, Math.min(10, event.confidence)),
       importance: Math.max(0, Math.min(10, event.importance)),
-      description: truncateTo(200)(event.description),
+      description: event.description,
       nodeIds: event.node_ids,
       threadId: event.thread_id,
     })),

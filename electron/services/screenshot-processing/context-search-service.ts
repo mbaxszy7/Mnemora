@@ -226,15 +226,28 @@ export class ContextSearchService {
     return filtered.length > 0 ? filtered : nodesAll;
   }
 
-  async getThread(threadId: string): Promise<ExpandedContextNode[]> {
+  async getThread(threadId: string, options?: { limit?: number }): Promise<ExpandedContextNode[]> {
     const db = getDb();
 
-    const records = db
-      .select()
-      .from(contextNodes)
-      .where(eq(contextNodes.threadId, threadId))
-      .orderBy(asc(contextNodes.eventTime))
-      .all();
+    const limit = options?.limit;
+    const useLimit = typeof limit === "number" && Number.isFinite(limit) && limit > 0;
+
+    const records = useLimit
+      ? db
+          .select()
+          .from(contextNodes)
+          .where(eq(contextNodes.threadId, threadId))
+          .orderBy(desc(contextNodes.eventTime))
+          .limit(limit)
+          .all()
+          .slice()
+          .reverse()
+      : db
+          .select()
+          .from(contextNodes)
+          .where(eq(contextNodes.threadId, threadId))
+          .orderBy(asc(contextNodes.eventTime))
+          .all();
 
     const nodes = records.map((r) => this.recordToExpandedNode(r));
 

@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
   Camera,
+  ChevronDown,
   Loader2,
   PauseCircle,
   RotateCcw,
@@ -10,13 +11,16 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { SearchBar, Timeline, SummaryPanel } from "@/components/core/activity-monitor";
+import { ActiveThreadLens } from "@/components/core/thread-lens/ActiveThreadLens";
 import { useViewTransition } from "@/components/core/view-transition";
 import { useActivityMonitor } from "@/hooks/use-activity-monitor";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Empty,
@@ -62,6 +66,13 @@ export default function HomePage() {
   const { navigate } = useViewTransition();
   const { initServices } = useInitServices();
 
+  const briefWarmupRef = useRef<{
+    threadId: string;
+    lastActiveAt: number | null;
+    ts: number;
+  } | null>(null);
+  const briefWarmupInFlightRef = useRef(false);
+
   const containerVariants = {
     hidden: { opacity: 0 },
     show: {
@@ -78,13 +89,13 @@ export default function HomePage() {
     show: { opacity: 1, scale: 1 },
   };
 
-  const { timeline, longEvents, getSummary, getEventDetails, isLoadingTimeline } =
-    useActivityMonitor();
+  const { timeline, longEvents, getSummary, isLoadingTimeline } = useActivityMonitor();
 
   const [selectedWindowId, setSelectedWindowId] = useState<number | string | null>(null);
   const [selectedSummary, setSelectedSummary] = useState<WindowSummary | null>(null);
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [regeneratingWindowId, setRegeneratingWindowId] = useState<number | string | null>(null);
+  const [isThreadLensOpen, setIsThreadLensOpen] = useState(true);
 
   const [permissionStatus, setPermissionStatus] = useState<PermissionCheckResult | null>(null);
   const [captureState, setCaptureState] = useState<SchedulerStatePayload | null>(null);
@@ -336,9 +347,44 @@ export default function HomePage() {
     setSelectedSummary(null);
   }, [showTimelineEmptyState]);
 
+  useEffect(() => {
+    const unsubscribe = window.activityMonitorApi.onTimelineChanged(async () => {
+      if (briefWarmupInFlightRef.current) return;
+      briefWarmupInFlightRef.current = true;
+
+      try {
+        const now = Date.now();
+        const resolvedRes = await window.threadsApi.getResolvedActive();
+        const thread = resolvedRes.success ? (resolvedRes.data?.thread ?? null) : null;
+        if (!thread) return;
+
+        const last = briefWarmupRef.current;
+        const withinCooldown = last != null && now - last.ts < 30_000;
+        const sameThread = last?.threadId === thread.id;
+        const sameActiveAt = last?.lastActiveAt === thread.lastActiveAt;
+
+        if (sameThread && sameActiveAt && withinCooldown) {
+          return;
+        }
+
+        briefWarmupRef.current = {
+          threadId: thread.id,
+          lastActiveAt: thread.lastActiveAt,
+          ts: now,
+        };
+
+        await window.threadsApi.getBrief({ threadId: thread.id, force: false });
+      } finally {
+        briefWarmupInFlightRef.current = false;
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   return (
     <motion.div
-      className="h-[calc(100vh-88px)] flex flex-col -mt-2"
+      className="min-h-[calc(100vh-88px)] flex flex-col -mt-2"
       variants={containerVariants}
       initial={false}
       animate="show"
@@ -361,6 +407,38 @@ export default function HomePage() {
           variants={itemVariants}
         />
       </motion.div>
+
+      {!showTimelineEmptyState ? (
+        <div className="px-2 mb-3">
+          <Collapsible open={isThreadLensOpen} onOpenChange={setIsThreadLensOpen}>
+            <div className="rounded-xl bg-card/40">
+              <div className="flex items-center gap-3 px-3 py-2">
+                <div className="text-base font-semibold text-muted-foreground flex items-center gap-2">
+                  <Zap className="h-4 w-4 text-primary" />
+                  <div className="text-base font-bold text-foreground tracking-tight">
+                    {t("threadLens.title")}
+                  </div>
+                </div>
+                <CollapsibleTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-7 px-2">
+                    <ChevronDown
+                      className={cn(
+                        "h-4 w-4 transition-transform",
+                        isThreadLensOpen ? "rotate-180" : ""
+                      )}
+                    />
+                  </Button>
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent>
+                <div className="px-3 pb-3">
+                  <ActiveThreadLens />
+                </div>
+              </CollapsibleContent>
+            </div>
+          </Collapsible>
+        </div>
+      ) : null}
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-h-0">
@@ -571,7 +649,6 @@ export default function HomePage() {
                         <SummaryPanel
                           summary={selectedSummary}
                           isLoading={isLoadingSummary}
-                          onFetchDetails={getEventDetails}
                           variants={itemVariants}
                         />
                       )}

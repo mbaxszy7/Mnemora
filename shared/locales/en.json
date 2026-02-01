@@ -430,7 +430,21 @@
       "clearTemporaryFocus": "Clear temporary focus",
       "refresh": "Refresh",
       "pin": "Pin",
-      "unpin": "Unpin"
+      "unpin": "Unpin",
+      "markInactive": "Mark inactive"
+    },
+    "dialogs": {
+      "markInactive": {
+        "title": "Mark thread inactive",
+        "description": "Mark \"{{title}}\" as inactive? It will no longer be treated as an active thread.",
+        "confirm": "Mark inactive",
+        "confirming": "Marking…"
+      }
+    },
+    "messages": {
+      "markInactiveLoading": "Marking thread inactive…",
+      "markInactiveSuccess": "Thread marked inactive",
+      "markInactiveFailed": "Failed to mark thread inactive"
     },
     "tooltips": {
       "preview": "Temporary focus. You are previewing a different thread without pinning it.",

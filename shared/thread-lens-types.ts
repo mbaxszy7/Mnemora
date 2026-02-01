@@ -85,4 +85,8 @@ export interface ThreadsGetBriefRequest extends ThreadsThreadIdRequest {
 
 export type ThreadsGetBriefResponse = ThreadsBriefResponse;
 
+export type ThreadsMarkInactiveRequest = ThreadsThreadIdRequest;
+
+export type ThreadsMarkInactiveResponse = ThreadsStateResponse;
+
 export type ThreadsGetLensStateResponse = ThreadsLensStateResponse;

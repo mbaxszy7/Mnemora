@@ -1,5 +1,7 @@
 import type { IpcMainInvokeEvent } from "electron";
 
+import { eq } from "drizzle-orm";
+
 import { IPC_CHANNELS, type IPCResult, toIPCError } from "@shared/ipc-types";
 import type {
   ThreadsGetByIdRequest,
@@ -12,6 +14,8 @@ import type {
   ThreadsGetResponse,
   ThreadsListRequest,
   ThreadsListResponse,
+  ThreadsMarkInactiveRequest,
+  ThreadsMarkInactiveResponse,
   ThreadsPinRequest,
   ThreadsPinResponse,
   ThreadsUnpinResponse,
@@ -19,6 +23,7 @@ import type {
 
 import { IPCHandlerRegistry } from "./handler-registry";
 import { getLogger } from "../services/logger";
+import { getDb, threads, userSetting } from "../database";
 import { threadsService } from "../services/screenshot-processing/threads-service";
 import { threadRuntimeService } from "../services/screenshot-processing/thread-runtime-service";
 
@@ -131,6 +136,52 @@ async function handleGetBrief(
   }
 }
 
+async function handleMarkInactive(
+  _event: IpcMainInvokeEvent,
+  request: ThreadsMarkInactiveRequest
+): Promise<IPCResult<ThreadsMarkInactiveResponse>> {
+  try {
+    const id = request.threadId.trim();
+    if (!id) {
+      const state = await threadsService.getActiveThreadState();
+      return { success: true, data: { state } };
+    }
+
+    const db = getDb();
+    const now = Date.now();
+
+    // Ensure user_setting row exists before attempting to update pinned thread
+    await threadsService.getActiveThreadState();
+
+    const thread = threadsService.getThreadById(id);
+    if (thread && thread.status !== "closed") {
+      db.update(threads)
+        .set({ status: "inactive", updatedAt: now })
+        .where(eq(threads.id, id))
+        .run();
+    }
+
+    const setting = db
+      .select({ id: userSetting.id, pinnedThreadId: userSetting.pinnedThreadId })
+      .from(userSetting)
+      .get();
+
+    if (setting && setting.pinnedThreadId === id) {
+      db.update(userSetting)
+        .set({ pinnedThreadId: null, pinnedThreadUpdatedAt: now, updatedAt: now })
+        .where(eq(userSetting.id, setting.id))
+        .run();
+    }
+
+    const state = await threadsService.getActiveThreadState();
+    threadRuntimeService.markLensDirty("mark-inactive");
+    return { success: true, data: { state } };
+  } catch (error) {
+    logger.error({ error, request }, "IPC handleMarkInactive failed");
+    return { success: false, error: toIPCError(error) };
+  }
+}
+
 export function registerThreadsHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
 
@@ -148,6 +199,7 @@ export function registerThreadsHandlers(): void {
   registry.registerHandler(IPC_CHANNELS.THREADS_GET, handleGet);
   registry.registerHandler(IPC_CHANNELS.THREADS_LIST, handleList);
   registry.registerHandler(IPC_CHANNELS.THREADS_GET_BRIEF, handleGetBrief);
+  registry.registerHandler(IPC_CHANNELS.THREADS_MARK_INACTIVE, handleMarkInactive);
   registry.registerHandler(IPC_CHANNELS.THREADS_GET_LENS_STATE, async () => handleGetLensState());
 
   logger.info("Threads IPC handlers registered");

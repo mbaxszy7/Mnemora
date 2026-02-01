@@ -67,6 +67,7 @@ export const IPC_CHANNELS = {
   THREADS_GET: "threads:get",
   THREADS_LIST: "threads:list",
   THREADS_GET_BRIEF: "threads:get-brief",
+  THREADS_MARK_INACTIVE: "threads:mark-inactive",
   THREADS_GET_LENS_STATE: "threads:get-lens-state",
   THREADS_LENS_STATE_CHANGED: "threads:lens-state-changed",
   THREADS_BRIEF_UPDATED: "threads:brief-updated",

@@ -68,6 +68,19 @@ export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps
     ? format(new Date(summary.windowStart), t("common.dateFormats.shortDate"))
     : "";
 
+  const filteredEvents = (() => {
+    if (!summary) return [];
+    const longThreadIds = new Set(
+      summary.events.filter((e) => e.isLong && e.threadId).map((e) => e.threadId as string)
+    );
+
+    return summary.events.filter((e) => {
+      if (e.isLong) return true;
+      if (!e.threadId) return true;
+      return !longThreadIds.has(e.threadId);
+    });
+  })();
+
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-border/50 bg-card/50">
       <AnimatePresence mode="wait">
@@ -231,7 +244,7 @@ export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps
                 </motion.div>
 
                 {/* Events section */}
-                {summary.events.length > 0 && (
+                {filteredEvents.length > 0 && (
                   <motion.div
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -242,7 +255,7 @@ export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps
                       {t("activityMonitor.summary.relatedEvents")}
                     </h3>
                     <div className="space-y-3">
-                      {summary.events.map((event, i) => (
+                      {filteredEvents.map((event, i) => (
                         <motion.div
                           key={event.id}
                           initial={{ opacity: 0, y: 10 }}

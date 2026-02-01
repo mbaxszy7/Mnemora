@@ -1,11 +1,29 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence, LayoutGroup } from "framer-motion";
-import { Sparkles, Pin, PinOff, RefreshCw, X } from "lucide-react";
+import { Sparkles, Pin, PinOff, RefreshCw, X, MoreHorizontal, PauseCircle } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { toast } from "sonner";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { ThreadBrief, ThreadLensStateSnapshot } from "@shared/thread-lens-types";
 import { MarkdownContent } from "@/components/core/activity-monitor/MarkdownContent";
 import { cn } from "@/lib/utils";
@@ -22,6 +40,7 @@ export function ActiveThreadLens() {
   const { t: tr } = useTranslation();
 
   const briefCacheRef = useRef<Map<string, BriefCacheEntry>>(new Map());
+  const briefRefreshHintRef = useRef<Map<string, number>>(new Map());
   const briefRequestIdRef = useRef(0);
   const activeBriefRequestRef = useRef<{ requestId: number; threadId: string | null }>({
     requestId: 0,
@@ -35,6 +54,12 @@ export function ActiveThreadLens() {
   const [briefError, setBriefError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshingBrief, setIsRefreshingBrief] = useState(false);
+  const [isMarkInactiveDialogOpen, setIsMarkInactiveDialogOpen] = useState(false);
+  const [markInactiveThread, setMarkInactiveThread] = useState<{
+    id: string;
+    title: string;
+  } | null>(null);
+  const [isMarkingInactive, setIsMarkingInactive] = useState(false);
 
   const reloadLensState = useCallback(async () => {
     setIsLoading(true);
@@ -90,7 +115,6 @@ export function ActiveThreadLens() {
   const others = viewModel?.others ?? [];
   const isPinnedActive = viewModel?.isPinned ?? false;
   const activeThreadId = active?.id ?? null;
-  const activeThreadLastActiveAt = active?.lastActiveAt ?? null;
 
   const fetchBrief = useCallback(
     async (
@@ -98,13 +122,16 @@ export function ActiveThreadLens() {
       expectedLastActiveAt: number | null,
       opts?: { force?: boolean; showLoading?: boolean; ignoreCache?: boolean }
     ) => {
+      const refreshHintAtStart = briefRefreshHintRef.current.get(threadId) ?? null;
       const force = opts?.force ?? false;
       const showLoading = opts?.showLoading ?? true;
       const ignoreCache = opts?.ignoreCache ?? false;
 
       if (!force && !ignoreCache) {
         const cached = briefCacheRef.current.get(threadId);
-        if (cached && cached.lastActiveAt === expectedLastActiveAt) {
+        if (cached) {
+          const cancelRequestId = (briefRequestIdRef.current += 1);
+          activeBriefRequestRef.current = { requestId: cancelRequestId, threadId };
           setBrief(cached.brief);
           setBriefStatus(cached.brief?.briefMarkdown ? "ready" : "unavailable");
           setBriefError(null);
@@ -136,6 +163,13 @@ export function ActiveThreadLens() {
         lastActiveAt: next?.lastActiveAt ?? expectedLastActiveAt,
       });
 
+      if (
+        refreshHintAtStart != null &&
+        briefRefreshHintRef.current.get(threadId) === refreshHintAtStart
+      ) {
+        briefRefreshHintRef.current.delete(threadId);
+      }
+
       setBrief(next);
       setBriefStatus(next?.briefMarkdown ? "ready" : "unavailable");
       setBriefError(null);
@@ -145,35 +179,46 @@ export function ActiveThreadLens() {
 
   useEffect(() => {
     if (!activeThreadId) {
+      const cancelRequestId = (briefRequestIdRef.current += 1);
+      activeBriefRequestRef.current = { requestId: cancelRequestId, threadId: null };
       setBrief(null);
       setBriefStatus("idle");
       setBriefError(null);
       return;
     }
 
+    const cancelRequestId = (briefRequestIdRef.current += 1);
+    activeBriefRequestRef.current = { requestId: cancelRequestId, threadId: activeThreadId };
+
     const cached = briefCacheRef.current.get(activeThreadId);
-    if (cached && cached.lastActiveAt === activeThreadLastActiveAt) {
+    const refreshHint = briefRefreshHintRef.current.get(activeThreadId) ?? null;
+    if (cached) {
       setBrief(cached.brief);
       setBriefStatus(cached.brief?.briefMarkdown ? "ready" : "unavailable");
       setBriefError(null);
-      return;
     }
 
+    if (cached && refreshHint == null) return;
+
     const shouldShowLoading = !cached?.brief?.briefMarkdown;
-    void fetchBrief(activeThreadId, activeThreadLastActiveAt, {
+
+    void fetchBrief(activeThreadId, refreshHint, {
       force: false,
       showLoading: shouldShowLoading,
+      ignoreCache: refreshHint != null,
     });
-  }, [activeThreadId, activeThreadLastActiveAt, fetchBrief]);
+  }, [activeThreadId, fetchBrief]);
 
   useEffect(() => {
     return window.threadsApi.onThreadBriefUpdated((payload) => {
-      if (payload.threadId !== activeThreadId) return;
-      void fetchBrief(payload.threadId, payload.lastActiveAt, {
-        force: false,
-        showLoading: false,
-        ignoreCache: true,
-      });
+      briefRefreshHintRef.current.set(payload.threadId, payload.lastActiveAt);
+      if (payload.threadId === activeThreadId) {
+        void fetchBrief(payload.threadId, payload.lastActiveAt, {
+          force: false,
+          showLoading: false,
+          ignoreCache: true,
+        });
+      }
     });
   }, [activeThreadId, fetchBrief]);
 
@@ -211,6 +256,43 @@ export function ActiveThreadLens() {
       setIsRefreshingBrief(false);
     }
   }, [active, fetchBrief]);
+
+  const openMarkInactiveDialog = useCallback(() => {
+    if (!active) return;
+    setMarkInactiveThread({ id: active.id, title: active.title || tr("threadLens.untitled") });
+    setIsMarkInactiveDialogOpen(true);
+  }, [active, tr]);
+
+  const handleConfirmMarkInactive = useCallback(async () => {
+    const target = markInactiveThread;
+    if (!target) return;
+    if (isMarkingInactive) return;
+
+    const toastId = `thread-mark-inactive-${target.id}`;
+    setIsMarkingInactive(true);
+    toast(tr("threadLens.messages.markInactiveLoading"), { id: toastId });
+
+    try {
+      const res = await window.threadsApi.markInactive({ threadId: target.id });
+      if (!res.success) {
+        toast.error(res.error?.message ?? tr("threadLens.messages.markInactiveFailed"), {
+          id: toastId,
+        });
+        return;
+      }
+
+      toast.success(tr("threadLens.messages.markInactiveSuccess"), { id: toastId });
+      setIsMarkInactiveDialogOpen(false);
+      setMarkInactiveThread(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : tr("threadLens.messages.markInactiveFailed"),
+        { id: toastId }
+      );
+    } finally {
+      setIsMarkingInactive(false);
+    }
+  }, [isMarkingInactive, markInactiveThread, tr]);
 
   if (!viewModel || !active) return null;
 
@@ -433,6 +515,49 @@ export function ActiveThreadLens() {
                             : tr("threadLens.tooltips.pin")}
                         </TooltipContent>
                       </Tooltip>
+
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 rounded-full border border-border/20 text-muted-foreground/60 hover:text-foreground hover:bg-muted/20"
+                            onClick={(e) => e.stopPropagation()}
+                            disabled={isLoading}
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              openMarkInactiveDialog();
+                            }}
+                            disabled={active.status !== "active" || isMarkingInactive}
+                            className="text-amber-500 focus:text-amber-500"
+                          >
+                            <PauseCircle className="h-4 w-4" />
+                            {tr("threadLens.actions.markInactive")}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onSelect={(e) => {
+                              e.preventDefault();
+                              void handleRefresh();
+                            }}
+                            disabled={isLoading || isRefreshingBrief}
+                          >
+                            <RefreshCw
+                              className={cn(
+                                "h-4 w-4",
+                                (isLoading || isRefreshingBrief) && "animate-spin"
+                              )}
+                            />
+                            {tr("threadLens.actions.refresh")}
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                   </TooltipProvider>
                 </div>
@@ -510,6 +635,42 @@ export function ActiveThreadLens() {
           </Card>
         </motion.div>
       </LayoutGroup>
+
+      <AlertDialog
+        open={isMarkInactiveDialogOpen}
+        onOpenChange={(open) => {
+          if (isMarkingInactive) return;
+          setIsMarkInactiveDialogOpen(open);
+          if (!open) setMarkInactiveThread(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{tr("threadLens.dialogs.markInactive.title")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {tr("threadLens.dialogs.markInactive.description", {
+                title: markInactiveThread?.title ?? "",
+              })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isMarkingInactive}>
+              {tr("common.buttons.cancel")}
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                void handleConfirmMarkInactive();
+              }}
+              disabled={!markInactiveThread || isMarkingInactive}
+            >
+              {isMarkingInactive
+                ? tr("threadLens.dialogs.markInactive.confirming")
+                : tr("threadLens.dialogs.markInactive.confirm")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useTranslation } from "react-i18next";
 import { motion } from "framer-motion";
-import { format } from "date-fns";
+import { format, isSameDay } from "date-fns";
 import { Clock, Zap, Code, Users, Coffee, Globe, Focus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { ActivityEvent } from "./types";
@@ -47,8 +47,19 @@ const kindConfig = {
 export function EventCard({ event }: EventCardProps) {
   const { t } = useTranslation();
 
-  const startTime = format(new Date(event.startTs), "HH:mm");
-  const endTime = format(new Date(event.endTs), "HH:mm");
+  const startDateObj = new Date(event.startTs);
+  const endDateObj = new Date(event.endTs);
+  const startTime = format(startDateObj, "HH:mm");
+  const endTime = format(endDateObj, "HH:mm");
+  const dateFmt = t("common.dateFormats.shortDate");
+  const startDate = format(startDateObj, dateFmt);
+  const endDate = format(endDateObj, dateFmt);
+  const sameDay = isSameDay(startDateObj, endDateObj);
+  const timeRangeText = event.isLong
+    ? sameDay
+      ? `${startDate} ${startTime} - ${endTime}`
+      : `${startDate} ${startTime} - ${endDate} ${endTime}`
+    : `${startTime} - ${endTime}`;
   const durationMinutes = Math.round(event.durationMs / 60000);
   const durationText =
     durationMinutes >= 60
@@ -127,7 +138,7 @@ export function EventCard({ event }: EventCardProps) {
             <div className="flex items-center gap-3 text-xs text-muted-foreground/80">
               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-background/50 border border-border/30">
                 <Clock className="h-3 w-3" />
-                {startTime} - {endTime}
+                {timeRangeText}
               </span>
               <span className="font-semibold text-foreground/70">{durationText}</span>
               <div className="h-1 w-1 rounded-full bg-muted-foreground/30" />

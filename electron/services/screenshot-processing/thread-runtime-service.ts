@@ -88,6 +88,13 @@ class ThreadBriefService {
       const activeAtDelta = thread.lastActiveAt - last.lastActiveAt;
       if (nodeDelta < BRIEF_DIRTY_NODECOUNT_DELTA) return;
       if (activeAtDelta < BRIEF_DIRTY_ACTIVE_AT_DELTA_MS) return;
+
+      threadBriefLogger.debug(
+        { threadId, nodeDelta, activeAtDelta },
+        "queueRefresh(threshold) accepted"
+      );
+    } else {
+      threadBriefLogger.debug({ threadId }, "queueRefresh(force) accepted");
     }
 
     this.markDirtyInternal({ threadId });
@@ -147,6 +154,7 @@ class ThreadBriefService {
 
     this.inFlight.add(threadId);
     try {
+      threadBriefLogger.info({ threadId }, "Regenerating thread brief (dirty)");
       const brief = await this.getBrief({ threadId, force: true });
       if (!brief) return;
 
@@ -165,6 +173,7 @@ class ThreadBriefService {
   }
 
   private broadcastBriefUpdated(payload: ThreadBriefUpdatedPayload): void {
+    threadBriefLogger.debug({ payload }, "Broadcast THREADS_BRIEF_UPDATED");
     try {
       for (const win of BrowserWindow.getAllWindows()) {
         win.webContents.send(IPC_CHANNELS.THREADS_BRIEF_UPDATED, payload);
@@ -178,14 +187,27 @@ class ThreadBriefService {
     const threadId = args.threadId.trim();
     if (!threadId) return null;
 
+    threadBriefLogger.debug({ threadId, force: args.force }, "getBrief called");
+
     const thread = threadsService.getThreadById(threadId);
     if (!thread) return null;
 
     const cacheKey = buildCacheKey({ threadId: thread.id, lastActiveAt: thread.lastActiveAt });
     if (!args.force) {
       const cached = this.cache.get(cacheKey);
-      if (cached) return cached;
+      if (cached) {
+        threadBriefLogger.debug(
+          { threadId: thread.id, lastActiveAt: thread.lastActiveAt },
+          "getBrief cache hit"
+        );
+        return cached;
+      }
     }
+
+    threadBriefLogger.info(
+      { threadId: thread.id, lastActiveAt: thread.lastActiveAt, force: args.force },
+      "Generating thread brief"
+    );
 
     const aiService = AISDKService.getInstance();
     if (!aiService.isInitialized()) {
@@ -300,6 +322,11 @@ class ThreadBriefService {
         lastActiveAt: thread.lastActiveAt,
         generatedAt: Date.now(),
       });
+
+      threadBriefLogger.info(
+        { threadId: thread.id, lastActiveAt: brief.lastActiveAt, updatedAt: brief.updatedAt },
+        "Generated thread brief"
+      );
       return brief;
     } catch (error) {
       const durationMs = Date.now() - startTime;
@@ -686,6 +713,18 @@ export class ThreadRuntimeService {
           }
         }
       }
+
+      threadRuntimeLogger.info(
+        {
+          summaryId,
+          windowStart,
+          windowEnd,
+          updatedAt,
+          threadCount: threadIds.size,
+          threadIdsPreview: Array.from(threadIds).slice(0, 12),
+        },
+        "activity-summary:succeeded -> queue brief refresh (force)"
+      );
 
       threadBriefService.queueRefreshMany({
         threadIds: Array.from(threadIds),

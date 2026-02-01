@@ -14,6 +14,22 @@ type TranslationResources = typeof enTranslations & {
       inactive?: string;
       closed?: string;
     };
+    actions?: {
+      markInactive?: string;
+    };
+    dialogs?: {
+      markInactive?: {
+        title?: string;
+        description?: string;
+        confirm?: string;
+        confirming?: string;
+      };
+    };
+    messages?: {
+      markInactiveLoading?: string;
+      markInactiveSuccess?: string;
+      markInactiveFailed?: string;
+    };
     brief?: {
       unavailableTitle?: string;
       unavailableBody?: string;

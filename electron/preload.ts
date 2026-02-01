@@ -35,6 +35,8 @@ import type {
   ThreadsGetResponse,
   ThreadsListRequest,
   ThreadsListResponse,
+  ThreadsMarkInactiveRequest,
+  ThreadsMarkInactiveResponse,
   ThreadBriefUpdatedPayload,
   ThreadLensStateChangedPayload,
   ThreadsPinRequest,
@@ -270,6 +272,9 @@ export interface ThreadsApi {
   get(request: ThreadsGetByIdRequest): Promise<IPCResult<ThreadsGetResponse>>;
   list(request: ThreadsListRequest): Promise<IPCResult<ThreadsListResponse>>;
   getBrief(request: ThreadsGetBriefRequest): Promise<IPCResult<ThreadsGetBriefResponse>>;
+  markInactive(
+    request: ThreadsMarkInactiveRequest
+  ): Promise<IPCResult<ThreadsMarkInactiveResponse>>;
 }
 
 const threadsApi: ThreadsApi = {
@@ -314,6 +319,11 @@ const threadsApi: ThreadsApi = {
   },
   async getBrief(request: ThreadsGetBriefRequest): Promise<IPCResult<ThreadsGetBriefResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_BRIEF, request);
+  },
+  async markInactive(
+    request: ThreadsMarkInactiveRequest
+  ): Promise<IPCResult<ThreadsMarkInactiveResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_MARK_INACTIVE, request);
   },
 };
 

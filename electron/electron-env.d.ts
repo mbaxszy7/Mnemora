@@ -92,6 +92,13 @@ interface Window {
         import("../shared/thread-lens-types").ThreadsGetBriefResponse
       >
     >;
+    markInactive: (
+      req: import("../shared/thread-lens-types").ThreadsMarkInactiveRequest
+    ) => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsMarkInactiveResponse
+      >
+    >;
   };
   databaseApi: {
     settings: {

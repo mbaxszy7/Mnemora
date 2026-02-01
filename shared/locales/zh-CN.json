@@ -431,7 +431,21 @@
       "clearTemporaryFocus": "清除临时焦点",
       "refresh": "刷新",
       "pin": "固定",
-      "unpin": "取消固定"
+      "unpin": "取消固定",
+      "markInactive": "标记为闲置"
+    },
+    "dialogs": {
+      "markInactive": {
+        "title": "标记线程为闲置",
+        "description": "确定将 \"{{title}}\" 标记为闲置吗？标记后，它将不再被视为进行中的线程。",
+        "confirm": "标记为闲置",
+        "confirming": "标记中…"
+      }
+    },
+    "messages": {
+      "markInactiveLoading": "正在标记线程为闲置…",
+      "markInactiveSuccess": "线程已标记为闲置",
+      "markInactiveFailed": "标记线程为闲置失败"
     },
     "tooltips": {
       "preview": "临时焦点：你正在查看另一个线程，但不会写入固定（Pin）。",

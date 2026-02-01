@@ -15,6 +15,7 @@ import { threadsService } from "./threads-service";
 import {
   ThreadLLMOutputSchema,
   ThreadLLMOutputProcessedSchema,
+  CANONICAL_APP_CANDIDATES,
   type ThreadLLMOutput,
 } from "./schemas";
 import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "./types";
@@ -130,6 +131,7 @@ export class ThreadLlmService {
       yesterdayStart: timeContext.yesterdayStart,
       yesterdayEnd: timeContext.yesterdayEnd,
       weekAgo: timeContext.weekAgo,
+      appCandidatesJson: JSON.stringify(CANONICAL_APP_CANDIDATES, null, 2),
     });
 
     const aiService = AISDKService.getInstance();

@@ -46,6 +46,19 @@ interface Window {
         import("../shared/thread-lens-types").ThreadsGetResolvedActiveResponse
       >
     >;
+    getLensState: () => Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/thread-lens-types").ThreadsGetLensStateResponse
+      >
+    >;
+    onLensStateChanged: (
+      callback: (
+        payload: import("../shared/thread-lens-types").ThreadLensStateChangedPayload
+      ) => void
+    ) => () => void;
+    onThreadBriefUpdated: (
+      callback: (payload: import("../shared/thread-lens-types").ThreadBriefUpdatedPayload) => void
+    ) => () => void;
     pin: (
       req: import("../shared/thread-lens-types").ThreadsPinRequest
     ) => Promise<

@@ -15,6 +15,24 @@ export interface ThreadBrief {
   updatedAt: number;
 }
 
+export interface ThreadLensStateSnapshot {
+  revision: number;
+  updatedAt: number;
+  pinnedThreadId: string | null;
+  topThreads: Thread[];
+  resolvedThreadId: string | null;
+}
+
+export interface ThreadLensStateChangedPayload {
+  snapshot: ThreadLensStateSnapshot;
+}
+
+export interface ThreadBriefUpdatedPayload {
+  threadId: string;
+  lastActiveAt: number;
+  updatedAt: number;
+}
+
 export interface ThreadsThreadIdRequest {
   threadId: string;
 }
@@ -33,6 +51,10 @@ export interface ThreadsThreadsResponse {
 
 export interface ThreadsBriefResponse {
   brief: ThreadBrief | null;
+}
+
+export interface ThreadsLensStateResponse {
+  snapshot: ThreadLensStateSnapshot;
 }
 
 export type ThreadsGetByIdRequest = ThreadsThreadIdRequest;
@@ -62,3 +84,5 @@ export interface ThreadsGetBriefRequest extends ThreadsThreadIdRequest {
 }
 
 export type ThreadsGetBriefResponse = ThreadsBriefResponse;
+
+export type ThreadsGetLensStateResponse = ThreadsLensStateResponse;

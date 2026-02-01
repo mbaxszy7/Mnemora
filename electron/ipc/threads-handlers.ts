@@ -7,6 +7,7 @@ import type {
   ThreadsGetActiveStateResponse,
   ThreadsGetBriefRequest,
   ThreadsGetBriefResponse,
+  ThreadsGetLensStateResponse,
   ThreadsGetResolvedActiveResponse,
   ThreadsGetResponse,
   ThreadsListRequest,
@@ -19,7 +20,7 @@ import type {
 import { IPCHandlerRegistry } from "./handler-registry";
 import { getLogger } from "../services/logger";
 import { threadsService } from "../services/screenshot-processing/threads-service";
-import { threadBriefService } from "../services/screenshot-processing/thread-brief-service";
+import { threadRuntimeService } from "../services/screenshot-processing/thread-runtime-service";
 
 const logger = getLogger("threads-handlers");
 
@@ -59,6 +60,7 @@ async function handlePin(
 ): Promise<IPCResult<ThreadsPinResponse>> {
   try {
     const state = await threadsService.pinThread(request.threadId);
+    threadRuntimeService.markLensDirty("pin");
     return { success: true, data: { state } };
   } catch (error) {
     logger.error({ error, request }, "IPC handlePin failed");
@@ -69,9 +71,20 @@ async function handlePin(
 async function handleUnpin(): Promise<IPCResult<ThreadsUnpinResponse>> {
   try {
     const state = await threadsService.unpinThread();
+    threadRuntimeService.markLensDirty("unpin");
     return { success: true, data: { state } };
   } catch (error) {
     logger.error({ error }, "IPC handleUnpin failed");
+    return { success: false, error: toIPCError(error) };
+  }
+}
+
+async function handleGetLensState(): Promise<IPCResult<ThreadsGetLensStateResponse>> {
+  try {
+    const snapshot = await threadRuntimeService.getLensStateSnapshot();
+    return { success: true, data: { snapshot } };
+  } catch (error) {
+    logger.error({ error }, "IPC handleGetLensState failed");
     return { success: false, error: toIPCError(error) };
   }
 }
@@ -107,7 +120,7 @@ async function handleGetBrief(
   request: ThreadsGetBriefRequest
 ): Promise<IPCResult<ThreadsGetBriefResponse>> {
   try {
-    const brief = await threadBriefService.getBrief({
+    const brief = await threadRuntimeService.getBrief({
       threadId: request.threadId,
       force: request.force ?? false,
     });
@@ -135,6 +148,7 @@ export function registerThreadsHandlers(): void {
   registry.registerHandler(IPC_CHANNELS.THREADS_GET, handleGet);
   registry.registerHandler(IPC_CHANNELS.THREADS_LIST, handleList);
   registry.registerHandler(IPC_CHANNELS.THREADS_GET_BRIEF, handleGetBrief);
+  registry.registerHandler(IPC_CHANNELS.THREADS_GET_LENS_STATE, async () => handleGetLensState());
 
   logger.info("Threads IPC handlers registered");
 }

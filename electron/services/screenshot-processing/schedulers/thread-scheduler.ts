@@ -87,7 +87,8 @@ export class ThreadScheduler extends BaseScheduler {
     if (!this.isRunning || this.isProcessing) return;
 
     this.isProcessing = true;
-    const cycleStartTs = Date.now();
+    const now = Date.now();
+    const cycleStartTs = now;
     logger.debug("Starting thread scheduler cycle");
     this.emit("scheduler:cycle:start", { scheduler: this.name, timestamp: cycleStartTs });
 
@@ -98,6 +99,12 @@ export class ThreadScheduler extends BaseScheduler {
       const inactiveChanged = threadRepository.markInactiveThreads();
       if (inactiveChanged > 0) {
         logger.info({ changed: inactiveChanged }, "Marked inactive threads");
+        this.emit("threads:changed", {
+          type: "threads:changed",
+          timestamp: now,
+          reason: "inactive-changed",
+          changedCount: inactiveChanged,
+        });
       }
 
       const records = this.scanPendingRecords();

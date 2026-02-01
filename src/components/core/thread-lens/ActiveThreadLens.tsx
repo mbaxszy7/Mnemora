@@ -6,39 +6,29 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipProvider, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import type { Thread } from "@shared/context-types";
-import type { ThreadBrief } from "@shared/thread-lens-types";
+import type { ThreadBrief, ThreadLensStateSnapshot } from "@shared/thread-lens-types";
 import { MarkdownContent } from "@/components/core/activity-monitor/MarkdownContent";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 
-type LoadState = {
-  pinnedThreadId: string | null;
-  candidates: Thread[];
-  resolved: Thread | null;
-};
-
 type BriefStatus = "idle" | "loading" | "ready" | "unavailable" | "error";
 
-const BRIEF_REFRESH_COOLDOWN_MS = 30_000;
-const BRIEF_REFRESH_ACTIVE_AT_DELTA_MS = 5 * 60 * 1000;
+type BriefCacheEntry = {
+  brief: ThreadBrief | null;
+  lastActiveAt: number | null;
+};
 
 export function ActiveThreadLens() {
   const { t: tr } = useTranslation();
-  const lastLoadAtRef = useRef(0);
-  const isLoadingRef = useRef(false);
-  const timelineRefreshTimeoutRef = useRef<number | null>(null);
-  const lastBriefFetchRef = useRef<{
-    threadId: string;
-    lastActiveAt: number | null;
-    fetchedAt: number;
-  } | null>(null);
 
-  const [loadState, setLoadState] = useState<LoadState>({
-    pinnedThreadId: null,
-    candidates: [],
-    resolved: null,
+  const briefCacheRef = useRef<Map<string, BriefCacheEntry>>(new Map());
+  const briefRequestIdRef = useRef(0);
+  const activeBriefRequestRef = useRef<{ requestId: number; threadId: string | null }>({
+    requestId: 0,
+    threadId: null,
   });
+
+  const [lensState, setLensState] = useState<ThreadLensStateSnapshot | null>(null);
   const [focusThreadId, setFocusThreadId] = useState<string | null>(null);
   const [brief, setBrief] = useState<ThreadBrief | null>(null);
   const [briefStatus, setBriefStatus] = useState<BriefStatus>("idle");
@@ -46,73 +36,55 @@ export function ActiveThreadLens() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshingBrief, setIsRefreshingBrief] = useState(false);
 
-  const load = useCallback(async (opts?: { markLoading?: boolean; ignoreCooldown?: boolean }) => {
-    const markLoading = opts?.markLoading ?? true;
-    const ignoreCooldown = opts?.ignoreCooldown ?? false;
-    const now = Date.now();
-    if (isLoadingRef.current) return;
-    if (!ignoreCooldown && now - lastLoadAtRef.current < 1500) return;
-    lastLoadAtRef.current = now;
-    isLoadingRef.current = true;
-    if (markLoading) setIsLoading(true);
-
+  const reloadLensState = useCallback(async () => {
+    setIsLoading(true);
     try {
-      const [stateRes, candidatesRes, resolvedRes] = await Promise.all([
-        window.threadsApi.getActiveState(),
-        window.threadsApi.getActiveCandidates(),
-        window.threadsApi.getResolvedActive(),
-      ]);
+      const res = await window.threadsApi.getLensState();
+      if (!res.success) {
+        setLensState(null);
+        return;
+      }
 
-      setLoadState({
-        pinnedThreadId: stateRes.success ? (stateRes.data?.state.pinnedThreadId ?? null) : null,
-        candidates: candidatesRes.success ? (candidatesRes.data?.threads ?? []) : [],
-        resolved: resolvedRes.success ? (resolvedRes.data?.thread ?? null) : null,
-      });
+      setLensState(res.data?.snapshot ?? null);
     } finally {
-      if (markLoading) setIsLoading(false);
-      isLoadingRef.current = false;
+      setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void reloadLensState();
+  }, [reloadLensState]);
 
   useEffect(() => {
-    const unsubscribe = window.activityMonitorApi.onTimelineChanged(() => {
-      if (timelineRefreshTimeoutRef.current != null) {
-        window.clearTimeout(timelineRefreshTimeoutRef.current);
-        timelineRefreshTimeoutRef.current = null;
-      }
-      timelineRefreshTimeoutRef.current = window.setTimeout(() => {
-        timelineRefreshTimeoutRef.current = null;
-        void load({ markLoading: false, ignoreCooldown: true });
-      }, 800);
+    return window.threadsApi.onLensStateChanged((payload) => {
+      setLensState((prev) => {
+        if (!prev) return payload.snapshot;
+        if (payload.snapshot.revision <= prev.revision) return prev;
+        return payload.snapshot;
+      });
     });
-    return () => {
-      if (timelineRefreshTimeoutRef.current != null) {
-        window.clearTimeout(timelineRefreshTimeoutRef.current);
-      }
-      unsubscribe();
-    };
-  }, [load]);
+  }, []);
 
   const viewModel = useMemo(() => {
-    const pool = [...loadState.candidates];
-    if (loadState.resolved && !pool.some((t) => t.id === loadState.resolved?.id)) {
-      pool.push(loadState.resolved);
-    }
+    const snapshot = lensState;
+    if (!snapshot) return null;
+
+    const pool = [...snapshot.topThreads];
     if (pool.length === 0) return null;
 
-    let active = pool.find((t) => t.id === focusThreadId);
-    if (!active) active = loadState.resolved || pool[0];
+    const resolved = snapshot.resolvedThreadId
+      ? (pool.find((t) => t.id === snapshot.resolvedThreadId) ?? null)
+      : null;
+
+    const activeCandidateId = focusThreadId ?? resolved?.id ?? pool[0]?.id ?? null;
+    const active = pool.find((t) => t.id === activeCandidateId) ?? pool[0];
 
     const others = pool
       .filter((t) => t.id !== active.id)
       .sort((a, b) => b.lastActiveAt - a.lastActiveAt);
 
-    return { active, others, isPinned: loadState.pinnedThreadId === active.id };
-  }, [loadState.candidates, loadState.resolved, focusThreadId, loadState.pinnedThreadId]);
+    return { active, others, isPinned: snapshot.pinnedThreadId === active.id };
+  }, [focusThreadId, lensState]);
 
   const active = viewModel?.active;
   const others = viewModel?.others ?? [];
@@ -120,42 +92,36 @@ export function ActiveThreadLens() {
   const activeThreadId = active?.id ?? null;
   const activeThreadLastActiveAt = active?.lastActiveAt ?? null;
 
-  useEffect(() => {
-    let ignore = false;
-    const run = async () => {
-      if (!activeThreadId) {
-        setBrief(null);
-        setBriefStatus("idle");
-        setBriefError(null);
-        return;
+  const fetchBrief = useCallback(
+    async (
+      threadId: string,
+      expectedLastActiveAt: number | null,
+      opts?: { force?: boolean; showLoading?: boolean; ignoreCache?: boolean }
+    ) => {
+      const force = opts?.force ?? false;
+      const showLoading = opts?.showLoading ?? true;
+      const ignoreCache = opts?.ignoreCache ?? false;
+
+      if (!force && !ignoreCache) {
+        const cached = briefCacheRef.current.get(threadId);
+        if (cached && cached.lastActiveAt === expectedLastActiveAt) {
+          setBrief(cached.brief);
+          setBriefStatus(cached.brief?.briefMarkdown ? "ready" : "unavailable");
+          setBriefError(null);
+          return;
+        }
       }
 
-      const now = Date.now();
-      const last = lastBriefFetchRef.current;
-      const isSameThread = last?.threadId === activeThreadId;
-      const activeAtDeltaOk =
-        isSameThread &&
-        last?.lastActiveAt != null &&
-        activeThreadLastActiveAt != null &&
-        activeThreadLastActiveAt - last.lastActiveAt < BRIEF_REFRESH_ACTIVE_AT_DELTA_MS;
-      const withinCooldown =
-        isSameThread && now - (last?.fetchedAt ?? 0) < BRIEF_REFRESH_COOLDOWN_MS;
+      const requestId = (briefRequestIdRef.current += 1);
+      activeBriefRequestRef.current = { requestId, threadId };
 
-      if (isSameThread && withinCooldown && activeAtDeltaOk) return;
-
-      lastBriefFetchRef.current = {
-        threadId: activeThreadId,
-        lastActiveAt: activeThreadLastActiveAt,
-        fetchedAt: now,
-      };
-
-      if (!isSameThread || !brief?.briefMarkdown) {
+      if (showLoading) {
         setBriefStatus("loading");
         setBriefError(null);
       }
 
-      const res = await window.threadsApi.getBrief({ threadId: activeThreadId, force: false });
-      if (ignore) return;
+      const res = await window.threadsApi.getBrief({ threadId, force });
+      if (activeBriefRequestRef.current.requestId !== requestId) return;
 
       if (!res.success) {
         setBrief(null);
@@ -165,15 +131,59 @@ export function ActiveThreadLens() {
       }
 
       const next = res.data?.brief ?? null;
+      briefCacheRef.current.set(threadId, {
+        brief: next,
+        lastActiveAt: next?.lastActiveAt ?? expectedLastActiveAt,
+      });
+
       setBrief(next);
       setBriefStatus(next?.briefMarkdown ? "ready" : "unavailable");
-    };
+      setBriefError(null);
+    },
+    []
+  );
 
-    void run();
-    return () => {
-      ignore = true;
-    };
-  }, [activeThreadId, activeThreadLastActiveAt, brief?.briefMarkdown]);
+  useEffect(() => {
+    if (!activeThreadId) {
+      setBrief(null);
+      setBriefStatus("idle");
+      setBriefError(null);
+      return;
+    }
+
+    const cached = briefCacheRef.current.get(activeThreadId);
+    if (cached && cached.lastActiveAt === activeThreadLastActiveAt) {
+      setBrief(cached.brief);
+      setBriefStatus(cached.brief?.briefMarkdown ? "ready" : "unavailable");
+      setBriefError(null);
+      return;
+    }
+
+    const shouldShowLoading = !cached?.brief?.briefMarkdown;
+    void fetchBrief(activeThreadId, activeThreadLastActiveAt, {
+      force: false,
+      showLoading: shouldShowLoading,
+    });
+  }, [activeThreadId, activeThreadLastActiveAt, fetchBrief]);
+
+  useEffect(() => {
+    return window.threadsApi.onThreadBriefUpdated((payload) => {
+      if (payload.threadId !== activeThreadId) return;
+      void fetchBrief(payload.threadId, payload.lastActiveAt, {
+        force: false,
+        showLoading: false,
+        ignoreCache: true,
+      });
+    });
+  }, [activeThreadId, fetchBrief]);
+
+  useEffect(() => {
+    if (!focusThreadId) return;
+    const stillVisible = lensState?.topThreads.some((t) => t.id === focusThreadId) ?? false;
+    if (!stillVisible) {
+      setFocusThreadId(null);
+    }
+  }, [focusThreadId, lensState?.topThreads]);
 
   const isPreviewing = focusThreadId != null;
 
@@ -181,38 +191,26 @@ export function ActiveThreadLens() {
 
   const handlePinToggle = useCallback(async () => {
     if (!active) return;
-    if (loadState.pinnedThreadId === active.id) {
+    if (lensState?.pinnedThreadId === active.id) {
       await window.threadsApi.unpin();
     } else {
       await window.threadsApi.pin({ threadId: active.id });
     }
-    await load();
-  }, [active, load, loadState.pinnedThreadId]);
+  }, [active, lensState?.pinnedThreadId]);
 
   const handleRefresh = useCallback(async () => {
-    if (!active) {
-      await load();
-      return;
-    }
+    if (!active) return;
     setIsRefreshingBrief(true);
-    setBriefStatus("loading");
-    setBriefError(null);
     try {
-      const res = await window.threadsApi.getBrief({ threadId: active.id, force: true });
-      if (!res.success) {
-        setBrief(null);
-        setBriefStatus("error");
-        setBriefError(res.error?.message ?? null);
-      } else {
-        const next = res.data?.brief ?? null;
-        setBrief(next);
-        setBriefStatus(next?.briefMarkdown ? "ready" : "unavailable");
-      }
-      await load();
+      await fetchBrief(active.id, active.lastActiveAt, {
+        force: true,
+        showLoading: true,
+        ignoreCache: true,
+      });
     } finally {
       setIsRefreshingBrief(false);
     }
-  }, [active, load]);
+  }, [active, fetchBrief]);
 
   if (!viewModel || !active) return null;
 
@@ -232,7 +230,7 @@ export function ActiveThreadLens() {
               >
                 <Sparkles className="h-3 w-3" /> {tr("threadLens.state.temporaryFocus")}
               </motion.span>
-            ) : loadState.pinnedThreadId ? (
+            ) : lensState?.pinnedThreadId ? (
               <motion.span
                 key="pinned"
                 initial={{ opacity: 0 }}
@@ -270,18 +268,32 @@ export function ActiveThreadLens() {
                 className="group relative"
                 onClick={() => setFocusThreadId(t.id)}
               >
-                <div className="h-8 flex items-center px-4 bg-muted/10 hover:bg-muted/30 backdrop-blur-md border border-border/20 border-dashed rounded-lg cursor-pointer transition-all overflow-hidden">
+                <div className="h-8 flex items-center px-4 bg-muted/10 hover:bg-muted/30 backdrop-blur-md border border-border border-dashed rounded-lg cursor-pointer transition-all overflow-hidden">
                   <motion.span
                     layout="position"
                     className="text-xs font-medium text-muted-foreground/60 truncate flex-1 group-hover:text-foreground/80"
                   >
                     {t.title || tr("threadLens.untitled")}
                   </motion.span>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[10px] font-bold py-0 px-1.5 ml-2 shrink-0",
+                      t.status === "active" &&
+                        "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
+                      t.status === "inactive" &&
+                        "border-amber-500/30 text-amber-500 bg-amber-500/5",
+                      t.status === "closed" &&
+                        "border-muted-foreground/30 text-muted-foreground bg-muted/10"
+                    )}
+                  >
+                    {tr(`threadLens.status.${t.status}`)}
+                  </Badge>
                   <motion.span
                     layout="position"
-                    className="text-[9px] font-bold text-muted-foreground/20 tabular-nums ml-4"
+                    className="text-xs font-bold text-muted-foreground tabular-nums ml-4"
                   >
-                    {format(new Date(t.lastActiveAt), "HH:mm")}
+                    {format(new Date(t.lastActiveAt), "MM/dd HH:mm")}
                   </motion.span>
                 </div>
               </motion.div>
@@ -315,6 +327,20 @@ export function ActiveThreadLens() {
                     )}
                   </motion.div>
                   <motion.div layout="position" className="mt-3 flex items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-xs font-bold py-0.5 px-2",
+                        active.status === "active" &&
+                          "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
+                        active.status === "inactive" &&
+                          "border-amber-500/30 text-amber-500 bg-amber-500/5",
+                        active.status === "closed" &&
+                          "border-muted-foreground/30 text-muted-foreground bg-muted/10"
+                      )}
+                    >
+                      {tr(`threadLens.status.${active.status}`)}
+                    </Badge>
                     {active.currentPhase && (
                       <TooltipProvider delayDuration={400}>
                         <Tooltip>
@@ -337,9 +363,9 @@ export function ActiveThreadLens() {
                     )}
                     <motion.span
                       layout="position"
-                      className="text-[10px] text-muted-foreground/20 font-bold ml-auto tabular-nums"
+                      className="text-xs text-muted-foreground font-bold ml-auto tabular-nums"
                     >
-                      {format(new Date(active.lastActiveAt), "HH:mm:ss")}
+                      {format(new Date(active.lastActiveAt), "MM/dd HH:mm:ss")}
                     </motion.span>
                   </motion.div>
                 </div>

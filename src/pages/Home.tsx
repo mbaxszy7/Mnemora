@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
@@ -65,13 +65,6 @@ export default function HomePage() {
   const { t } = useTranslation();
   const { navigate } = useViewTransition();
   const { initServices } = useInitServices();
-
-  const briefWarmupRef = useRef<{
-    threadId: string;
-    lastActiveAt: number | null;
-    ts: number;
-  } | null>(null);
-  const briefWarmupInFlightRef = useRef(false);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -346,41 +339,6 @@ export default function HomePage() {
     setSelectedWindowId(null);
     setSelectedSummary(null);
   }, [showTimelineEmptyState]);
-
-  useEffect(() => {
-    const unsubscribe = window.activityMonitorApi.onTimelineChanged(async () => {
-      if (briefWarmupInFlightRef.current) return;
-      briefWarmupInFlightRef.current = true;
-
-      try {
-        const now = Date.now();
-        const resolvedRes = await window.threadsApi.getResolvedActive();
-        const thread = resolvedRes.success ? (resolvedRes.data?.thread ?? null) : null;
-        if (!thread) return;
-
-        const last = briefWarmupRef.current;
-        const withinCooldown = last != null && now - last.ts < 30_000;
-        const sameThread = last?.threadId === thread.id;
-        const sameActiveAt = last?.lastActiveAt === thread.lastActiveAt;
-
-        if (sameThread && sameActiveAt && withinCooldown) {
-          return;
-        }
-
-        briefWarmupRef.current = {
-          threadId: thread.id,
-          lastActiveAt: thread.lastActiveAt,
-          ts: now,
-        };
-
-        await window.threadsApi.getBrief({ threadId: thread.id, force: false });
-      } finally {
-        briefWarmupInFlightRef.current = false;
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
 
   return (
     <motion.div

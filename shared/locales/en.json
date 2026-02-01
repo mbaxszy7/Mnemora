@@ -414,6 +414,11 @@
   },
   "threadLens": {
     "title": "Active focus",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive",
+      "closed": "Closed"
+    },
     "state": {
       "preview": "Preview",
       "temporaryFocus": "Temporary focus",

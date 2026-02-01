@@ -30,10 +30,13 @@ import type {
   ThreadsGetBriefRequest,
   ThreadsGetBriefResponse,
   ThreadsGetByIdRequest,
+  ThreadsGetLensStateResponse,
   ThreadsGetResolvedActiveResponse,
   ThreadsGetResponse,
   ThreadsListRequest,
   ThreadsListResponse,
+  ThreadBriefUpdatedPayload,
+  ThreadLensStateChangedPayload,
   ThreadsPinRequest,
   ThreadsPinResponse,
   ThreadsUnpinResponse,
@@ -259,6 +262,9 @@ export interface ThreadsApi {
   getActiveState(): Promise<IPCResult<ThreadsGetActiveStateResponse>>;
   getActiveCandidates(): Promise<IPCResult<ThreadsGetActiveCandidatesResponse>>;
   getResolvedActive(): Promise<IPCResult<ThreadsGetResolvedActiveResponse>>;
+  getLensState(): Promise<IPCResult<ThreadsGetLensStateResponse>>;
+  onLensStateChanged(callback: (payload: ThreadLensStateChangedPayload) => void): () => void;
+  onThreadBriefUpdated(callback: (payload: ThreadBriefUpdatedPayload) => void): () => void;
   pin(request: ThreadsPinRequest): Promise<IPCResult<ThreadsPinResponse>>;
   unpin(): Promise<IPCResult<ThreadsUnpinResponse>>;
   get(request: ThreadsGetByIdRequest): Promise<IPCResult<ThreadsGetResponse>>;
@@ -275,6 +281,24 @@ const threadsApi: ThreadsApi = {
   },
   async getResolvedActive(): Promise<IPCResult<ThreadsGetResolvedActiveResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_RESOLVED_ACTIVE);
+  },
+  async getLensState(): Promise<IPCResult<ThreadsGetLensStateResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.THREADS_GET_LENS_STATE);
+  },
+  onLensStateChanged(callback: (payload: ThreadLensStateChangedPayload) => void) {
+    const subscription = (_event: unknown, payload: ThreadLensStateChangedPayload) =>
+      callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.THREADS_LENS_STATE_CHANGED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.THREADS_LENS_STATE_CHANGED, subscription);
+    };
+  },
+  onThreadBriefUpdated(callback: (payload: ThreadBriefUpdatedPayload) => void) {
+    const subscription = (_event: unknown, payload: ThreadBriefUpdatedPayload) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.THREADS_BRIEF_UPDATED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.THREADS_BRIEF_UPDATED, subscription);
+    };
   },
   async pin(request: ThreadsPinRequest): Promise<IPCResult<ThreadsPinResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.THREADS_PIN, request);

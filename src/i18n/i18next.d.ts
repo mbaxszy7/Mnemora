@@ -9,6 +9,11 @@ import enTranslations from "@shared/locales/en.json";
 
 type TranslationResources = typeof enTranslations & {
   threadLens?: {
+    status?: {
+      active?: string;
+      inactive?: string;
+      closed?: string;
+    };
     brief?: {
       unavailableTitle?: string;
       unavailableBody?: string;

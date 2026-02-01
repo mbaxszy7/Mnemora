@@ -30,11 +30,13 @@ export interface ThreadLLMUserPromptArgs {
   yesterdayStart: number;
   yesterdayEnd: number;
   weekAgo: number;
+  appCandidatesJson: string;
 }
 
 export interface ThreadBriefUserPromptArgs {
   threadJson: string;
   evidenceJson: string;
+  appCandidatesJson: string;
 }
 
 export interface QueryUnderstandingUserPromptArgs {
@@ -629,6 +631,17 @@ Timezone: ${args.timeZone}
 - Yesterday end: ${args.yesterdayEnd}
 - One week ago: ${args.weekAgo}
 
+## Canonical App Candidates (reference-only)
+${args.appCandidatesJson}
+
+## App-name safety rules (critical)
+- This list is provided ONLY to help you interpret app names in the input evidence (e.g., node.app_hint, node.window_title). You do NOT output app_hint.
+- Any name in the list is an application name (commercial software), NOT a user project/repo/workspace name.
+- If a candidate app name appears in a window title (e.g., "Antigravity - mnemora"), do NOT treat the app name as the project. Extract the project/workspace from the remaining title text when possible.
+- NEVER use a candidate app name as project_name/project_key, or as if it were a user project in thread titles/summaries.
+- Aliases like "Chrome", "google chrome", "arc", etc. should be mapped to the canonical app name when reasoning.
+- If you cannot confidently map an observed app name to one canonical app, treat the app as unknown when reasoning.
+
 ## Active Threads (most recent first)
 ${args.activeThreadsJson}
 
@@ -660,6 +673,17 @@ const THREAD_LLM_USER_PROMPT_ZH = (
 - 昨天开始：${args.yesterdayStart}
 - 昨天结束：${args.yesterdayEnd}
 - 一周前：${args.weekAgo}
+
+## 规范应用候选 (仅供参考)
+${args.appCandidatesJson}
+
+## 应用名安全规则 (关键)
+- 上述列表仅用于帮助你解读输入证据中的应用名称（例如 node.app_hint、node.window_title）。你不需要也不应该产出 app_hint。
+- 列表中的任意名称都只能被视为“应用名（商业软件）”，绝不能被识别为用户项目/仓库/工作区名称。
+- 如果窗口标题中出现候选应用名（例如 "Antigravity - mnemora"），不要把应用名当项目；应尽量从标题剩余部分提取项目/工作区。
+- 绝不要把候选应用名用于 project_name/project_key，也不要在 thread 的 title/summary 中把它当成用户项目来写。
+- 若输入包含别名如 "Chrome"、"google chrome"、"arc" 等，在推理时应映射到规范应用名。
+- 如果无法自信地把某个观察到的应用名映射到一个规范应用，在推理时视为未知应用。
 
 ## 活跃线索 (按最近排序)
 ${args.activeThreadsJson}
@@ -729,6 +753,17 @@ ${args.threadJson}
 ## Evidence (chronological order)
 ${args.evidenceJson}
 
+## Canonical App Candidates (reference-only)
+${args.appCandidatesJson}
+
+## App-name safety rules (critical)
+- This list is provided ONLY to help you interpret app names in the input evidence (e.g., evidence.app_hint, evidence.window_title). You do NOT output app_hint.
+- Any name in the list is an application name (commercial software), NOT a user project/repo/workspace name.
+- If a candidate app name appears in a window title (e.g., "Antigravity - mnemora"), do NOT treat the app name as the project. Extract the project/workspace from the remaining title text when possible.
+- NEVER use a candidate app name as project_name/project_key, or as if it were a user project in the brief.
+- Aliases like "Chrome", "google chrome", "arc", etc. should be mapped to the canonical app name when reasoning.
+- If you cannot confidently map an observed app name to one canonical app, treat the app as unknown when writing.
+
 Write the brief strictly following the output schema.`;
 
 const THREAD_BRIEF_USER_PROMPT_ZH = (args: ThreadBriefUserPromptArgs) => `## 线索
@@ -736,6 +771,17 @@ ${args.threadJson}
 
 ## 证据条目（按时间顺序输入；请只基于证据撰写）
 ${args.evidenceJson}
+
+## 规范应用候选 (仅供参考)
+${args.appCandidatesJson}
+
+## 应用名安全规则 (关键)
+- 上述列表仅用于帮助你解读输入证据中的应用名称（例如 evidence.app_hint、evidence.window_title）。你不需要也不应该产出 app_hint。
+- 列表中的任意名称都只能被视为“应用名（商业软件）”，绝不能被识别为用户项目/仓库/工作区名称。
+- 如果窗口标题中出现候选应用名（例如 "Antigravity - mnemora"），不要把应用名当项目；应尽量从标题剩余部分提取项目/工作区。
+- 绝不要把候选应用名用于 project_name/project_key，也不要在简报中把它当成用户项目来写。
+- 若输入包含别名如 "Chrome"、"google chrome"、"arc" 等，在推理时应映射到规范应用名。
+- 如果无法自信地把某个观察到的应用名映射到一个规范应用，在撰写时视为未知应用。
 
 请严格按输出 JSON 模式撰写简报。`;
 

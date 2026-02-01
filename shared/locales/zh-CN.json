@@ -415,6 +415,11 @@
   },
   "threadLens": {
     "title": "当前焦点",
+    "status": {
+      "active": "进行中",
+      "inactive": "已闲置",
+      "closed": "已结束"
+    },
     "state": {
       "preview": "预览",
       "temporaryFocus": "临时焦点",

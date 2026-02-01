@@ -56,6 +56,24 @@ export interface ActivityTimelineChangedEvent {
   };
 }
 
+export interface ActivitySummarySucceededEvent {
+  type: "activity-summary:succeeded";
+  timestamp: number;
+  payload: {
+    windowStart: number;
+    windowEnd: number;
+    summaryId: number | null;
+    updatedAt: number;
+  };
+}
+
+export interface ThreadsChangedEvent {
+  type: "threads:changed";
+  timestamp: number;
+  reason: string;
+  changedCount: number;
+}
+
 export type ScreenshotAcceptEvent = AcceptedScreenshot;
 
 export interface ScreenshotProcessingEventMap {
@@ -87,4 +105,6 @@ export interface ScreenshotProcessingEventMap {
   "batch:thread:succeeded": { batchId: number; threadId: string; timestamp: number };
   "batch:thread:failed": { batchId: number; error: string; timestamp: number };
   "activity-timeline:changed": ActivityTimelineChangedEvent;
+  "activity-summary:succeeded": ActivitySummarySucceededEvent;
+  "threads:changed": ThreadsChangedEvent;
 }

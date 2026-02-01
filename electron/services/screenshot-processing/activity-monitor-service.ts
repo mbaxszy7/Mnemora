@@ -789,6 +789,8 @@ class ActivityMonitorService {
         threadCount: threadIds.size,
       };
 
+      const summaryUpdatedAt = Date.now();
+
       await db
         .update(activitySummaries)
         .set({
@@ -798,7 +800,7 @@ class ActivityMonitorService {
           stats: JSON.stringify(finalStats),
           status: "succeeded",
           nextRunAt: null,
-          updatedAt: Date.now(),
+          updatedAt: summaryUpdatedAt,
         })
         .where(
           and(
@@ -829,6 +831,17 @@ class ActivityMonitorService {
           summaryId: summaryRow?.id ?? null,
         });
       }
+
+      screenshotProcessingEventBus.emit("activity-summary:succeeded", {
+        type: "activity-summary:succeeded",
+        timestamp: Date.now(),
+        payload: {
+          windowStart,
+          windowEnd,
+          summaryId: summaryRow?.id ?? null,
+          updatedAt: summaryUpdatedAt,
+        },
+      });
 
       const kindByThreadId = new Map<string, ActivityEventKind>();
       const titleByThreadId = new Map<string, string>();

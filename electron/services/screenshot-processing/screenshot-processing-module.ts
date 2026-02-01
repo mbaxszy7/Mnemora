@@ -21,6 +21,7 @@ import { threadScheduler } from "./schedulers/thread-scheduler";
 import { activityTimelineScheduler } from "./schedulers/activity-timeline-scheduler";
 import { vectorDocumentScheduler } from "./schedulers/vector-document-scheduler";
 import { ocrService } from "./ocr-service";
+import { threadRuntimeService } from "./thread-runtime-service";
 
 type InitializeArgs = {
   screenCapture: ScreenCaptureModuleType;
@@ -55,6 +56,7 @@ export class ScreenshotProcessingModule {
     screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
 
+    threadRuntimeService.start();
     batchVlmScheduler.start();
     ocrScheduler.start();
     threadScheduler.start();
@@ -81,6 +83,7 @@ export class ScreenshotProcessingModule {
     threadScheduler.stop();
     activityTimelineScheduler.stop();
     vectorDocumentScheduler.stop();
+    threadRuntimeService.stop();
     this.stopFallbackCleanup();
 
     this.initialized = false;

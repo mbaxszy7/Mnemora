@@ -357,23 +357,25 @@ export function ActiveThreadLens() {
                   >
                     {t.title || tr("threadLens.untitled")}
                   </motion.span>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] font-bold py-0 px-1.5 ml-2 shrink-0",
-                      t.status === "active" &&
-                        "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
-                      t.status === "inactive" &&
-                        "border-amber-500/30 text-amber-500 bg-amber-500/5",
-                      t.status === "closed" &&
-                        "border-muted-foreground/30 text-muted-foreground bg-muted/10"
-                    )}
-                  >
-                    {tr(`threadLens.status.${t.status}`)}
-                  </Badge>
+                  <motion.div layout="position" className="ml-2 flex items-center">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] font-bold py-0 px-1.5 shrink-0 h-4.5 flex items-center justify-center",
+                        t.status === "active" &&
+                          "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
+                        t.status === "inactive" &&
+                          "border-amber-500/30 text-amber-500 bg-amber-500/5",
+                        t.status === "closed" &&
+                          "border-muted-foreground/30 text-muted-foreground bg-muted/10"
+                      )}
+                    >
+                      {tr(`threadLens.status.${t.status}`)}
+                    </Badge>
+                  </motion.div>
                   <motion.span
                     layout="position"
-                    className="text-xs font-bold text-muted-foreground tabular-nums ml-4"
+                    className="text-xs font-bold text-muted-foreground tabular-nums ml-4 h-full flex items-center"
                   >
                     {format(new Date(t.lastActiveAt), "MM/dd HH:mm")}
                   </motion.span>
@@ -392,7 +394,7 @@ export function ActiveThreadLens() {
         >
           <Card
             className={cn(
-              "overflow-hidden bg-card/60 backdrop-blur-xl border-border/60 shadow-2xl",
+              "overflow-hidden bg-card/60 backdrop-blur-xl border-border/60 shadow-xl",
               isPinnedActive && "border-amber-500/30",
               isPreviewing && "border-sky-500/30"
             )}
@@ -409,30 +411,34 @@ export function ActiveThreadLens() {
                     )}
                   </motion.div>
                   <motion.div layout="position" className="mt-3 flex items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className={cn(
-                        "text-xs font-bold py-0.5 px-2",
-                        active.status === "active" &&
-                          "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
-                        active.status === "inactive" &&
-                          "border-amber-500/30 text-amber-500 bg-amber-500/5",
-                        active.status === "closed" &&
-                          "border-muted-foreground/30 text-muted-foreground bg-muted/10"
-                      )}
-                    >
-                      {tr(`threadLens.status.${active.status}`)}
-                    </Badge>
+                    <motion.div layout="position">
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "text-xs font-bold py-0.5 px-2",
+                          active.status === "active" &&
+                            "border-emerald-500/30 text-emerald-500 bg-emerald-500/5",
+                          active.status === "inactive" &&
+                            "border-amber-500/30 text-amber-500 bg-amber-500/5",
+                          active.status === "closed" &&
+                            "border-muted-foreground/30 text-muted-foreground bg-muted/10"
+                        )}
+                      >
+                        {tr(`threadLens.status.${active.status}`)}
+                      </Badge>
+                    </motion.div>
                     {active.currentPhase && (
                       <TooltipProvider delayDuration={400}>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Badge
-                              variant="outline"
-                              className="text-xs font-bold border-muted-foreground/20 text-muted-foreground py-0.5 px-2 cursor-help"
-                            >
-                              <motion.span layout="position">{active.currentPhase}</motion.span>
-                            </Badge>
+                            <motion.div layout="position">
+                              <Badge
+                                variant="outline"
+                                className="text-xs font-bold border-muted-foreground/20 text-muted-foreground py-0.5 px-2 cursor-help"
+                              >
+                                {active.currentPhase}
+                              </Badge>
+                            </motion.div>
                           </TooltipTrigger>
                           <TooltipContent
                             side="bottom"
@@ -593,7 +599,7 @@ export function ActiveThreadLens() {
                           <Badge
                             key={i}
                             variant="secondary"
-                            className="text-xs font-bold bg-white/5 border-none opacity-70"
+                            className="text-xs font-bold bg-primary/5 dark:bg-white/5 border-primary/10 dark:border-white/10 opacity-80"
                           >
                             {h}
                           </Badge>

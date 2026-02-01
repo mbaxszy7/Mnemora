@@ -95,7 +95,7 @@ export function MarkdownContent({ content, variant = "default" }: MarkdownConten
         // Inline code (no language class)
         return (
           <code
-            className={`rounded bg-secondary text-base font-mono ${
+            className={`rounded bg-muted/80 border border-border/50 text-base font-mono ${
               isCompact ? "px-1 py-0.5" : "px-1.5 py-0.5"
             }`}
             {...props}

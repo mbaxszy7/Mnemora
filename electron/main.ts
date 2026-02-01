@@ -167,7 +167,15 @@ class AppLifecycleController {
         preload: path.join(MAIN_DIST, "preload.mjs"),
       },
       autoHideMenuBar: true,
-      titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
+      titleBarStyle: process.platform === "darwin" ? "hidden" : "hidden",
+      ...(process.platform === "darwin"
+        ? {
+            trafficLightPosition: {
+              x: 12,
+              y: 10,
+            },
+          }
+        : {}),
       titleBarOverlay:
         process.platform === "win32"
           ? {

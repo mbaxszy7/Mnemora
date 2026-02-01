@@ -9,6 +9,8 @@ import { Camera, Loader2, PauseCircle, PlayCircle } from "lucide-react";
 export const TitleBar: React.FC = () => {
   const { effectiveTheme } = useTheme();
   const { t } = useTranslation();
+  const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.platform);
+  const isWindows = typeof navigator !== "undefined" && /Win/i.test(navigator.platform);
   const [isRecording, setIsRecording] = useState(false);
   const [captureStatus, setCaptureStatus] = useState<
     "idle" | "running" | "paused" | "stopped" | null
@@ -79,7 +81,8 @@ export const TitleBar: React.FC = () => {
   return (
     <div
       className={cn(
-        "h-[38px] w-full flex items-center px-4 shrink-0 select-none transition-colors duration-200 sticky top-0 z-99999 mb-4 ",
+        "h-[38px] w-full flex items-center pr-4 shrink-0 select-none transition-colors duration-200 sticky top-0 z-99999 mb-4 ",
+        isMac ? " pl-20" : "pl-4",
         effectiveTheme === "dark" ? "bg-[#09090b]" : "bg-[#f1f5f9]",
         "border-b border-border/40",
         // This is crucial for Electron draggability
@@ -158,7 +161,7 @@ export const TitleBar: React.FC = () => {
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
-        <div className="w-[120px] h-full" />
+        {isWindows ? <div className="w-[120px] h-full" /> : null}
       </div>
     </div>
   );

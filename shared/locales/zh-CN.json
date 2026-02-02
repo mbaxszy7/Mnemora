@@ -489,6 +489,52 @@
     "message": "检测到 AI 故障：{{seconds}} 秒内发生 {{count}} 次失败。屏幕采集已停止，请检查 LLM 配置。",
     "openConfig": "打开 LLM 配置"
   },
+  "notifications": {
+    "activitySummary": {
+      "title": "活动摘要已生成",
+      "body": "你的活动摘要已经准备好。"
+    },
+    "llmBroken": {
+      "title": "LLM 需要检查",
+      "body": "检测到 AI 故障：{{windowSeconds}} 秒内发生 {{count}} 次失败。屏幕采集已停止，请检查 LLM 配置。"
+    },
+    "capturePaused": {
+      "title": "采集已暂停",
+      "body": "屏幕采集已暂停。"
+    },
+    "actions": {
+      "openLlmConfig": "打开 LLM 配置"
+    }
+  },
+  "notificationsPage": {
+    "title": "通知",
+    "description": "选择你希望接收的通知类型",
+    "messages": {
+      "saved": "已保存",
+      "saveFailed": "保存失败"
+    },
+    "global": {
+      "title": "全局",
+      "description": "启用或禁用通知",
+      "enabled": "启用通知",
+      "sound": "声音",
+      "soundDescription": "显示通知时播放提示音"
+    },
+    "types": {
+      "title": "类型",
+      "description": "切换通知类别",
+      "activitySummary": "活动摘要",
+      "llmErrors": "LLM 错误",
+      "capturePaused": "采集暂停"
+    },
+    "dnd": {
+      "title": "勿扰",
+      "description": "在指定时间段内静默通知",
+      "enabled": "启用勿扰",
+      "from": "开始",
+      "to": "结束"
+    }
+  },
   "notFound": {
     "pageNotFound": "页面未找到",
     "backToHome": "返回首页"

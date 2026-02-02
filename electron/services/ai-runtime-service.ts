@@ -3,11 +3,11 @@ import { BrowserWindow } from "electron";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import type { AIFailureFuseTrippedPayload } from "@shared/ipc-types";
 import type { LLMConfig } from "@shared/llm-config-types";
-
 import { getLogger } from "./logger";
-import { llmConfigService } from "./llm-config-service";
+import { aiRuntimeEventBus } from "./ai-runtime/event-bus";
 import { processingConfig } from "./screenshot-processing/config";
 import type { CaptureSchedulerState } from "./screen-capture/types";
+import { LLMConfigService } from "./llm-config-service";
 
 /**
  * AI 能力类型（贯穿 semaphore/tuner/breaker 以及所有调用点）。
@@ -49,7 +49,7 @@ function defaultSendToAllWindows(payload: AIFailureFuseTrippedPayload): void {
  * - 调用 validate，成功才允许自动恢复 capture
  */
 async function defaultValidateConfig(config: LLMConfig): Promise<{ success: boolean }> {
-  const res = await llmConfigService.validateConfiguration(config);
+  const res = await LLMConfigService.getInstance().validateConfiguration(config);
   return { success: res.success };
 }
 
@@ -546,6 +546,16 @@ class AIFailureCircuitBreaker {
     };
 
     this.sendToAllWindows(payload);
+
+    try {
+      aiRuntimeEventBus.emit("ai-fuse:tripped", {
+        type: "ai-fuse:tripped",
+        timestamp: Date.now(),
+        payload,
+      });
+    } catch {
+      // ignore
+    }
   }
 
   /**

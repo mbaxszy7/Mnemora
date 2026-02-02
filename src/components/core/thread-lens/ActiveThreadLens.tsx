@@ -466,33 +466,6 @@ export function ActiveThreadLens() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-8 w-8 rounded-full border border-border/20 hover:bg-primary/5 group"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleRefresh();
-                            }}
-                            disabled={isLoading || isRefreshingBrief}
-                          >
-                            <RefreshCw
-                              className={cn(
-                                "h-4 w-4 text-muted-foreground/60 transition-colors group-hover:text-primary",
-                                (isLoading || isRefreshingBrief) && "animate-spin"
-                              )}
-                            />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent
-                          side="bottom"
-                          className="text-[10px] font-bold uppercase tracking-wider"
-                        >
-                          {tr("threadLens.actions.refresh")}
-                        </TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
                             className={cn(
                               "h-8 w-8 rounded-full border border-border/20 transition-all",
                               isPinnedActive

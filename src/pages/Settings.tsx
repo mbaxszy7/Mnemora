@@ -22,6 +22,7 @@ import {
   CheckCircle,
   XCircle,
   Settings,
+  Bell,
   Monitor,
   Activity,
   ArrowLeft,
@@ -348,6 +349,23 @@ export default function SettingsPage() {
               {t("llmConfig.title")}
             </Label>
             <p className="text-sm text-muted-foreground">{t("llmConfig.description")}</p>
+          </div>
+          <ChevronRight className="h-5 w-5 text-muted-foreground" />
+        </button>
+
+        {/* Notifications */}
+        <button
+          onClick={() => navigate("/settings/notifications", { type: "slide-left", duration: 300 })}
+          className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2 cursor-pointer">
+              <Bell className="h-4 w-4" />
+              {t("settings.notifications.label")}
+            </Label>
+            <p className="text-sm text-muted-foreground">
+              {t("settings.notifications.description")}
+            </p>
           </div>
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>

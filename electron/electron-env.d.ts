@@ -178,6 +178,29 @@ interface Window {
       >
     >;
   };
+  notificationApi: {
+    show(
+      notification: import("../shared/notification-types").ShowNotificationRequest["notification"]
+    ): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    getPreferences(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/notification-types").NotificationPreferencesResponse
+      >
+    >;
+    updatePreferences(
+      preferences: import("../shared/notification-types").NotificationPreferencesRequest["preferences"]
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/notification-types").NotificationPreferencesResponse
+      >
+    >;
+    onNotificationClick(
+      callback: (payload: import("../shared/notification-types").NotificationClickPayload) => void
+    ): () => void;
+    onNotificationToast(
+      callback: (payload: import("../shared/notification-types").NotificationToastPayload) => void
+    ): () => void;
+  };
   captureSourceApi: {
     initServices(): Promise<import("../shared/ipc-types").IPCResult<boolean>>;
     getScreens(): Promise<

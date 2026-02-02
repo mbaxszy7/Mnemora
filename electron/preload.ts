@@ -55,6 +55,13 @@ import type {
   RegenerateSummaryResponse,
   ActivityTimelineChangedPayload,
 } from "@shared/activity-types";
+import type {
+  NotificationClickPayload,
+  NotificationPreferencesRequest,
+  NotificationPreferencesResponse,
+  NotificationToastPayload,
+  ShowNotificationRequest,
+} from "@shared/notification-types";
 
 export interface I18nApi {
   changeLanguage(lang: SupportedLanguage): Promise<void>;
@@ -259,6 +266,50 @@ const userSettingsApi: UserSettingsApi = {
 };
 
 contextBridge.exposeInMainWorld("userSettingsApi", userSettingsApi);
+
+export interface NotificationApi {
+  show(notification: ShowNotificationRequest["notification"]): Promise<IPCResult<void>>;
+  getPreferences(): Promise<IPCResult<NotificationPreferencesResponse>>;
+  updatePreferences(
+    preferences: NotificationPreferencesRequest["preferences"]
+  ): Promise<IPCResult<NotificationPreferencesResponse>>;
+  onNotificationClick(callback: (payload: NotificationClickPayload) => void): () => void;
+  onNotificationToast(callback: (payload: NotificationToastPayload) => void): () => void;
+}
+
+const notificationApi: NotificationApi = {
+  async show(notification): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_SHOW, {
+      notification,
+    } satisfies ShowNotificationRequest);
+  },
+  async getPreferences(): Promise<IPCResult<NotificationPreferencesResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_GET_PREFERENCES);
+  },
+  async updatePreferences(
+    preferences: NotificationPreferencesRequest["preferences"]
+  ): Promise<IPCResult<NotificationPreferencesResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_UPDATE_PREFERENCES, {
+      preferences,
+    } satisfies NotificationPreferencesRequest);
+  },
+  onNotificationClick(callback: (payload: NotificationClickPayload) => void) {
+    const subscription = (_event: unknown, payload: NotificationClickPayload) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.NOTIFICATION_ON_CLICK, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_ON_CLICK, subscription);
+    };
+  },
+  onNotificationToast(callback: (payload: NotificationToastPayload) => void) {
+    const subscription = (_event: unknown, payload: NotificationToastPayload) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.NOTIFICATION_TOAST, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_TOAST, subscription);
+    };
+  },
+};
+
+contextBridge.exposeInMainWorld("notificationApi", notificationApi);
 
 export interface ThreadsApi {
   getActiveState(): Promise<IPCResult<ThreadsGetActiveStateResponse>>;

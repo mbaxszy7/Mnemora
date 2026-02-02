@@ -14,6 +14,7 @@ const SettingsLLMConfigPage = lazy(() => import("@/pages/SettingsLLMConfig"));
 const CaptureSourceSettingsPage = lazy(() => import("@/pages/settings/CaptureSourceSettings"));
 const ContextRulesPage = lazy(() => import("@/pages/settings/ContextRules"));
 const UsagePage = lazy(() => import("@/pages/settings/UsagePage"));
+const NotificationsPage = lazy(() => import("@/pages/settings/Notifications"));
 const SearchResultsPage = lazy(() => import("@/pages/SearchResults"));
 const NotFoundPage = lazy(() => import("@/pages/NotFound"));
 
@@ -229,6 +230,10 @@ export const router = createHashRouter([
           {
             path: "settings/usage",
             element: withSuspense(<UsagePage />, <UsagePageSkeleton />),
+          },
+          {
+            path: "settings/notifications",
+            element: withSuspense(<NotificationsPage />, <SettingsPageSkeleton />),
           },
           {
             path: "search-results",

@@ -9,6 +9,10 @@ import {
   type CaptureManualOverride,
   type UserSettings,
 } from "@shared/user-settings-types";
+import type {
+  NotificationPreferences,
+  NotificationPreferencesRequest,
+} from "@shared/notification-types";
 import {
   DEFAULT_CAPTURE_ALLOWED_WINDOWS,
   DEFAULT_CAPTURE_ALLOWED_WINDOWS_JSON,
@@ -36,6 +40,19 @@ function recordToSettings(record: UserSettingRecord): UserSettings {
 
   contextRulesStore.updateFromUserSettings(settings);
   return settings;
+}
+
+function recordToNotificationPreferences(record: UserSettingRecord): NotificationPreferences {
+  return {
+    enabled: record.notificationEnabled,
+    activitySummary: record.notificationActivitySummary,
+    llmErrors: record.notificationLlmErrors,
+    capturePaused: record.notificationCapturePaused,
+    soundEnabled: record.notificationSoundEnabled,
+    doNotDisturb: record.notificationDoNotDisturb,
+    doNotDisturbFrom: record.notificationDoNotDisturbFrom,
+    doNotDisturbTo: record.notificationDoNotDisturbTo,
+  };
 }
 
 export class UserSettingService {
@@ -169,6 +186,41 @@ export class UserSettingService {
     }
 
     return recordToSettings(updated);
+  }
+
+  async getNotificationPreferences(): Promise<NotificationPreferences> {
+    const record = this.ensureSingletonRecord();
+    return recordToNotificationPreferences(record);
+  }
+
+  async updateNotificationPreferences(
+    patch: NotificationPreferencesRequest["preferences"]
+  ): Promise<NotificationPreferences> {
+    const db = getDb();
+    const existing = this.ensureSingletonRecord();
+    const now = Date.now();
+
+    const next: Partial<UserSettingRecord> = {
+      updatedAt: now,
+    };
+
+    if (patch.enabled != null) next.notificationEnabled = patch.enabled;
+    if (patch.activitySummary != null) next.notificationActivitySummary = patch.activitySummary;
+    if (patch.llmErrors != null) next.notificationLlmErrors = patch.llmErrors;
+    if (patch.capturePaused != null) next.notificationCapturePaused = patch.capturePaused;
+    if (patch.soundEnabled != null) next.notificationSoundEnabled = patch.soundEnabled;
+    if (patch.doNotDisturb != null) next.notificationDoNotDisturb = patch.doNotDisturb;
+    if (patch.doNotDisturbFrom != null) next.notificationDoNotDisturbFrom = patch.doNotDisturbFrom;
+    if (patch.doNotDisturbTo != null) next.notificationDoNotDisturbTo = patch.doNotDisturbTo;
+
+    db.update(userSetting).set(next).where(eq(userSetting.id, existing.id)).run();
+
+    const updated = db.select().from(userSetting).where(eq(userSetting.id, existing.id)).get();
+    if (!updated) {
+      throw new Error("Failed to load updated user_setting");
+    }
+
+    return recordToNotificationPreferences(updated);
   }
 }
 

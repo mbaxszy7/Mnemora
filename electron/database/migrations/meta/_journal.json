@@ -85,6 +85,13 @@
       "when": 1769744022820,
       "tag": "0011_nebulous_shadowcat",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1770026181511,
+      "tag": "0012_lean_giant_girl",
+      "breakpoints": true
     }
   ]
 }

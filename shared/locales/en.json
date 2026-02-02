@@ -488,6 +488,52 @@
     "message": "AI failures detected: {{count}} failures in {{seconds}}s. Screen capture stopped. Please check LLM configuration.",
     "openConfig": "Open LLM Config"
   },
+  "notifications": {
+    "activitySummary": {
+      "title": "Activity summary ready",
+      "body": "Your activity summary is ready."
+    },
+    "llmBroken": {
+      "title": "LLM needs attention",
+      "body": "AI failures detected: {{count}} failures in {{windowSeconds}}s. Screen capture stopped. Please check LLM configuration."
+    },
+    "capturePaused": {
+      "title": "Capture paused",
+      "body": "Screen capture has been paused."
+    },
+    "actions": {
+      "openLlmConfig": "Open LLM Config"
+    }
+  },
+  "notificationsPage": {
+    "title": "Notifications",
+    "description": "Choose which notifications you want to receive",
+    "messages": {
+      "saved": "Saved",
+      "saveFailed": "Failed to save"
+    },
+    "global": {
+      "title": "Global",
+      "description": "Enable or disable notifications",
+      "enabled": "Enable notifications",
+      "sound": "Sound",
+      "soundDescription": "Play a sound when showing notifications"
+    },
+    "types": {
+      "title": "Types",
+      "description": "Toggle notification categories",
+      "activitySummary": "Activity summary",
+      "llmErrors": "LLM errors",
+      "capturePaused": "Capture paused"
+    },
+    "dnd": {
+      "title": "Do Not Disturb",
+      "description": "Suppress notifications during a time window",
+      "enabled": "Enable Do Not Disturb",
+      "from": "From",
+      "to": "To"
+    }
+  },
   "splashScreen": {
     "slogans": {
       "pixelsToMemory": "Pixels to memory.",

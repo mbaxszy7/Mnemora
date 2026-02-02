@@ -106,6 +106,25 @@ export const userSetting = sqliteTable("user_setting", {
   pinnedThreadId: text("pinned_thread_id"),
   pinnedThreadUpdatedAt: integer("pinned_thread_updated_at"),
 
+  notificationEnabled: integer("notification_enabled", { mode: "boolean" }).notNull().default(true),
+  notificationActivitySummary: integer("notification_activity_summary", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  notificationLlmErrors: integer("notification_llm_errors", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  notificationCapturePaused: integer("notification_capture_paused", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  notificationSoundEnabled: integer("notification_sound_enabled", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  notificationDoNotDisturb: integer("notification_do_not_disturb", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  notificationDoNotDisturbFrom: text("notification_do_not_disturb_from").notNull().default("22:00"),
+  notificationDoNotDisturbTo: text("notification_do_not_disturb_to").notNull().default("08:00"),
+
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

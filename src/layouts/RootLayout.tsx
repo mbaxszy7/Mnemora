@@ -1,13 +1,12 @@
 import { useNavigate, Outlet } from "react-router-dom";
 import { useEffect } from "react";
-import { useAiFuseToast } from "@/hooks/use-ai-fuse-toast";
+import { useNotification } from "@/hooks/use-notification";
 import { TitleBar } from "@/components/core/TitleBar";
 
 export default function RootLayout() {
   const navigate = useNavigate();
 
-  // Listen for AI failure circuit breaker events
-  useAiFuseToast();
+  useNotification();
 
   useEffect(() => {
     const cleanup = window.appApi.onNavigate((path) => {

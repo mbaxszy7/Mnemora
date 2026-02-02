@@ -17,6 +17,7 @@ import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
 import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
 import { registerAppHandlers } from "./ipc/app-handlers";
+import { registerNotificationHandlers } from "./ipc/notification-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
 import { mainI18n } from "./services/i18n-service";
@@ -27,6 +28,7 @@ import { powerMonitorService } from "./services/power-monitor";
 import { TrayService } from "./services/tray-service";
 import { monitoringServer } from "./services/monitoring";
 import { userSettingService } from "./services/user-setting-service";
+import { notificationService } from "./services/notification/notification-service";
 
 // ============================================================================
 // Environment Setup
@@ -280,6 +282,7 @@ class AppLifecycleController {
     registerActivityMonitorHandlers();
     registerMonitoringHandlers();
     registerAppHandlers();
+    registerNotificationHandlers();
     this.logger.info("IPC handlers registered");
   }
   private initPowerMonitor(): void {
@@ -315,6 +318,7 @@ class AppLifecycleController {
     captureScheduleController.start();
     // 3. Initialize i18n (required before UI)
     await this.initI18nService();
+    notificationService.registerEventBusSubscriptions();
     // 4. Initialize AI service from database (non-critical, can fail gracefully)
     await this.initAIService();
     // 5. Initialize power monitor (non-critical)
@@ -330,6 +334,7 @@ class AppLifecycleController {
     this.disposed = true;
 
     TrayService.resetInstance();
+    notificationService.dispose();
     captureScheduleController.stop();
     screenCaptureModule.dispose();
     powerMonitorService.dispose();

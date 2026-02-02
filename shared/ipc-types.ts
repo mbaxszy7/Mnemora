@@ -91,6 +91,12 @@ export const IPC_CHANNELS = {
   // AI Failure Circuit Breaker
   AI_FAILURE_FUSE_TRIPPED: "ai:fuse-tripped",
   MONITORING_OPEN_DASHBOARD: "monitoring:open-dashboard",
+  // Notifications
+  NOTIFICATION_SHOW: "notification:show",
+  NOTIFICATION_GET_PREFERENCES: "notification:get-preferences",
+  NOTIFICATION_UPDATE_PREFERENCES: "notification:update-preferences",
+  NOTIFICATION_ON_CLICK: "notification:on-click",
+  NOTIFICATION_TOAST: "notification:toast",
   // App channels
   APP_UPDATE_TITLE_BAR: "app:update-title-bar",
   // Screen Capture Real-time events

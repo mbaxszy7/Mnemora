@@ -20,6 +20,12 @@ import { aiRuntimeEventBus } from "../ai-runtime/event-bus";
 const logger = getLogger("notification-service");
 
 function resolveNotificationIcon(): string | undefined {
+  // macOS: Don't set icon for native notifications - the app icon is determined by the app bundle.
+  // Setting icon on macOS causes a second icon to appear on the right side of the notification.
+  if (process.platform === "darwin") {
+    return undefined;
+  }
+
   try {
     const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
     const candidates =
@@ -78,6 +84,34 @@ export class NotificationService {
   private subscriptions: Array<() => void> = [];
 
   private constructor() {}
+
+  private focusWindowForNotification(): void {
+    try {
+      // macOS: explicitly focus the app so the window can be brought to front.
+      if (process.platform === "darwin") {
+        app.focus({ steal: true });
+      }
+
+      const windows = BrowserWindow.getAllWindows().filter((w) => !w.isDestroyed());
+      const target =
+        BrowserWindow.getFocusedWindow() ??
+        windows.find((w) => w.isVisible()) ??
+        windows.find((w) => !w.isMinimized()) ??
+        windows[0];
+
+      if (!target) {
+        // Let the app's existing `app.on("activate")` handler decide whether to create a window.
+        app.emit("activate");
+        return;
+      }
+
+      if (target.isMinimized()) target.restore();
+      if (!target.isVisible()) target.show();
+      target.focus();
+    } catch {
+      // ignore
+    }
+  }
 
   static getInstance(): NotificationService {
     if (!NotificationService.instance) {
@@ -224,11 +258,17 @@ export class NotificationService {
 
         const icon = resolveNotificationIcon();
 
+        logger.debug(
+          { silent, soundEnabled: prefs.soundEnabled },
+          "Creating notification with sound config"
+        );
+
         const notification = new Notification({
           title,
           body,
           silent,
           urgency: this.mapPriorityToUrgency(payload.priority),
+          // Only set icon on Windows/Linux, not macOS
           ...(icon ? { icon } : {}),
         });
 
@@ -254,6 +294,8 @@ export class NotificationService {
 
   private handleNativeNotificationClick(payload: NotificationPayload): void {
     try {
+      this.focusWindowForNotification();
+
       const clickPayload: NotificationClickPayload = {
         notificationId: payload.id,
         notificationType: payload.type,

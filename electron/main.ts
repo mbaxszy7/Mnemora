@@ -34,7 +34,7 @@ import { notificationService } from "./services/notification/notification-servic
 // Environment Setup
 // ============================================================================
 
-void createRequire(import.meta.url);
+const require = createRequire(import.meta.url);
 
 process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
@@ -118,6 +118,7 @@ class AppLifecycleController {
     this.logger = getLogger("main");
     this.logger.info("App is ready, initializing...");
 
+    this.initAutoUpdate();
     await this.initializeApp();
 
     this.mainWindow = this.createMainWindow();
@@ -137,6 +138,28 @@ class AppLifecycleController {
       })
       .init();
     this.logger.info("Main window created");
+  }
+
+  private initAutoUpdate(): void {
+    if (!app.isPackaged || process.platform !== "win32") {
+      return;
+    }
+
+    try {
+      const mod = require("update-electron-app");
+      const updateElectronApp =
+        mod?.updateElectronApp ?? mod?.default?.updateElectronApp ?? mod?.default ?? mod;
+
+      if (typeof updateElectronApp !== "function") {
+        this.logger.warn("update-electron-app is installed but did not export updateElectronApp()");
+        return;
+      }
+
+      updateElectronApp({ owner: "mbaxszy7", repo: "Mnemora" });
+      this.logger.info("Auto-update initialized (Windows packaged app)");
+    } catch (error) {
+      this.logger.warn({ error }, "Auto-update not initialized (missing dependency or misconfig)");
+    }
   }
 
   private warmupOcrOnSplash(): void {

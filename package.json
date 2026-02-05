@@ -10,6 +10,10 @@
     "dev:custom-electron": "./scripts/prepare-dev-electron.sh && ELECTRON_OVERRIDE_DIST_PATH=$PWD/.electron-dev pnpm dev",
     "dev:rebuild": "pnpm run rebuild:sqlite && vite",
     "build": "pnpm run build:window_inspector && pnpm run rebuild:sqlite && tsc && vite build && electron-builder",
+    "forge:start": "electron-forge start",
+    "forge:package": "electron-forge package",
+    "forge:make": "electron-forge make",
+    "forge:publish": "electron-forge publish",
     "build:window_inspector": "node ./externals/python/window_inspector/build.js",
     "build:window_inspector:force": "FORCE_REBUILD=1 pnpm run build:window_inspector",
     "lint": "eslint . --max-warnings 0",
@@ -99,6 +103,13 @@
   "devDependencies": {
     "@commitlint/cli": "^20.1.0",
     "@commitlint/config-conventional": "^20.0.0",
+    "@electron-forge/cli": "^7.6.0",
+    "@electron-forge/maker-dmg": "^7.6.0",
+    "@electron-forge/maker-squirrel": "^7.6.0",
+    "@electron-forge/maker-zip": "^7.6.0",
+    "@electron-forge/plugin-auto-unpack-natives": "^7.6.0",
+    "@electron-forge/plugin-vite": "^7.6.0",
+    "@electron-forge/publisher-github": "^7.6.0",
     "@electron/rebuild": "^3.7.1",
     "@eslint/js": "^9.39.1",
     "@tailwindcss/vite": "^4.1.0",
@@ -136,7 +147,12 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
-      "hnswlib-node"
+      "electron-winstaller",
+      "fs-xattr",
+      "hnswlib-node",
+      "macos-alias",
+      "sharp",
+      "tesseract.js"
     ]
   }
 }

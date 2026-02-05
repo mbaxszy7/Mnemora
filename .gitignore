@@ -12,6 +12,7 @@ dist
 dist-electron
 dist-ssr
 release
+out
 *.local
 
 # Editor directories and files
@@ -45,3 +46,4 @@ externals/python/window_inspector/**/*.pyc
 externals/python/window_inspector/*.spec
 
 .electron-dev/
+.electron-cache/

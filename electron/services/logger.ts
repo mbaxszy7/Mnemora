@@ -100,11 +100,15 @@ class LoggerService {
     });
 
     // Create pretty stream for file with readable level names
+    // Note: In packaged apps, async SonicBoom destinations can throw
+    // "sonic boom is not ready yet" during early startup/teardown.
+    // Use sync writes in production to avoid crashing the main process.
+    const isProd = this.isProd();
     const filePrettyStream = pretty({
       colorize: false,
       translateTime: "SYS:standard",
       destination: this.logFile,
-      sync: false,
+      sync: isProd,
       ignore: "pid,hostname,app,logFile,module",
       singleLine: true,
       messageFormat: (log, messageKey) => {
@@ -113,9 +117,6 @@ class LoggerService {
         return `${modulePrefix}${msg}`;
       },
     });
-
-    // Use try-catch for app.isPackaged as it may not be available before app is ready
-    const isProd = this.isProd();
 
     // Create multiple streams for file and console output with per-env levels
     const streams = isProd

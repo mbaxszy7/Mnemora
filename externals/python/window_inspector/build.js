@@ -20,6 +20,7 @@ if (!isMac) {
 const scriptPath = join(__dirname, "build.sh");
 
 const result = spawnSync(scriptPath, {
+  cwd: __dirname,
   stdio: "inherit",
   shell: true,
   env: { ...process.env },

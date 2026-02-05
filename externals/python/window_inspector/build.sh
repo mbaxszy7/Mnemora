@@ -40,7 +40,7 @@ pip install pyinstaller pyobjc-framework-Quartz
 
 # Build with PyInstaller
 echo "Building executable..."
-pyinstaller --clean -y window_inspector.spec
+pyinstaller --clean -y "$SCRIPT_DIR/window_inspector.spec"
 
 echo "=== Build complete ==="
 echo "Executable: $SCRIPT_DIR/dist/window_inspector/window_inspector"

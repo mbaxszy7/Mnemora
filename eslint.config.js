@@ -9,7 +9,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   prettier,
   {
-    ignores: ["dist/**", "dist-electron/**", "node_modules/**"],
+    ignores: ["dist/**", "dist-electron/**", "node_modules/**", "scripts/**"],
   },
   {
     files: ["**/*.{ts,tsx}"],

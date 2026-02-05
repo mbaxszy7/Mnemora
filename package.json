@@ -7,6 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm run build:window_inspector && vite",
+    "dev:custom-electron": "./scripts/prepare-dev-electron.sh && ELECTRON_OVERRIDE_DIST_PATH=$PWD/.electron-dev pnpm dev",
     "dev:rebuild": "pnpm run rebuild:sqlite && vite",
     "build": "pnpm run build:window_inspector && pnpm run rebuild:sqlite && tsc && vite build && electron-builder",
     "build:window_inspector": "node ./externals/python/window_inspector/build.js",

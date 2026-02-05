@@ -65,9 +65,23 @@ export function useLanguage(): UseLanguageReturn {
     const syncWithMainProcess = async () => {
       if (window.i18nApi?.getLanguage) {
         try {
-          const mainLanguage = await window.i18nApi.getLanguage();
           const currentI18n = i18nRef.current;
-          // Only sync if different from current
+
+          // Prefer renderer's persisted preference, and push it to main
+          const stored = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+          const storedLang = isSupportedLanguage(stored) ? stored : null;
+
+          if (storedLang && storedLang !== currentI18n.language) {
+            await currentI18n.changeLanguage(storedLang);
+          }
+
+          if (storedLang) {
+            await window.i18nApi.changeLanguage(storedLang);
+            return;
+          }
+
+          // No local preference -> pull from main
+          const mainLanguage = await window.i18nApi.getLanguage();
           if (mainLanguage && mainLanguage !== currentI18n.language) {
             await currentI18n.changeLanguage(mainLanguage);
           }

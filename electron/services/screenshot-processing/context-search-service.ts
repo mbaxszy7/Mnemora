@@ -51,11 +51,14 @@ export class ContextSearchService {
       abortSignal
     );
 
-    if (initialNodes.length === 0) {
+    // Apply filters to all initial candidates (timeRangeRecall and keywordSearch results may not be filtered)
+    const filteredNodes = this.applyFilters(initialNodes, filters);
+
+    if (filteredNodes.length === 0) {
       return { nodes: [], relatedEvents: [], evidence: [], queryPlan: queryPlan ?? undefined };
     }
 
-    let rankedNodes = this.rankNodes(initialNodes, nodeScoreMap, filters);
+    let rankedNodes = this.rankNodes(filteredNodes, nodeScoreMap, filters);
 
     const neighborNodes = await this.expandNeighbors(rankedNodes.slice(0, 5), filters);
     if (neighborNodes.length > 0) {
@@ -161,6 +164,13 @@ export class ContextSearchService {
 
       if (entityBoostA !== entityBoostB) {
         return entityBoostB - entityBoostA;
+      }
+
+      const appHintBoostA = this.getAppHintBoost(a, filters);
+      const appHintBoostB = this.getAppHintBoost(b, filters);
+
+      if (appHintBoostA !== appHintBoostB) {
+        return appHintBoostB - appHintBoostA;
       }
 
       const idA = a.id ?? -1;
@@ -508,7 +518,7 @@ export class ContextSearchService {
     filters?: SearchFilters
   ): ExpandedContextNode[] {
     if (!filters) return nodes;
-    let result = nodes.filter((node) => {
+    const result = nodes.filter((node) => {
       if (filters.threadId && node.threadId !== filters.threadId) {
         return false;
       }
@@ -521,7 +531,7 @@ export class ContextSearchService {
         }
       }
 
-      if (filters.entities && filters.entities.length > 0 && !filters.timeRange) {
+      if (filters.entities && filters.entities.length > 0) {
         const wanted = filters.entities
           .map((e: string) => e.trim().toLowerCase())
           .filter((e: string) => e.length > 0);
@@ -536,31 +546,7 @@ export class ContextSearchService {
       return true;
     });
 
-    if (filters.appHint && result.length > 0) {
-      const filteredNodeIds = result
-        .map((n) => n.id)
-        .filter((id): id is number => id !== undefined);
-      if (filteredNodeIds.length === 0) {
-        return [];
-      }
-
-      const db = getDb();
-      const nodeIdsWithAppHint = db
-        .select({ nodeId: contextScreenshotLinks.nodeId })
-        .from(contextScreenshotLinks)
-        .innerJoin(screenshots, eq(contextScreenshotLinks.screenshotId, screenshots.id))
-        .where(
-          and(
-            inArray(contextScreenshotLinks.nodeId, filteredNodeIds),
-            eq(screenshots.appHint, filters.appHint)
-          )
-        )
-        .all()
-        .map((r) => r.nodeId);
-
-      const nodeIdSet = new Set(nodeIdsWithAppHint);
-      result = result.filter((n) => n.id && nodeIdSet.has(n.id));
-    }
+    // Note: appHint is no longer a hard filter; it's used as a ranking boost in rankNodes()
 
     return result;
   }
@@ -699,6 +685,28 @@ export class ContextSearchService {
     if (wanted.length === 0) return 0;
 
     return wanted.some((w) => this.nodeEntityMatches(node, w)) ? 1 : 0;
+  }
+
+  private getAppHintBoost(node: ExpandedContextNode, filters?: SearchFilters): number {
+    if (!filters?.appHint) return 0;
+
+    const nodeAppHint = node.appContext?.appHint;
+    if (!nodeAppHint) return 0;
+
+    // Exact match gets boost
+    if (nodeAppHint.toLowerCase() === filters.appHint.toLowerCase()) {
+      return 1;
+    }
+
+    // Partial match (e.g., "Microsoft Teams" matches "Teams")
+    if (
+      nodeAppHint.toLowerCase().includes(filters.appHint.toLowerCase()) ||
+      filters.appHint.toLowerCase().includes(nodeAppHint.toLowerCase())
+    ) {
+      return 0.5;
+    }
+
+    return 0;
   }
 
   private prioritizeNodesForAnswer(

@@ -1,4 +1,6 @@
-import { BrowserWindow, Notification } from "electron";
+import { app, BrowserWindow, Notification } from "electron";
+import path from "node:path";
+import { existsSync } from "node:fs";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import type {
   NotificationClickPayload,
@@ -16,6 +18,20 @@ import { screenCaptureEventBus } from "../screen-capture";
 import { aiRuntimeEventBus } from "../ai-runtime/event-bus";
 
 const logger = getLogger("notification-service");
+
+function resolveNotificationIcon(): string | undefined {
+  try {
+    const base = app.isPackaged ? process.resourcesPath : app.getAppPath();
+    const candidates =
+      process.platform === "win32"
+        ? [path.join(base, "logo.ico"), path.join(base, "public", "logo.ico")]
+        : [path.join(base, "logo.png"), path.join(base, "public", "logo.png")];
+    const found = candidates.find((p) => existsSync(p));
+    return found;
+  } catch {
+    return undefined;
+  }
+}
 
 function isTimeWithinDnd(now: Date, from: string, to: string): boolean {
   const fromMinutes = timeStringToMinutes(from);
@@ -206,11 +222,14 @@ export class NotificationService {
           payload.data
         );
 
+        const icon = resolveNotificationIcon();
+
         const notification = new Notification({
           title,
           body,
           silent,
           urgency: this.mapPriorityToUrgency(payload.priority),
+          ...(icon ? { icon } : {}),
         });
 
         notification.on("click", () => {

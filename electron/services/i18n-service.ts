@@ -14,6 +14,7 @@ class MainI18nService {
   private static instance: MainI18nService | null = null;
   private i18nInstance: i18n | null = null;
   private initialized: boolean = false;
+  private pendingLanguage: SupportedLanguage | null = null;
   private logger = getLogger("i18n-service");
 
   private constructor() {}
@@ -68,6 +69,12 @@ class MainI18nService {
     });
 
     this.initialized = true;
+
+    if (this.pendingLanguage && this.pendingLanguage !== this.getCurrentLanguage()) {
+      const lang = this.pendingLanguage;
+      this.pendingLanguage = null;
+      await this.changeLanguage(lang);
+    }
     this.logger.info({ language: this.getCurrentLanguage() }, "i18n service initialized");
   }
 
@@ -86,6 +93,7 @@ class MainI18nService {
 
   async changeLanguage(lang: SupportedLanguage): Promise<void> {
     if (!this.initialized || !this.i18nInstance) {
+      this.pendingLanguage = lang;
       this.logger.warn({ lang }, "Language change requested before initialization");
       return;
     }
@@ -111,6 +119,9 @@ class MainI18nService {
   }
 
   getCurrentLanguage(): SupportedLanguage {
+    if (this.pendingLanguage) {
+      return this.pendingLanguage;
+    }
     if (!this.initialized || !this.i18nInstance) {
       return DEFAULT_LANGUAGE;
     }

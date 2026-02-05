@@ -101,6 +101,10 @@ function resolvePackagedResourcesDir(buildPath) {
 }
 
 function copyWindowInspectorIntoResources({ buildPath }) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
   const inspectorDir = ensureWindowInspectorBuilt();
   const resourcesDir = resolvePackagedResourcesDir(buildPath);
 
@@ -317,13 +321,18 @@ module.exports = {
   ],
   hooks: {
     prePackage: async (_forgeConfig, platform, arch) => {
+      const effectivePlatform = platform ?? process.platform;
       await ensureElectronDownloaded({
-        platform: platform ?? process.platform,
+        platform: effectivePlatform,
         arch: arch ?? process.arch,
       });
-      execSync("pnpm -s run build:window_inspector", { stdio: "inherit" });
+
+      if (effectivePlatform === "darwin") {
+        execSync("pnpm -s run build:window_inspector", { stdio: "inherit" });
+        ensureWindowInspectorBuilt();
+      }
+
       execSync("pnpm -s vite build", { stdio: "inherit" });
-      ensureWindowInspectorBuilt();
       rebuildNativeModules();
     },
     packageAfterCopy: async (_forgeConfig, buildPath) => {

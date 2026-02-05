@@ -1,18 +1,14 @@
-name: Release
+name: Build
 
 on:
   push:
-    tags:
-      - "v*"
-
-permissions:
-  contents: write
+    branches:
+      - master
 
 jobs:
-  publish:
+  make:
     strategy:
       fail-fast: false
-      max-parallel: 1
       matrix:
         include:
           - os: windows-2022
@@ -40,7 +36,8 @@ jobs:
         with:
           python-version: "3.11"
       - run: pnpm install --frozen-lockfile
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm forge:publish --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: make-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/**/*

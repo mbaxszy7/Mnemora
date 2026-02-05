@@ -46,15 +46,6 @@ if (process.platform === "win32") {
   app.setAppUserModelId(app.isPackaged ? "com.mnemora.app" : "Mnemora");
 }
 
-// App icon path (for BrowserWindow and Dock)
-// Windows requires .ico format for proper icon display
-const iconBase = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
-const appIconCandidates =
-  process.platform === "win32"
-    ? [path.join(iconBase, "logo.ico"), path.join(iconBase, "logo.png")]
-    : [path.join(iconBase, "logo.png")];
-const appIconPath = appIconCandidates.find((p) => existsSync(p)) ?? appIconCandidates[0];
-
 // ============================================================================
 // Single Instance Lock (production only)
 // ============================================================================
@@ -177,7 +168,12 @@ class AppLifecycleController {
   }
 
   private createMainWindow(): BrowserWindow {
-    // Create native image for icon to prevent flashing
+    const iconBase = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
+    const iconCandidates =
+      process.platform === "win32"
+        ? [path.join(iconBase, "logo.ico"), path.join(iconBase, "logo.png")]
+        : [path.join(iconBase, "logo.png")];
+    const appIconPath = iconCandidates.find((p) => existsSync(p)) ?? iconCandidates[0];
     const appIcon = nativeImage.createFromPath(appIconPath);
 
     // Calculate 80% of primary screen size
@@ -214,7 +210,7 @@ class AppLifecycleController {
           : false,
     });
 
-    // Set dock icon on macOS (persistent)
+    // Set dock icon on macOS in development (packaged apps use the bundle icon).
     if (process.platform === "darwin" && app.dock && !app.isPackaged) {
       app.dock.setIcon(appIcon);
     }

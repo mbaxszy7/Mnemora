@@ -15,6 +15,17 @@ release
 out
 docs
 *.local
+.pnpm-store/
+.electron-cache/
+.electron-dev/
+.claude/
+.direnv/
+
+# Local env files (commit .env.example instead)
+.env
+.env.*
+!.env.example
+.envrc
 
 # Editor directories and files
 .vscode/*
@@ -38,6 +49,18 @@ dev.db-wal
 *.db-journal
 *.db-wal
 
+# Coverage / build artifacts
+coverage
+*.tsbuildinfo
+
+# Common secret/cert/key formats
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.mobileprovision
+
 # Python window inspector
 externals/python/window_inspector/venv/
 externals/python/window_inspector/build/
@@ -46,6 +69,3 @@ externals/python/window_inspector/__pycache__/
 externals/python/window_inspector/**/*.pyc
 externals/python/window_inspector/*.spec
 !externals/python/window_inspector/window_inspector.spec
-
-.electron-dev/
-.electron-cache/

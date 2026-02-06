@@ -4,6 +4,7 @@
   "private": true,
   "version": "0.0.1",
   "description": "Intelligent context-aware desktop application - Let your screen become your second brain",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "pnpm run build:window_inspector && vite",

@@ -50,7 +50,7 @@ import { captureScheduleController } from "./capture-schedule-controller";
 /**
  * ScreenCaptureModule provides a unified interface for screen capture functionality.
  */
-class ScreenCaptureModule {
+export class ScreenCaptureModule {
   private readonly sourceProvider: CaptureSourceProvider;
   private readonly captureService: CaptureService;
   private readonly captureScheduler: ScreenCaptureScheduler;

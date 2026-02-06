@@ -30,17 +30,30 @@ vi.mock("electron", () => ({
   BrowserWindow: vi.fn(),
 }));
 
-// Mock screen capture module
+// Mock node:fs so existsSync returns true (needed for Windows path in init())
+vi.mock("node:fs", () => ({
+  existsSync: vi.fn(() => true),
+}));
+
+// Mock screen capture module (the barrel export ./screen-capture)
 const mockCaptureModule = {
   getState: vi.fn(() => ({ status: "idle" })),
-  tryInitialize: vi.fn(),
   stop: vi.fn(),
+};
+
+const mockEventBus = {
   on: vi.fn(),
   off: vi.fn(),
 };
 
-vi.mock("./screen-capture/screen-capture-module", () => ({
+const mockCaptureScheduleController = {
+  evaluateNow: vi.fn(() => Promise.resolve()),
+};
+
+vi.mock("./screen-capture", () => ({
   screenCaptureModule: mockCaptureModule,
+  screenCaptureEventBus: mockEventBus,
+  captureScheduleController: mockCaptureScheduleController,
 }));
 
 // Mock i18n service
@@ -67,6 +80,22 @@ vi.mock("../env", () => ({
   APP_ROOT: "/test/app/root",
   VITE_DEV_SERVER_URL: "http://localhost:5173",
   RENDERER_DIST: "/dist",
+}));
+
+// Mock llm-usage-service
+vi.mock("./llm-usage-service", () => ({
+  llmUsageService: {
+    getUsageSummary: vi.fn(() => Promise.resolve({ totalTokens: 0 })),
+  },
+}));
+
+// Mock user-setting-service
+const mockUserSettingService = {
+  setCaptureManualOverride: vi.fn(() => Promise.resolve()),
+};
+
+vi.mock("./user-setting-service", () => ({
+  userSettingService: mockUserSettingService,
 }));
 
 describe("TrayService", () => {
@@ -121,9 +150,7 @@ describe("TrayService", () => {
   });
 
   describe("init", () => {
-    it("should create tray with icon", async () => {
-      const { nativeImage } = await import("electron");
-
+    it("should create tray with icon", () => {
       const service = TrayService.getInstance();
       service.configure({
         createWindow: mockCreateWindow,
@@ -133,14 +160,10 @@ describe("TrayService", () => {
 
       service.init();
 
-      expect(nativeImage.createFromPath).toHaveBeenCalled();
-      const firstCall = (nativeImage.createFromPath as unknown as Mock).mock.calls[0]?.[0] as
-        | string
-        | undefined;
-      expect(firstCall).toBeTruthy();
-      expect(firstCall).toContain("trayTemplate@2x.png");
       // Verify tray was created by checking that tray methods were called
       expect(mockTray.setToolTip).toHaveBeenCalled();
+      expect(mockTray.setContextMenu).toHaveBeenCalled();
+      expect(mockTray.on).toHaveBeenCalledWith("click", expect.any(Function));
     });
 
     it("should set tooltip on init", () => {
@@ -196,10 +219,7 @@ describe("TrayService", () => {
 
       service.init();
 
-      expect(mockCaptureModule.on).toHaveBeenCalledWith(
-        "capture-scheduler:state",
-        expect.any(Function)
-      );
+      expect(mockEventBus.on).toHaveBeenCalledWith("capture-scheduler:state", expect.any(Function));
     });
 
     it("should not reinitialize if already initialized", () => {
@@ -230,7 +250,7 @@ describe("TrayService", () => {
       service.init();
       service.dispose();
 
-      expect(mockCaptureModule.off).toHaveBeenCalledWith(
+      expect(mockEventBus.off).toHaveBeenCalledWith(
         "capture-scheduler:state",
         expect.any(Function)
       );
@@ -334,10 +354,10 @@ describe("TrayService", () => {
 
       service.init();
 
-      // Get the registered handler
-      const schedulerHandler = mockCaptureModule.on.mock.calls.find(
-        (call) => call[0] === "capture-scheduler:state"
-      )?.[1];
+      // Get the registered handler from the event bus mock
+      const schedulerHandler = mockEventBus.on.mock.calls.find(
+        (call: unknown[]) => call[0] === "capture-scheduler:state"
+      )?.[1] as ((event: { currentState: string }) => void) | undefined;
 
       expect(schedulerHandler).toBeDefined();
 
@@ -345,8 +365,8 @@ describe("TrayService", () => {
       vi.mocked(Menu.buildFromTemplate).mockClear();
       mockTray.setToolTip.mockClear();
 
-      // Simulate scheduler state change
-      schedulerHandler?.();
+      // Simulate scheduler state change with proper event shape
+      schedulerHandler?.({ currentState: "running" });
 
       expect(Menu.buildFromTemplate).toHaveBeenCalled();
       expect(mockTray.setToolTip).toHaveBeenCalled();
@@ -405,7 +425,7 @@ describe("TrayService", () => {
   });
 
   describe("toggle recording", () => {
-    it("should call start when not running", async () => {
+    it("should call evaluateNow when not running", async () => {
       const { Menu } = await import("electron");
       mockCaptureModule.getState.mockReturnValue({ status: "idle" });
 
@@ -428,7 +448,11 @@ describe("TrayService", () => {
       expect(toggleItem?.click).toBeDefined();
       toggleItem?.click?.();
 
-      expect(mockCaptureModule.tryInitialize).toHaveBeenCalled();
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockUserSettingService.setCaptureManualOverride).toHaveBeenCalledWith("force_on");
+      });
+      expect(mockCaptureScheduleController.evaluateNow).toHaveBeenCalled();
     });
 
     it("should call stop when running", async () => {
@@ -444,8 +468,15 @@ describe("TrayService", () => {
 
       service.init();
 
-      // Get the menu template to find the toggle recording click handler
-      const menuTemplate = vi.mocked(Menu.buildFromTemplate).mock.calls[0][0] as Array<{
+      // Simulate that the scheduler state is "running" by triggering the event handler
+      const schedulerHandler = mockEventBus.on.mock.calls.find(
+        (call: unknown[]) => call[0] === "capture-scheduler:state"
+      )?.[1] as ((event: { currentState: string }) => void) | undefined;
+      schedulerHandler?.({ currentState: "running" });
+
+      // Get the refreshed menu template (after state change)
+      const lastCall = vi.mocked(Menu.buildFromTemplate).mock.calls;
+      const menuTemplate = lastCall[lastCall.length - 1][0] as Array<{
         label: string;
         click?: () => void;
       }>;
@@ -454,10 +485,329 @@ describe("TrayService", () => {
       expect(toggleItem?.click).toBeDefined();
       toggleItem?.click?.();
 
+      await vi.waitFor(() => {
+        expect(mockUserSettingService.setCaptureManualOverride).toHaveBeenCalledWith("force_off");
+      });
       expect(mockCaptureModule.stop).toHaveBeenCalled();
     });
 
-    it("should read fresh state when toggling (fix closure issue)", async () => {
+    it("should handle quit menu item", async () => {
+      const { Menu } = await import("electron");
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      const menuTemplate = vi.mocked(Menu.buildFromTemplate).mock.calls[0][0] as Array<{
+        label: string;
+        click?: () => void;
+      }>;
+      const quitItem = menuTemplate.find((item) => item.label === "tray.quit");
+
+      expect(quitItem?.click).toBeDefined();
+      quitItem?.click?.();
+
+      expect(mockOnQuit).toHaveBeenCalled();
+    });
+
+    it("should handle quit when not configured", async () => {
+      const { Menu } = await import("electron");
+
+      const service = TrayService.getInstance();
+      // Configure first to init, then we'll test the quit handler's unconfigured path
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Get quit handler reference
+      const menuTemplate = vi.mocked(Menu.buildFromTemplate).mock.calls[0][0] as Array<{
+        label: string;
+        click?: () => void;
+      }>;
+      const quitItem = menuTemplate.find((item) => item.label === "tray.quit");
+      expect(quitItem?.click).toBeDefined();
+      quitItem?.click?.();
+      expect(mockOnQuit).toHaveBeenCalled();
+    });
+
+    it("should restore minimized window when clicked", () => {
+      const mockWindow = {
+        isMinimized: vi.fn(() => true),
+        restore: vi.fn(),
+        show: vi.fn(),
+        focus: vi.fn(),
+      };
+      mockGetMainWindow.mockReturnValue(mockWindow);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      const clickHandler = mockTray.on.mock.calls.find((call) => call[0] === "click")?.[1];
+      clickHandler?.();
+
+      expect(mockWindow.restore).toHaveBeenCalled();
+      expect(mockWindow.show).toHaveBeenCalled();
+    });
+
+    it("should handle usage display error gracefully", async () => {
+      const { llmUsageService } = await import("./llm-usage-service");
+      vi.mocked(llmUsageService.getUsageSummary).mockRejectedValueOnce(new Error("DB error"));
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      // Should not throw even when usage service fails
+      service.init();
+
+      // Wait for the async updateUsageDisplay to settle
+      await vi.waitFor(() => {
+        // Just verify init completed
+        expect(mockTray.setToolTip).toHaveBeenCalled();
+      });
+    });
+
+    it("should handle click on usage menu item to navigate", async () => {
+      const { Menu } = await import("electron");
+      const mockWindow = {
+        isMinimized: vi.fn(() => false),
+        restore: vi.fn(),
+        show: vi.fn(),
+        focus: vi.fn(),
+        webContents: { send: vi.fn() },
+      };
+      mockGetMainWindow.mockReturnValue(mockWindow);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      const menuTemplate = vi.mocked(Menu.buildFromTemplate).mock.calls[0][0] as Array<{
+        label: string;
+        click?: () => void;
+      }>;
+      // Usage item is the first one
+      const usageItem = menuTemplate[0];
+      usageItem?.click?.();
+
+      expect(mockWindow.webContents.send).toHaveBeenCalled();
+    });
+
+    it("should not fail when resetInstance called with no instance", () => {
+      TrayService.resetInstance(); // first reset
+      TrayService.resetInstance(); // second reset - no instance exists
+    });
+
+    it("should warn and return on double init", () => {
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+      service.init(); // should warn and return early
+
+      // Tray methods only set up once from first init
+      expect(mockTray.on).toHaveBeenCalledTimes(2); // click + double-click
+    });
+
+    it("should handle init on darwin platform", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "darwin", writable: true });
+
+      const { nativeImage } = await import("electron");
+      const mockIcon = { isEmpty: () => false, setTemplateImage: vi.fn() };
+      vi.mocked(nativeImage.createFromPath).mockReturnValue(
+        mockIcon as unknown as ReturnType<typeof nativeImage.createFromPath>
+      );
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      expect(mockIcon.setTemplateImage).toHaveBeenCalledWith(true);
+      expect(mockTray.setToolTip).toHaveBeenCalled();
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    });
+
+    it("should handle init on linux platform", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "linux", writable: true });
+
+      const { nativeImage } = await import("electron");
+      const mockIcon = { isEmpty: () => false, setTemplateImage: vi.fn() };
+      vi.mocked(nativeImage.createFromPath).mockReturnValue(
+        mockIcon as unknown as ReturnType<typeof nativeImage.createFromPath>
+      );
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // setTemplateImage should NOT be called on linux
+      expect(mockIcon.setTemplateImage).not.toHaveBeenCalled();
+      expect(mockTray.setToolTip).toHaveBeenCalled();
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    });
+
+    it("should return early when icon not found on win32", async () => {
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Tray should not be set up
+      expect(mockTray.setToolTip).not.toHaveBeenCalled();
+
+      // Restore
+      vi.mocked(existsSync).mockReturnValue(true);
+    });
+
+    it("should return early when icon is empty on non-win32", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "linux", writable: true });
+
+      const { nativeImage } = await import("electron");
+      vi.mocked(nativeImage.createFromPath).mockReturnValue({
+        isEmpty: () => true,
+        setTemplateImage: vi.fn(),
+      } as unknown as ReturnType<typeof nativeImage.createFromPath>);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Tray should not be set up
+      expect(mockTray.setToolTip).not.toHaveBeenCalled();
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+    });
+
+    it("should handle icon file not found warning on non-win32", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "linux", writable: true });
+
+      const { existsSync } = await import("node:fs");
+      vi.mocked(existsSync).mockReturnValue(false);
+
+      const { nativeImage } = await import("electron");
+      vi.mocked(nativeImage.createFromPath).mockReturnValue({
+        isEmpty: () => true,
+        setTemplateImage: vi.fn(),
+      } as unknown as ReturnType<typeof nativeImage.createFromPath>);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Should return early since icon is empty
+      expect(mockTray.setToolTip).not.toHaveBeenCalled();
+
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+      vi.mocked(existsSync).mockReturnValue(true);
+    });
+
+    it("should create new window when getMainWindow returns null", () => {
+      const mockWindow = {
+        isMinimized: vi.fn(() => false),
+        restore: vi.fn(),
+        show: vi.fn(),
+        focus: vi.fn(),
+        webContents: { send: vi.fn() },
+      };
+
+      mockGetMainWindow.mockReturnValue(null);
+      mockCreateWindow.mockReturnValue(mockWindow);
+
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Trigger click handler
+      const clickHandler = mockTray.on.mock.calls.find(
+        (call: unknown[]) => call[0] === "click"
+      )?.[1] as (() => void) | undefined;
+      clickHandler?.();
+
+      expect(mockCreateWindow).toHaveBeenCalled();
+      expect(mockWindow.show).toHaveBeenCalled();
+    });
+
+    it("should handle dispose with no updateInterval", () => {
+      const service = TrayService.getInstance();
+      service.configure({
+        createWindow: mockCreateWindow,
+        getMainWindow: mockGetMainWindow,
+        onQuit: mockOnQuit,
+      });
+
+      service.init();
+
+      // Dispose should work even without any issues
+      service.dispose();
+      expect(mockTray.destroy).toHaveBeenCalled();
+    });
+
+    it("should use current scheduler status when toggling", async () => {
       const { Menu } = await import("electron");
 
       // Start as idle
@@ -472,21 +822,26 @@ describe("TrayService", () => {
 
       service.init();
 
-      // Get the toggle handler from initial menu (shows "start")
-      const menuTemplate = vi.mocked(Menu.buildFromTemplate).mock.calls[0][0] as Array<{
+      // Simulate scheduler state change to running
+      const schedulerHandler = mockEventBus.on.mock.calls.find(
+        (call: unknown[]) => call[0] === "capture-scheduler:state"
+      )?.[1] as ((event: { currentState: string }) => void) | undefined;
+      schedulerHandler?.({ currentState: "running" });
+
+      // Get the refreshed menu after state change - it should show "stop"
+      const lastCall = vi.mocked(Menu.buildFromTemplate).mock.calls;
+      const menuTemplate = lastCall[lastCall.length - 1][0] as Array<{
         label: string;
         click?: () => void;
       }>;
-      const toggleItem = menuTemplate.find((item) => item.label === "tray.startRecording");
+      const toggleItem = menuTemplate.find((item) => item.label === "tray.stopRecording");
 
-      // Now change state to running BEFORE clicking
-      mockCaptureModule.getState.mockReturnValue({ status: "running" });
-
-      // Click should read fresh state and call stop (not start based on stale closure)
+      expect(toggleItem?.click).toBeDefined();
       toggleItem?.click?.();
 
-      expect(mockCaptureModule.stop).toHaveBeenCalled();
-      expect(mockCaptureModule.tryInitialize).not.toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(mockCaptureModule.stop).toHaveBeenCalled();
+      });
     });
   });
 });

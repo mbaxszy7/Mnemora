@@ -1,6 +1,10 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import * as fc from "fast-check";
-import { detectLanguageFromLocale } from "./i18n-utils";
+import {
+  detectLanguageFromLocale,
+  saveLanguagePreference,
+  loadLanguagePreference,
+} from "./i18n-utils";
 
 /**
  *
@@ -68,5 +72,50 @@ describe("Locale Detection Correctness", () => {
       ),
       { numRuns: 100 }
     );
+  });
+});
+
+describe("saveLanguagePreference", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+  });
+
+  it("saves language to localStorage", () => {
+    saveLanguagePreference("en");
+    expect(localStorage.setItem).toHaveBeenCalledWith("mnemora-language", "en");
+  });
+
+  it("saves zh-CN to localStorage", () => {
+    saveLanguagePreference("zh-CN");
+    expect(localStorage.setItem).toHaveBeenCalledWith("mnemora-language", "zh-CN");
+  });
+});
+
+describe("loadLanguagePreference", () => {
+  beforeEach(() => {
+    vi.stubGlobal("localStorage", {
+      getItem: vi.fn(),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+    });
+  });
+
+  it("returns saved language when valid", () => {
+    vi.mocked(localStorage.getItem).mockReturnValue("zh-CN");
+    expect(loadLanguagePreference()).toBe("zh-CN");
+  });
+
+  it("returns null for invalid saved language", () => {
+    vi.mocked(localStorage.getItem).mockReturnValue("fr-FR");
+    expect(loadLanguagePreference()).toBeNull();
+  });
+
+  it("returns null when nothing saved", () => {
+    vi.mocked(localStorage.getItem).mockReturnValue(null);
+    expect(loadLanguagePreference()).toBeNull();
   });
 });

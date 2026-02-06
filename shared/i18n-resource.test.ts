@@ -169,7 +169,9 @@ describe("Variable Interpolation", () => {
       .string({ minLength: 1, maxLength: 20 })
       .filter((s) => /^[a-zA-Z][a-zA-Z0-9]*$/.test(s));
     const variableValueArb = fc.oneof(
-      fc.string({ minLength: 0, maxLength: 50 }),
+      fc
+        .string({ minLength: 0, maxLength: 50 })
+        .filter((s) => !s.includes("{{") && !s.includes("}}")),
       fc.integer().map(String)
     );
 

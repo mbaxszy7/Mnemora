@@ -207,4 +207,129 @@ describe("AutoRefreshCache Unit Tests", () => {
       cache.dispose();
     });
   });
+
+  describe("Error handling", () => {
+    it("should call onError callback when fetch fails", async () => {
+      const onError = vi.fn();
+      const fetchFn = vi.fn().mockRejectedValue(new Error("fetch failed"));
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 3000,
+        immediate: true,
+        onError,
+      });
+
+      // Let the initial fetch fail
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onError).toHaveBeenCalledWith(expect.any(Error));
+      expect(onError.mock.calls[0][0].message).toBe("fetch failed");
+
+      cache.dispose();
+    });
+
+    it("should rethrow error when fetch fails with no cached data", async () => {
+      const fetchFn = vi.fn().mockRejectedValue(new Error("fetch failed"));
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 3000,
+        immediate: false,
+      });
+
+      await expect(cache.refresh()).rejects.toThrow("fetch failed");
+
+      cache.dispose();
+    });
+
+    it("should return stale data when fetch fails with existing cached data", async () => {
+      let callCount = 0;
+      const fetchFn = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve("original");
+        return Promise.reject(new Error("fetch failed"));
+      });
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 1000,
+        immediate: true,
+      });
+
+      // Initial success
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cache.get()).toBe("original");
+
+      // Second fetch fails - should return stale data
+      const result = await cache.refresh();
+      expect(result).toBe("original");
+
+      cache.dispose();
+    });
+
+    it("should wrap non-Error objects in onError callback", async () => {
+      const onError = vi.fn();
+      const fetchFn = vi.fn().mockRejectedValue("string error");
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 3000,
+        immediate: false,
+        onError,
+      });
+
+      await cache.refresh().catch(() => {});
+
+      expect(onError).toHaveBeenCalledWith(expect.any(Error));
+      expect(onError.mock.calls[0][0].message).toBe("string error");
+
+      cache.dispose();
+    });
+
+    it("should continue refresh cycle after fetch error", async () => {
+      let callCount = 0;
+      const fetchFn = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) return Promise.resolve("data");
+        if (callCount === 2) return Promise.reject(new Error("fail"));
+        return Promise.resolve("recovered");
+      });
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 1000,
+        immediate: true,
+      });
+
+      // Initial fetch succeeds
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cache.get()).toBe("data");
+
+      // Second fetch fails
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(cache.get()).toBe("data"); // stale
+
+      // Third fetch recovers
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(cache.get()).toBe("recovered");
+
+      cache.dispose();
+    });
+
+    it("should handle fetch returning array data", async () => {
+      const fetchFn = vi.fn().mockResolvedValue([1, 2, 3]);
+
+      const cache = new AutoRefreshCache({
+        fetchFn,
+        interval: 3000,
+        immediate: true,
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cache.get()).toEqual([1, 2, 3]);
+
+      cache.dispose();
+    });
+  });
 });

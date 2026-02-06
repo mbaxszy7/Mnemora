@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+vi.mock("./logger", () => ({
+  getLogger: vi.fn(() => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+    child: vi.fn().mockReturnThis(),
+  })),
+}));
+
 import { __testing } from "./ai-runtime-service";
 import type { AIFailureFuseTrippedPayload } from "@shared/ipc-types";
 import type { LLMConfig } from "@shared/llm-config-types";
@@ -154,5 +164,152 @@ describe("AIRuntimeService", () => {
     expect(validateConfig).toHaveBeenCalledTimes(1);
     expect(start).toHaveBeenCalledTimes(1);
     expect(service.isTripped()).toBe(false);
+  });
+
+  it("resetBreaker clears tripped state", () => {
+    tripBreaker();
+    expect(service.isTripped()).toBe(true);
+    service.resetBreaker();
+    expect(service.isTripped()).toBe(false);
+  });
+
+  it("handleConfigSaved does nothing when not tripped", async () => {
+    const dummyConfig = { mode: "unified", config: {} } as unknown as LLMConfig;
+    await service.handleConfigSaved(dummyConfig);
+    expect(validateConfig).not.toHaveBeenCalled();
+  });
+
+  it("breaker trips without capture callbacks registered", () => {
+    // No registerCaptureControlCallbacks called
+    tripBreaker();
+    expect(service.isTripped()).toBe(true);
+    expect(sendToAllWindows).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not auto-resume if validation fails", async () => {
+    const stop = vi.fn(async () => {});
+    const start = vi.fn(async () => {});
+    service.registerCaptureControlCallbacks({
+      stop,
+      start,
+      getState: () => ({ status: "running" }),
+    });
+
+    validateConfig.mockResolvedValueOnce({ success: false });
+    tripBreaker();
+
+    const dummyConfig = { mode: "unified", config: {} } as unknown as LLMConfig;
+    await service.handleConfigSaved(dummyConfig);
+
+    expect(start).not.toHaveBeenCalled();
+    expect(service.isTripped()).toBe(true); // Still tripped
+  });
+
+  it("handles validation error during recovery gracefully", async () => {
+    const stop = vi.fn(async () => {});
+    const start = vi.fn(async () => {});
+    service.registerCaptureControlCallbacks({
+      stop,
+      start,
+      getState: () => ({ status: "running" }),
+    });
+
+    validateConfig.mockRejectedValueOnce(new Error("Network error"));
+    tripBreaker();
+
+    const dummyConfig = { mode: "unified", config: {} } as unknown as LLMConfig;
+    await service.handleConfigSaved(dummyConfig);
+
+    expect(service.isTripped()).toBe(true); // Still tripped due to error
+  });
+
+  it("handles stop() failure during trip gracefully", () => {
+    const stop = vi.fn(async () => {
+      throw new Error("stop failed");
+    });
+    service.registerCaptureControlCallbacks({
+      stop,
+      start: vi.fn(async () => {}),
+      getState: () => ({ status: "running" }),
+    });
+
+    // Should not throw
+    tripBreaker();
+    expect(service.isTripped()).toBe(true);
+  });
+
+  it("acquire and release work for all capabilities", async () => {
+    const releaseVlm = await service.acquire("vlm");
+    const releaseText = await service.acquire("text");
+    const releaseEmbed = await service.acquire("embedding");
+    releaseVlm();
+    releaseText();
+    releaseEmbed();
+  });
+
+  it("breaker does not double-trip", () => {
+    tripBreaker();
+    expect(sendToAllWindows).toHaveBeenCalledTimes(1);
+    // Additional failures should not trigger another trip
+    service.recordFailure("text", new Error("f4"));
+    service.recordFailure("text", new Error("f5"));
+    expect(sendToAllWindows).toHaveBeenCalledTimes(1);
+  });
+
+  it("breaker window rolls off old events", () => {
+    // Record failures spread across time
+    service.recordFailure("text", new Error("f1"));
+    now = 5000;
+    service.recordFailure("text", new Error("f2"));
+
+    // Move time past the 10s window so f1 is stale
+    now = 15000;
+    service.recordFailure("text", new Error("f3"));
+
+    // Should NOT be tripped because f1 is outside the window (only f2 & f3 remain)
+    expect(service.isTripped()).toBe(false);
+  });
+
+  it("recordFailure with non-Error object works", () => {
+    service.recordFailure("vlm", "string error");
+    service.recordFailure("vlm", { code: 500 });
+    service.recordFailure("vlm", null);
+    // Should trip after 3 failures
+    expect(service.isTripped()).toBe(true);
+  });
+});
+
+describe("Semaphore - additional edge cases", () => {
+  it("setLimit throws for non-positive values", () => {
+    const sem = new Semaphore(3);
+    expect(() => sem.setLimit(0)).toThrow();
+    expect(() => sem.setLimit(-1)).toThrow();
+    expect(() => sem.setLimit(NaN)).toThrow();
+  });
+
+  it("release is safe when called multiple times", async () => {
+    const sem = new Semaphore(1);
+    const release = await sem.acquire();
+    release();
+    release(); // double release should not throw
+    expect(sem.getLimit()).toBe(1);
+  });
+
+  it("setLimit wakes up waiters when increasing", async () => {
+    const sem = new Semaphore(1);
+    const release1 = await sem.acquire();
+
+    let acquired = false;
+    const p = sem.acquire().then((r) => {
+      acquired = true;
+      return r;
+    });
+
+    // Increase limit should wake up waiter
+    sem.setLimit(2);
+    release1();
+    const r2 = await p;
+    r2();
+    expect(acquired).toBe(true);
   });
 });

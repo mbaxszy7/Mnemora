@@ -246,7 +246,7 @@ function buildTimeContext(now: Date) {
   };
 }
 
-class ActivityMonitorService {
+export class ActivityMonitorService {
   async getTimeline(fromTs: number, toTs: number): Promise<TimelineResponse> {
     const db = getDb();
 

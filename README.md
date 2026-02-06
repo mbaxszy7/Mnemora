@@ -55,9 +55,15 @@ Mnemora 是一款 **隐私优先的桌面“工作记忆”应用**：它持续�
 - **混合理解链路**：VLM 批处理做结构化理解，必要时触发本地 OCR（中英文）补齐文本
 - **可观测性内建**：本机 `127.0.0.1` 的监控面板 + SSE 流，能看到队列与 AI 请求/错误
 
+### ✅ 三步工作流（你会怎么用它）
+
+- **捕获**：持续屏幕感知（多显示器/窗口）+ 去重，尽量减少噪声输入
+- **理解**：批量 VLM 生成结构化上下文；需要时触发本地 OCR（中英文）补齐文本
+- **找回与续作**：用语义搜索找回当时内容，用 Thread Lens/Thread Brief 快速恢复上下文
+
 ![System Overview](./externals/assets/architecture_excalidraw.png)
 
-### ✨ 项目特点
+### ✨ 功能亮点
 
 #### 1. 持续屏幕感知 🎥
 
@@ -124,7 +130,9 @@ Mnemora 强调“数据只属于你自己”：
 - ⚙️ **按需开启**：应用启动后，可在 **Settings** 中点击 _Monitoring Dashboard_ 打开。
 - 🔗 **访问地址**：`http://127.0.0.1:<port>`（默认从 `23333` 起探测可用端口），通过 SSE `/api/stream` 实时推送指标。
 
-### 🏗️ 架构设计
+---
+
+### 🏗️ 架构设计（面向开发者）
 
 #### 系统分层架构
 
@@ -207,97 +215,47 @@ ScreenCaptureModule
             └── ActivityTimelineScheduler (活动时间线)
 ```
 
-### 🔧 关键实现
+### 🔧 关键实现（机制层，不展开代码）
 
 #### 1. 自适应背压控制（Capture Backpressure）
 
-- **压力信号**：以待处理的 VLM batch 数量（`batches.vlm_status = "pending"`）作为 backlog 指标。
-- **离散等级策略**：阈值与参数来自 `electron/services/screenshot-processing/config.ts` 的 `processingConfig.backpressure.levels`。
-- **执行位置**：
-  - `BackpressureMonitor` 定期检查 backlog，并在等级变化时发出 `backpressure:level-changed` 事件。
-  - `ScreenCaptureModule` 接收事件后：
-    - 调整 `ScreenCaptureScheduler` 的捕获间隔（`intervalMultiplier`）
-    - 调整去重阈值（`phashThreshold`，用于 `SourceBufferRegistry`）
-
-```typescript
-// electron/services/screen-capture/screen-capture-module.ts
-const newInterval = DEFAULT_SCHEDULER_CONFIG.interval * event.config.intervalMultiplier;
-this.updateConfig({ interval: newInterval });
-screenshotProcessingModule.setPhashThreshold(event.config.phashThreshold);
-```
+- **压力信号**：以待处理的 VLM 批次数量作为 backlog 指标。
+- **等级策略**：将 backlog 映射到一组离散等级配置。
+- **调参范围**：按等级动态调整捕获间隔与去重阈值，并带恢复滞后（hysteresis）避免频繁振荡。
+- **目标**：保证应用可持续运行，避免资源过载与“越跑越堆”。
 
 #### 2. 混合 OCR（VLM 触发，本地识别）
 
-- **触发条件**：VLM 输出 `knowledge.language` 与 `knowledge.textRegion`，且语言属于 `processingConfig.ocr.supportedLanguages`（默认 `['en', 'zh']`）。
-- **队列化**：`BatchVlmScheduler` 在写回 VLM 结果时将 `screenshots.ocrStatus` 设为 `"pending"`，并唤醒 `OcrScheduler`。
-- **执行**：`OcrService.recognize({ filePath, textRegion })` 会按 ROI 裁剪并调用 Tesseract.js（默认 `eng+chi_sim`）。
-- **清理策略**：OCR 成功后会写入 `screenshots.ocr_text`，并尝试删除原始截图文件（`storage_state` 置为 `"deleted"`）。
-
-```typescript
-// electron/services/screenshot-processing/schedulers/batch-vlm-scheduler.ts
-const needsOcr =
-  !!node.knowledge &&
-  processingConfig.ocr.supportedLanguages.includes(node.knowledge.language) &&
-  !!screenshot.filePath &&
-  screenshot.storageState !== "deleted";
-
-const ocrStatus = needsOcr ? "pending" : null;
-```
+- **触发条件**：VLM 识别出语言与文本区域，且命中支持语言（默认中英文）。
+- **执行方式**：按 ROI 进行裁剪后触发本地 Tesseract.js OCR。
+- **数据策略**：OCR 文本落库；截图文件作为临时输入通常会在处理后清理。
+- **目标**：在隐私与性能可控的前提下，补齐纯视觉理解难以覆盖的文本信息。
 
 #### 3. Thread 线程追踪（Thread Lens）
 
-- **线程归属**：每个 `context_nodes` 可关联一个 `thread_id`；同一 Thread 可以跨应用/窗口与多个 20 分钟活动窗口。
-- **LLM 分配**：`ThreadScheduler` 对缺少 `threadId` 的 batch 调用 `threadLlmService.assignForBatch(...)`，并由 `ThreadRepository` 落库。
-- **幂等写入**：`threadId` 只会在 `NULL` 时写入（重试不会覆盖已有归属），因此**没有“自动合并/重写 threadId”**的逻辑。
+- **线程归属**：每个上下文节点可关联一个线程；同一 Thread 可以跨应用/窗口与多个 20 分钟活动窗口。
+- **LLM 分配**：对尚未归属线程的批次，由 LLM 分配线程归属并落库。
+- **幂等写入**：线程归属采用“只写一次”的策略（已有归属不会被覆盖），因此**没有“自动合并/重写线程归属”**的逻辑。
 
-```typescript
-// electron/services/screenshot-processing/thread-repository.ts
-.where(and(eq(contextNodes.id, node.id), isNull(contextNodes.threadId)))
-```
-
-- **长事件检测**：Activity Monitor 使用 `processingConfig.activitySummary.longEventThresholdMs`（默认 25 分钟）标记长事件。
+- **长事件检测**：默认以 25 分钟阈值标记长事件。
 
 #### 4. 语义搜索（SQLite FTS + HNSW + Deep Search）
 
-- **向量索引**：HNSW（`hnswlib-node`）索引文件默认位于 `~/.mnemora/vector_index.bin`（见 `processingConfig.vectorStore.indexFilePath`）。
-- **检索融合**：`ContextSearchService.search()` 会组合 keyword search（SQL `LIKE` + SQLite FTS `screenshots_fts`）与 semantic search（Embedding + HNSW ANN），并进行邻居扩展以补齐上下文。
-- **Deep Search**：可选的 LLM query plan（`SearchQueryPlan`）与答案综合（`SearchAnswer`）会随 `SearchResult` 返回。
+- **向量索引**：HNSW 向量索引默认存储在 `~/.mnemora/vector_index.bin`。
+- **检索融合**：组合关键字检索（SQLite FTS）与语义检索（向量 ANN），并做邻居扩展以补齐上下文。
+- **Deep Search**：可选的 LLM 查询规划与答案综合，会随搜索结果一起返回。
 
 #### 5. 类型安全 IPC（shared 定义 + preload 暴露）
 
-- **集中定义**：IPC 通道与通用结果包装在 `shared/ipc-types.ts`。
-- **统一返回**：所有 handler 返回 `IPCResult<T>`（`success/data/error`）。
-- **Renderer API**：`electron/preload.ts` 通过 `contextBridge` 暴露 `contextGraphApi`、`threadsApi`、`captureSourceApi` 等类型安全接口。
-
-```typescript
-// shared/ipc-types.ts
-export const IPC_CHANNELS = {
-  SCREEN_CAPTURE_START: "screen-capture:start",
-  CONTEXT_SEARCH: "context:search",
-  MONITORING_OPEN_DASHBOARD: "monitoring:open-dashboard",
-  // ...
-} as const;
-```
+- **集中定义**：IPC 通道与返回结构在 shared 层统一维护，主进程与渲染层共享同一份约定。
+- **统一返回**：handler 通过一致的成功/失败封装返回结果，减少“隐式错误”。
+- **渲染层 API**：通过 preload 暴露类型安全的 API，避免渲染层直接触达高权限能力。
 
 #### 6. AI Runtime 并发控制 + 失败熔断（AIMD + Circuit Breaker）
 
-- **按能力隔离**：VLM / Text / Embedding 分别限流（`aiRuntimeService.acquire('vlm' | 'text' | 'embedding')`）。
-- **自适应并发**：AIMD 调参逻辑在 `electron/services/ai-runtime-service.ts`，用于在失败时快速降级、成功时逐步恢复。
-- **熔断暂停采集**：连续失败会触发 fuse，并通过回调暂停/停止采集；恢复依赖配置校验与自动重试。
-
-```typescript
-// electron/services/screenshot-processing/vlm-processor.ts
-const release = await aiRuntimeService.acquire("vlm");
-try {
-  // ...
-  aiRuntimeService.recordSuccess("vlm");
-} catch (error) {
-  aiRuntimeService.recordFailure("vlm", error);
-  throw error;
-} finally {
-  release();
-}
-```
+- **按能力隔离**：VLM / 文本 / 向量分别限流，避免单一路径占满资源。
+- **自适应并发**：采用 AIMD 思路，失败时快速降级、成功时逐步恢复。
+- **熔断暂停采集**：连续失败会触发熔断，并暂停/停止采集；恢复依赖配置校验与自动重试。
 
 ### 🚀 快速开始
 
@@ -410,9 +368,15 @@ Mnemora is a **privacy-first desktop “work memory” app**. It continuously ca
 - **Hybrid understanding**: batch VLM for structured understanding, plus local OCR (EN/ZH) when needed
 - **Observability included**: local-only web dashboard on `127.0.0.1` with SSE streaming
 
+### ✅ 3-Step Workflow (How you use it)
+
+- **Capture**: continuous screen awareness (multi-monitor/window) with dedup to reduce noise
+- **Understand**: batch VLM produces structured context; triggers local OCR (EN/ZH) when needed
+- **Retrieve & Resume**: semantic search to find what you saw; Thread Lens/Thread Brief to regain context fast
+
 ![System Overview](./externals/assets/architecture_excalidraw.png)
 
-### ✨ Features
+### ✨ Feature Highlights
 
 #### 1. Continuous Screen Awareness
 
@@ -479,7 +443,9 @@ The app ships with a local web-based monitoring & diagnostics dashboard for even
 - ⚙️ **On-demand**: after the app starts, open **Settings** → _Monitoring Dashboard_.
 - 🔗 **URL**: `http://127.0.0.1:<port>` (tries available ports starting from `23333`), with real-time streaming over SSE `/api/stream`.
 
-### 🏗️ Architecture
+---
+
+### 🏗️ Architecture (For Developers)
 
 #### System Layer Architecture
 
@@ -532,42 +498,75 @@ The app ships with a local web-based monitoring & diagnostics dashboard for even
 │  ┌──────────────────┐                                          │
 │  │   File Storage   │                                          │
 │  │   ~/.mnemora/    │                                          │
+│  └──────────────────┘                                          │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ![AI Processing Pipeline](./externals/assets/pipeline_excalidraw_v2.png)
 
-### 🔧 Key Implementations
+#### Core Module Relationships
+
+```
+ScreenCaptureModule
+    │
+    ├── CaptureService (desktopCapturer)
+    │
+    ├── CaptureScheduler (interval scheduling + backpressure)
+    │
+    ├── WindowFilter (window filtering + app name normalization)
+    │
+    └── ScreenshotProcessingModule
+            │
+            ├── BatchVlmScheduler (batch VLM analysis)
+            │
+            ├── OcrScheduler (local OCR)
+            │
+            ├── ThreadScheduler (thread tracking)
+            │
+            ├── VectorDocumentScheduler (embedding + indexing)
+            │
+            └── ActivityTimelineScheduler (activity timeline)
+```
+
+### 🔧 Key Implementations (Mechanisms, not code walkthroughs)
 
 #### 1. Adaptive Capture Backpressure
 
-Dynamic adjustment based on pending VLM batch count (`batches.vlm_status = "pending"`):
+Dynamic adjustment based on pending VLM batch count:
 
-- Capture interval scaling via `intervalMultiplier`
-- pHash dedup sensitivity via `phashThreshold`
-- Recovery hysteresis to avoid oscillation
+- Backlog is mapped into discrete levels
+- Capture interval and dedup threshold are adjusted per level, with recovery hysteresis to avoid oscillation
+- Goal: keep the system stable for long-running usage
 
 #### 2. Hybrid OCR (VLM-triggered, local execution)
 
-VLM outputs `knowledge.language` + optional ROI (`textRegion`). Only supported languages (`en`, `zh`) trigger local Tesseract.js OCR. OCR results are stored in SQLite; capture files may be cleaned up after processing.
+VLM outputs language + optional ROI (`textRegion`). Only supported languages (`en`, `zh`) trigger local Tesseract.js OCR. OCR text is persisted; capture files are typically treated as ephemeral inputs and may be cleaned up after processing.
 
 #### 3. Thread Tracking (Thread Lens)
 
-Thread assignment is done batch-wise by the Thread LLM for nodes missing `threadId`. Assignments are **write-once** (`threadId` is only set when NULL), so there is **no automatic thread merging/overwriting**. Long-event detection uses a 25-minute threshold.
+Thread assignment is done batch-wise by the Thread LLM for nodes missing a thread association. Assignments are **write-once** (only set when missing), so there is **no automatic thread merging/overwriting**. Long-event detection uses a 25-minute threshold by default.
 
 #### 4. Semantic Search (SQLite FTS + HNSW + Deep Search)
 
-Combines keyword search (LIKE + SQLite FTS) and vector search (HNSW index stored at `~/.mnemora/vector_index.bin`), with optional LLM query planning (`SearchQueryPlan`) and answer synthesis (`SearchAnswer`).
+Combines keyword search (SQLite FTS) and vector search (HNSW index stored at `~/.mnemora/vector_index.bin`), with optional LLM query planning and answer synthesis.
 
 #### 5. Type-Safe IPC (shared channels + preload APIs)
 
-Centralized `IPC_CHANNELS` + `IPCResult<T>` in `shared/ipc-types.ts`, handlers registered through `IPCHandlerRegistry`, and typed APIs exposed in `electron/preload.ts` (e.g. `contextGraphApi`, `threadsApi`, `captureSourceApi`).
+Centralized IPC channel definitions and a unified success/error envelope shared by both processes, with typed APIs exposed via preload to the renderer.
 
 #### 6. AI Runtime Concurrency + Failure Fuse
 
-Per-capability semaphores (`vlm` / `text` / `embedding`) with adaptive concurrency tuning (AIMD) and a circuit breaker that can pause/stop capture on repeated AI failures and auto-resume after config validation.
+Per-capability semaphores (VLM / text / embedding) with adaptive concurrency tuning (AIMD) and a circuit breaker that can pause/stop capture on repeated AI failures and auto-resume after config validation.
 
 ### 🚀 Quick Start
+
+#### Requirements
+
+- **Node.js**: 22.x (see `.nvmrc`)
+- **pnpm**: 10.x
+- **Python**: 3.9+ (macOS only: required to build `window_inspector`)
+
+#### Install Dependencies
 
 ```bash
 # Clone repository
@@ -579,19 +578,59 @@ pnpm install
 
 # Build window_inspector (macOS-only Python tool; pnpm dev/build also triggers it)
 pnpm run build:window_inspector
+```
 
+#### Development
+
+```bash
 # Development mode
 pnpm dev
 
+# Or: use a custom Electron.app (dev-time icon/BundleId override; run from repo root)
+pnpm dev:custom-electron
+
 # If native modules fail to load (better-sqlite3 / hnswlib-node), try
 pnpm dev:rebuild
+```
 
+#### Production Build
+
+```bash
 # Production build
 pnpm build
 
 # Or: package with Electron Forge (zip + dmg on macOS)
 pnpm forge:make
 ```
+
+#### Database Migrations
+
+```bash
+# Generate migrations
+pnpm db:generate
+
+# Apply migrations (also runs automatically on app startup)
+pnpm db:push
+
+# Database studio
+pnpm db:studio
+```
+
+### 🛠️ Tech Stack
+
+| Layer        | Tech                             |
+| ------------ | -------------------------------- |
+| **Desktop**  | Electron + Vite                  |
+| **UI**       | React + Tailwind CSS + shadcn/ui |
+| **State**    | React Query + Zustand            |
+| **Database** | SQLite + Drizzle ORM             |
+| **Vector**   | HNSW (hnswlib-node)              |
+| **AI SDK**   | Vercel AI SDK                    |
+| **OCR**      | Tesseract.js                     |
+| **Imaging**  | sharp                            |
+| **i18n**     | i18next                          |
+| **Logging**  | pino                             |
+| **Testing**  | Vitest                           |
 
 ### 📄 License
 

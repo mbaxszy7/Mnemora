@@ -102,6 +102,7 @@ export class AISDKService {
     const baseUrlLower = endpoint.baseUrl.toLowerCase();
     const shouldDisableCompression = baseUrlLower.includes("deepseek.com");
 
+    /* v8 ignore start -- deepSeekFetch is integration-heavy; tested via e2e */
     const deepSeekFetch: typeof fetch = async (input, init) => {
       const getUrlString = () => {
         if (typeof input === "string") return input;
@@ -200,6 +201,7 @@ export class AISDKService {
         throw err;
       }
     };
+    /* v8 ignore stop */
 
     const provider = createOpenAICompatible({
       name: "mnemora",

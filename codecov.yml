@@ -1,0 +1,25 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 1%
+    patch:
+      default:
+        target: 80%
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: true
+
+ignore:
+  - "src/components/ui/**"
+  - "**/*.test.*"
+  - "**/*.spec.*"
+  - "**/*.d.ts"
+  - "scripts/**"
+  - "externals/**"
+  - "dist/**"
+  - "dist-electron/**"
+  - "public/**"

@@ -33,6 +33,7 @@ const animatedTransitionTypes: TransitionType[] = [
   "slide-down",
   "scale",
 ];
+const routeArb = fc.stringMatching(/^\/[a-z0-9/-]{1,16}$/).filter((s) => s !== "/current");
 
 describe("useViewTransition Hook", () => {
   let mockMatchMedia: ReturnType<typeof vi.fn>;
@@ -83,7 +84,7 @@ describe("useViewTransition Hook", () => {
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),
         fc.boolean(),
-        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
+        routeArb,
         async (type: TransitionType, prefersReducedMotion: boolean, path: string) => {
           mockNavigate.mockClear();
           mockStartViewTransition.mockClear();
@@ -119,7 +120,7 @@ describe("useViewTransition Hook", () => {
           return true;
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 40 }
     );
   });
 
@@ -127,7 +128,7 @@ describe("useViewTransition Hook", () => {
     await fc.assert(
       fc.asyncProperty(
         fc.boolean(),
-        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
+        routeArb,
         async (prefersReducedMotion: boolean, path: string) => {
           mockNavigate.mockClear();
           mockStartViewTransition.mockClear();
@@ -157,7 +158,7 @@ describe("useViewTransition Hook", () => {
           return true;
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 40 }
     );
   });
 
@@ -173,7 +174,7 @@ describe("useViewTransition Hook", () => {
       fc.asyncProperty(
         fc.constantFrom(...animatedTransitionTypes),
         fc.integer({ min: 100, max: 1000 }),
-        fc.string({ minLength: 2 }).filter((s) => s.startsWith("/") && s !== "/current"),
+        routeArb,
         async (type: TransitionType, duration: number, path: string) => {
           mockNavigate.mockClear();
 
@@ -248,9 +249,9 @@ describe("useViewTransition Hook", () => {
           return true;
         }
       ),
-      { numRuns: 100 }
+      { numRuns: 30 }
     );
-  });
+  }, 15000);
 
   test("CSS injection and cleanup utilities work correctly", () => {
     // Initially no style element

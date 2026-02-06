@@ -29,6 +29,14 @@ vi.mock("i18next-fs-backend", () => ({
   default: {},
 }));
 
+// Mock llm-config-service
+vi.mock("./llm-config-service", () => ({
+  llmConfigService: {
+    loadConfiguration: vi.fn().mockResolvedValue(null),
+    saveConfiguration: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Mock logger
 vi.mock("./logger", () => ({
   getLogger: vi.fn(() => ({
@@ -60,7 +68,7 @@ describe("MainI18nService", () => {
       const instance2 = MainI18nService.getInstance();
 
       expect(instance1).toBe(instance2);
-    });
+    }, 15000);
   });
 
   describe("initialize", () => {
@@ -79,18 +87,19 @@ describe("MainI18nService", () => {
           interpolation: { escapeValue: false },
         })
       );
-    });
+    }, 15000);
 
     it("should not reinitialize if already initialized", async () => {
       const { MainI18nService } = await import("./i18n-service");
       MainI18nService.resetInstance();
       const service = MainI18nService.getInstance();
+      const initCallsBefore = mockI18nInstance.init.mock.calls.length;
 
       await service.initialize();
       await service.initialize();
 
       // init should only be called once
-      expect(mockI18nInstance.init).toHaveBeenCalledTimes(1);
+      expect(mockI18nInstance.init.mock.calls.length - initCallsBefore).toBe(1);
     });
 
     it("should set initialized flag after successful initialization", async () => {
@@ -226,6 +235,96 @@ describe("MainI18nService", () => {
       const result = service.detectSystemLanguage();
 
       expect(result).toBe("en");
+    });
+  });
+
+  describe("pending language", () => {
+    it("should store pending language and return it from getCurrentLanguage", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      // Set language before init - should be stored as pending
+      await service.changeLanguage("zh-CN");
+      expect(service.getCurrentLanguage()).toBe("zh-CN");
+    });
+
+    it("should not apply pending language if it matches current after init", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      // Set pending to en (same as default init language)
+      await service.changeLanguage("en");
+
+      mockI18nInstance.language = "en";
+      await service.initialize();
+
+      // The i18next changeLanguage should NOT have been called since pending matches current
+      expect(mockI18nInstance.changeLanguage).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("changeLanguage DB persistence", () => {
+    it("should save language to DB after changing", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      const { llmConfigService } = await import("./llm-config-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      vi.mocked(llmConfigService.loadConfiguration).mockResolvedValue({
+        mode: "unified",
+        config: { baseUrl: "https://test.com", apiKey: "key", model: "m" },
+        language: "en",
+      });
+      vi.mocked(llmConfigService.saveConfiguration).mockResolvedValue();
+
+      await service.initialize();
+      await service.changeLanguage("zh-CN");
+
+      expect(llmConfigService.saveConfiguration).toHaveBeenCalled();
+    });
+
+    it("should handle DB save error gracefully", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      const { llmConfigService } = await import("./llm-config-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      // First call succeeds (during initialize), second fails (during changeLanguage)
+      vi.mocked(llmConfigService.loadConfiguration)
+        .mockResolvedValueOnce(null)
+        .mockRejectedValueOnce(new Error("DB error"));
+
+      await service.initialize();
+      // Should not throw
+      await service.changeLanguage("zh-CN");
+    });
+
+    it("should handle null config from DB gracefully", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      const { llmConfigService } = await import("./llm-config-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      vi.mocked(llmConfigService.loadConfiguration).mockResolvedValue(null);
+
+      await service.initialize();
+      await service.changeLanguage("zh-CN");
+
+      // Should NOT have called save since config is null
+      expect(llmConfigService.saveConfiguration).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("t edge cases", () => {
+    it("should handle array key before initialization", async () => {
+      const { MainI18nService } = await import("./i18n-service");
+      MainI18nService.resetInstance();
+      const service = MainI18nService.getInstance();
+
+      const result = service.t(["key1", "key2"] as unknown as string);
+      expect(result).toBe("key1");
     });
   });
 

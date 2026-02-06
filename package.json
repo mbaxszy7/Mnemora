@@ -26,7 +26,10 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "echo 'Migrations run automatically at app startup. Use pnpm db:generate to create new migrations.'",
     "db:studio": "drizzle-kit studio",
-    "db:push": "drizzle-kit push"
+    "db:push": "drizzle-kit push",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:coverage:open": "vitest run --coverage && open coverage/lcov-report/index.html || start coverage/lcov-report/index.html"
   },
   "dependencies": {
     "@ai-sdk/openai": "^2.0.76",
@@ -123,6 +126,7 @@
     "@typescript-eslint/eslint-plugin": "^8.17.0",
     "@typescript-eslint/parser": "^8.17.0",
     "@vitejs/plugin-react": "^4.3.4",
+    "@vitest/coverage-v8": "^4.0.15",
     "drizzle-kit": "^0.30.1",
     "electron": "^39.2.5",
     "electron-builder": "^25.1.8",

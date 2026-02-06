@@ -3,6 +3,7 @@ import * as fc from "fast-check";
 import {
   isValidUrl,
   isEndpointConfigComplete,
+  isSeparateConfigComplete,
   encodeApiKey,
   decodeApiKey,
   getValidationErrorKey,
@@ -229,5 +230,61 @@ describe("Property 6: API key encoding round-trip", () => {
     expect(encodeApiKey(undefined as unknown as string)).toBe("");
     expect(decodeApiKey(null as unknown as string)).toBe("");
     expect(decodeApiKey(undefined as unknown as string)).toBe("");
+  });
+
+  it("decodeApiKey returns empty for non-string input", () => {
+    expect(decodeApiKey(123 as unknown as string)).toBe("");
+  });
+});
+
+describe("isSeparateConfigComplete", () => {
+  const validEndpoint = {
+    baseUrl: "https://api.test.com",
+    apiKey: "sk-test",
+    model: "gpt-4",
+  };
+
+  it("returns true when all three endpoints are complete", () => {
+    expect(
+      isSeparateConfigComplete({
+        mode: "separate",
+        vlm: validEndpoint,
+        textLlm: validEndpoint,
+        embeddingLlm: validEndpoint,
+      })
+    ).toBe(true);
+  });
+
+  it("returns false when vlm endpoint is incomplete", () => {
+    expect(
+      isSeparateConfigComplete({
+        mode: "separate",
+        vlm: { ...validEndpoint, apiKey: "" },
+        textLlm: validEndpoint,
+        embeddingLlm: validEndpoint,
+      })
+    ).toBe(false);
+  });
+
+  it("returns false when textLlm endpoint is incomplete", () => {
+    expect(
+      isSeparateConfigComplete({
+        mode: "separate",
+        vlm: validEndpoint,
+        textLlm: { ...validEndpoint, model: "  " },
+        embeddingLlm: validEndpoint,
+      })
+    ).toBe(false);
+  });
+
+  it("returns false when embeddingLlm endpoint is incomplete", () => {
+    expect(
+      isSeparateConfigComplete({
+        mode: "separate",
+        vlm: validEndpoint,
+        textLlm: validEndpoint,
+        embeddingLlm: { ...validEndpoint, baseUrl: "not-a-url" },
+      })
+    ).toBe(false);
   });
 });

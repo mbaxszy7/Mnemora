@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fc from "fast-check";
 import { AISDKService } from "./ai-sdk-service";
 import { ServiceError, ErrorCode } from "../../shared/errors";
@@ -253,5 +253,169 @@ describe("AISDKService Client Type Separation", () => {
       }),
       { numRuns: 100 }
     );
+  });
+});
+
+describe("AISDKService Model Name Getters", () => {
+  beforeEach(() => {
+    AISDKService.resetInstance();
+  });
+
+  it("returns 'unknown' for all model names when not initialized", () => {
+    const service = AISDKService.getInstance();
+    expect(service.getVLMModelName()).toBe("unknown");
+    expect(service.getTextModelName()).toBe("unknown");
+    expect(service.getEmbeddingModelName()).toBe("unknown");
+  });
+
+  it("returns correct model names after unified initialization", () => {
+    const service = AISDKService.getInstance();
+    service.initialize({
+      mode: "unified",
+      config: { baseUrl: "https://api.test.com/v1", apiKey: "sk-test", model: "gpt-4" },
+    });
+    expect(service.getVLMModelName()).toBe("gpt-4");
+    expect(service.getTextModelName()).toBe("gpt-4");
+    expect(service.getEmbeddingModelName()).toBe("gpt-4");
+  });
+
+  it("returns correct model names after separate initialization", () => {
+    const service = AISDKService.getInstance();
+    service.initialize({
+      mode: "separate",
+      vlm: { baseUrl: "https://api.test.com/v1", apiKey: "sk-v", model: "vlm-model" },
+      textLlm: { baseUrl: "https://api.test.com/v1", apiKey: "sk-t", model: "text-model" },
+      embeddingLlm: { baseUrl: "https://api.test.com/v1", apiKey: "sk-e", model: "embed-model" },
+    });
+    expect(service.getVLMModelName()).toBe("vlm-model");
+    expect(service.getTextModelName()).toBe("text-model");
+    expect(service.getEmbeddingModelName()).toBe("embed-model");
+  });
+});
+
+describe("AISDKService Reset and Re-initialization", () => {
+  beforeEach(() => {
+    AISDKService.resetInstance();
+  });
+
+  it("can re-initialize after a failed initialization", () => {
+    const service = AISDKService.getInstance();
+    expect(() =>
+      service.initialize({
+        mode: "unified",
+        config: { baseUrl: "  ", apiKey: "sk-test", model: "gpt-4" },
+      })
+    ).toThrow();
+    expect(service.isInitialized()).toBe(false);
+
+    // Now initialize properly
+    service.initialize({
+      mode: "unified",
+      config: { baseUrl: "https://api.test.com/v1", apiKey: "sk-test", model: "gpt-4" },
+    });
+    expect(service.isInitialized()).toBe(true);
+  });
+
+  it("reset clears state when re-initializing", () => {
+    const service = AISDKService.getInstance();
+    service.initialize({
+      mode: "unified",
+      config: { baseUrl: "https://api.test.com/v1", apiKey: "sk-test", model: "model-a" },
+    });
+    expect(service.getVLMModelName()).toBe("model-a");
+
+    service.initialize({
+      mode: "unified",
+      config: { baseUrl: "https://api.test.com/v1", apiKey: "sk-test", model: "model-b" },
+    });
+    expect(service.getVLMModelName()).toBe("model-b");
+  });
+
+  it("non-DeepSeek URL does not use custom fetch", () => {
+    const service = AISDKService.getInstance();
+    service.initialize({
+      mode: "unified",
+      config: { baseUrl: "https://api.openai.com/v1", apiKey: "sk-test", model: "gpt-4" },
+    });
+    expect(service.isInitialized()).toBe(true);
+  });
+});
+
+describe("AISDKService Validation", () => {
+  type ServiceWithCreateClientState = AISDKService & {
+    createClientState: (...args: never[]) => unknown;
+  };
+
+  beforeEach(() => {
+    AISDKService.resetInstance();
+  });
+
+  it("throws INITIALIZATION_ERROR for empty baseUrl", () => {
+    const service = AISDKService.getInstance();
+    expect(() =>
+      service.initialize({
+        mode: "unified",
+        config: { baseUrl: "  ", apiKey: "sk-test", model: "gpt-4" },
+      })
+    ).toThrow(ServiceError);
+    expect(service.isInitialized()).toBe(false);
+  });
+
+  it("throws INITIALIZATION_ERROR for empty model", () => {
+    const service = AISDKService.getInstance();
+    expect(() =>
+      service.initialize({
+        mode: "unified",
+        config: { baseUrl: "https://api.test.com", apiKey: "sk-test", model: "  " },
+      })
+    ).toThrow(ServiceError);
+    expect(service.isInitialized()).toBe(false);
+  });
+
+  it("wraps non-ServiceError initialization errors", () => {
+    const service = AISDKService.getInstance();
+    const serviceWithPrivate = service as unknown as ServiceWithCreateClientState;
+    // Mock createOpenAICompatible to throw a plain Error
+    const origInit = serviceWithPrivate.createClientState;
+    vi.spyOn(serviceWithPrivate, "createClientState").mockImplementation(() => {
+      throw new Error("unexpected");
+    });
+    try {
+      expect(() =>
+        service.initialize({
+          mode: "unified",
+          config: { baseUrl: "https://api.test.com", apiKey: "sk-test", model: "gpt-4" },
+        })
+      ).toThrow(ServiceError);
+    } finally {
+      serviceWithPrivate.createClientState = origInit;
+    }
+  });
+
+  it("re-throws ServiceError from validateEndpoint directly", () => {
+    const service = AISDKService.getInstance();
+    try {
+      service.initialize({
+        mode: "unified",
+        config: { baseUrl: "https://api.test.com", apiKey: "", model: "gpt-4" },
+      });
+    } catch (e) {
+      expect(e).toBeInstanceOf(ServiceError);
+      expect((e as ServiceError).code).toBe(ErrorCode.API_KEY_MISSING);
+    }
+  });
+
+  it("initializes with DeepSeek URL without errors", () => {
+    const service = AISDKService.getInstance();
+    service.initialize({
+      mode: "unified",
+      config: {
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "sk-deep",
+        model: "deepseek-chat",
+      },
+    });
+    expect(service.isInitialized()).toBe(true);
+    expect(service.getVLMModelName()).toBe("deepseek-chat");
   });
 });

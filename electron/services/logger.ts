@@ -81,7 +81,7 @@ class LoggerService {
           fs.unlinkSync(this.logFile);
         } catch (error) {
           const code = (error as NodeJS.ErrnoException | undefined)?.code;
-          if (code !== "ENOENT") {
+          if (!this.shouldIgnoreLogCleanupError(code)) {
             throw error;
           }
         }
@@ -140,6 +140,10 @@ class LoggerService {
       },
       pino.multistream(streams)
     );
+  }
+
+  private shouldIgnoreLogCleanupError(code?: string): boolean {
+    return code === "ENOENT" || code === "EPERM" || code === "EACCES" || code === "EBUSY";
   }
 
   getLogger(name?: string): pino.Logger {

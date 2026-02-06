@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import fs from "node:fs";
 
 // Mock electron app module
 vi.mock("electron", () => ({
@@ -84,5 +85,29 @@ describe("LoggerService", () => {
     initializeLogger();
     const logger = getLogger("test-module");
     expect(logger).toBeDefined();
+  });
+
+  it("should ignore locked log file cleanup errors in development mode", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.unlinkSync).mockImplementation(() => {
+      const error = new Error("locked") as NodeJS.ErrnoException;
+      error.code = "EPERM";
+      throw error;
+    });
+
+    const { initializeLogger } = await import("./logger");
+    expect(() => initializeLogger()).not.toThrow();
+  });
+
+  it("should rethrow unexpected log file cleanup errors", async () => {
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.unlinkSync).mockImplementation(() => {
+      const error = new Error("unexpected cleanup error") as NodeJS.ErrnoException;
+      error.code = "EINVAL";
+      throw error;
+    });
+
+    const { initializeLogger } = await import("./logger");
+    expect(() => initializeLogger()).toThrow("unexpected cleanup error");
   });
 });

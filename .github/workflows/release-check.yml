@@ -1,15 +1,16 @@
-name: Build
+name: Release Check
 
 on:
   pull_request:
     branches:
       - master
-  push:
-    branches:
-      - master
+
+permissions:
+  contents: read
 
 jobs:
-  make:
+  release_dry_run:
+    name: release-dry-run
     strategy:
       fail-fast: false
       matrix:
@@ -38,21 +39,21 @@ jobs:
         with:
           python-version: "3.11"
       - run: pnpm install --frozen-lockfile
-      - run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: make-${{ matrix.platform }}-${{ matrix.arch }}
-          path: out/make/**/*
-  build_gate:
-    name: build-gate
+      - env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: pnpm forge:publish --dry-run --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+
+  release_gate:
+    name: release-gate
     if: always()
     needs:
-      - make
+      - release_dry_run
     runs-on: ubuntu-latest
     steps:
-      - name: Fail if any matrix build failed
+      - name: Fail if any release dry run failed
         run: |
-          if [ "${{ needs.make.result }}" != "success" ]; then
-            echo "One or more build matrix jobs failed."
+          if [ "${{ needs.release_dry_run.result }}" != "success" ]; then
+            echo "One or more release dry-run matrix jobs failed."
             exit 1
           fi

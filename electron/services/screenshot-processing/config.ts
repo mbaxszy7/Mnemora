@@ -81,7 +81,7 @@ export const processingConfig = {
    * 3. Only if language ∈ supportedLanguages, trigger local OCR
    * 4. OCR result stored in screenshots.ocr_text and indexed in screenshots_fts
    *
-   * @see docs/alpha-implementation-plan.md "OCR 精准处理流水线"
+   * @see docs/alpha-implementation-plan.md "OCR Precision Processing Pipeline"
    */
   ocr: {
     /** Maximum characters to store in screenshots.ocr_text */

@@ -12,7 +12,7 @@ import type { AppContextPayload, KnowledgePayload, StateSnapshotPayload } from "
 
 const logger = getLogger("thread-repository");
 
-// 从 DB 读取的 batch node（thread LLM 分配的输入基础数据）
+// Batch node from DB (input data for thread LLM assignment)
 type BatchNodeRow = {
   id: number;
   eventTime: number;
@@ -26,13 +26,13 @@ type BatchNodeRow = {
   keywords: string;
 };
 
-// 用于 thread 聚合统计的最小字段集合（避免把整行 node 读出来）
+// Minimal fields for thread aggregate stats (avoids reading full node rows)
 type ThreadAggregateNodeRow = Pick<
   BatchNodeRow,
   "eventTime" | "appContext" | "knowledge" | "stateSnapshot" | "keywords"
 >;
 
-// 写入到 context_nodes.thread_snapshot_json 的快照结构（用于后续 UI/监控/回溯）
+// Snapshot written to context_nodes.thread_snapshot_json (for UI/monitoring/debugging)
 type ThreadSnapshotPayload = {
   threadId: string;
   title: string;
@@ -45,7 +45,7 @@ type ThreadSnapshotPayload = {
   mainProject?: string | null;
 };
 
-// threads 表的统计字段聚合结果
+// Aggregated stats result for threads table
 type ThreadStatAggregate = {
   startTime: number;
   lastActiveAt: number;
@@ -57,7 +57,7 @@ type ThreadStatAggregate = {
 };
 
 /**
- * 容错 JSON.parse：DB 中的 JSON 字段可能为空/脏数据
+ * Safe JSON.parse wrapper: handles empty or corrupted JSON from DB
  */
 function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
   if (!raw) return fallback;
@@ -69,10 +69,10 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 /**
- * 生成“创建新 thread”的幂等键（写入 threads.origin_key）。
- * 同一个 batch 内，如果 retry 过程中 new_threads 的 nodeIndices 不变，则 originKey 不变：
- * - INSERT 会触发 UNIQUE(origin_key) 冲突
- * - 进而查询并复用已有 threadId
+ * Generate idempotent key for new thread creation (stored in threads.origin_key).
+ * Within the same batch, if nodeIndices remain unchanged during retry, originKey stays the same:
+ * - INSERT triggers UNIQUE(origin_key) conflict
+ * - Query and reuse existing threadId
  */
 function computeThreadOriginKey(args: { batchDbId: number; nodeIndices: number[] }): string {
   const normalized = [...args.nodeIndices].sort((a, b) => a - b).join(",");
@@ -80,8 +80,8 @@ function computeThreadOriginKey(args: { batchDbId: number; nodeIndices: number[]
 }
 
 /**
- * 生成随机 threadId（UUID v4）。
- * 注意：这里故意不做 deterministic id，幂等由 originKey 的唯一约束保证。
+ * Generate random threadId (UUID v4).
+ * Note: intentionally not using deterministic id; idempotency is ensured by originKey UNIQUE constraint.
  */
 function generateThreadId(): string {
   if (typeof crypto.randomUUID === "function") {
@@ -97,9 +97,9 @@ function generateThreadId(): string {
 }
 
 /**
- * 计算 thread 的连续时长（durationMs）：
- * - eventTimesAsc 必须按时间升序
- * - gapThresholdMs 以上的时间间隔不计入连续时长
+ * Calculate thread continuous duration (durationMs):
+ * - eventTimesAsc must be sorted in ascending order
+ * - Intervals exceeding gapThresholdMs are excluded from duration
  */
 function computeDurationMs(eventTimesAsc: number[], gapThresholdMs: number): number {
   let duration = 0;
@@ -113,7 +113,7 @@ function computeDurationMs(eventTimesAsc: number[], gapThresholdMs: number): num
 }
 
 /**
- * 从单个 node 的 JSON 字段中提取实体词（用于 threads.key_entities_json）
+ * Extract entity keywords from a single node's JSON fields (for threads.key_entities_json)
  */
 function extractEntitiesFromNode(node: ThreadAggregateNodeRow): string[] {
   const keywords = safeJsonParse<string[]>(node.keywords, []);
@@ -130,7 +130,7 @@ function extractEntitiesFromNode(node: ThreadAggregateNodeRow): string[] {
 }
 
 /**
- * 从单个 node 的 app_context_json 中提取应用提示（用于 threads.apps_json）
+ * Extract app hints from a single node's app_context_json (for threads.apps_json)
  */
 function extractAppsFromNode(node: ThreadAggregateNodeRow): string[] {
   const app = safeJsonParse<AppContextPayload>(node.appContext, {
@@ -156,9 +156,9 @@ function extractProjectKeysFromNode(node: ThreadAggregateNodeRow): string[] {
 }
 
 /**
- * 计算 threads 聚合统计：
- * - eventTimesAsc：全量 event_time，用于 durationMs/nodeCount/start/last（强一致）
- * - recentNodes：只取最近 N 条节点用于 apps/entities（首版允许弱化，避免性能问题）
+ * Compute thread aggregate stats:
+ * - eventTimesAsc: all event_times for durationMs/nodeCount/start/last (strong consistency)
+ * - recentNodes: only recent N nodes for apps/entities (acceptable weak consistency to avoid performance issues)
  */
 function computeThreadAggregatesFromEventTimesAndRecentNodes(args: {
   eventTimesAsc: number[];
@@ -221,10 +221,10 @@ function computeThreadAggregatesFromEventTimesAndRecentNodes(args: {
 }
 
 /**
- * 对 thread LLM 输出做强校验：
- * - assignments 必须覆盖 batch 的每一个 nodeIndex，且无重复
- * - NEW 映射必须能在 new_threads.node_indices 中唯一定位
- * - new_threads 中出现的 nodeIndex 必须在 assignments 中标记为 NEW（双向一致）
+ * Strong validation for thread LLM output:
+ * - assignments must cover every nodeIndex in batch without duplicates
+ * - NEW mapping must be uniquely resolvable in new_threads.node_indices
+ * - nodeIndices in new_threads must be marked as NEW in assignments (bidirectional consistency)
  */
 function validateThreadLlmOutput(output: ThreadLLMOutput, batchNodeCount: number): void {
   if (batchNodeCount <= 0) {
@@ -296,9 +296,9 @@ function validateThreadLlmOutput(output: ThreadLLMOutput, batchNodeCount: number
 
 export class ThreadRepository {
   /**
-   * 崩溃恢复/重试用的收敛路径：
-   * - 如果这个 batch 的所有 nodes 已经有 thread_id，则不再调用 LLM
-   * - 只做：重算 threads 统计 + 补写本 batch 的 thread_snapshot_json + 标记 batch succeeded
+   * Convergence path for crash recovery/retry:
+   * - Skip LLM call if all nodes in batch already have thread_id
+   * - Only recompute thread stats + write thread_snapshot_json for batch + mark batch succeeded
    */
   finalizeBatchWithExistingAssignments(options: {
     batchDbId: number;
@@ -318,7 +318,7 @@ export class ThreadRepository {
     }
 
     return db.transaction((tx) => {
-      // 关键约束：只补不改（幂等）
+      // Key constraint: insert-only (idempotent)
       this.recomputeThreadsAndWriteSnapshots(tx, { threadIds, batchNodeIds, now });
       this.markBatchSucceeded(tx, { batchDbId: options.batchDbId, now });
 
@@ -327,16 +327,16 @@ export class ThreadRepository {
   }
 
   /**
-   * 应用 Thread LLM 的输出到数据库（事务内完成，失败则整体回滚）。
+   * Apply Thread LLM output to database (within transaction, rollback on failure).
    *
-   * 幂等/重试语义：
-   * - 新 thread 的“去重/复用”通过 threads.origin_key 的 UNIQUE 约束保证（而非 deterministic threadId）。
-   * - context_nodes.thread_id 只在 NULL 时写入（只补不改），避免重试覆盖。
-   * - context_nodes.thread_snapshot_json 只在 NULL 时写入（只补不改），避免重试覆盖。
+   * Idempotency/retry semantics:
+   * - Deduplication/reuse of new threads via threads.origin_key UNIQUE constraint (not deterministic threadId).
+   * - context_nodes.thread_id written only when NULL (insert-only) to avoid retry overwrites.
+   * - context_nodes.thread_snapshot_json written only when NULL (insert-only) to avoid retry overwrites.
    *
-   * 关键入参：
-   * - batchNodesAsc：本 batch 的 nodes（顺序即 nodeIndex）
-   * - output：LLM 返回的 assignments / thread_updates / new_threads
+   * Key parameters:
+   * - batchNodesAsc: nodes in this batch (order is nodeIndex)
+   * - output: LLM response with assignments / thread_updates / new_threads
    */
   applyThreadLlmResult(options: {
     batchDbId: number;
@@ -353,11 +353,11 @@ export class ThreadRepository {
       const batchNodes = options.batchNodesAsc;
       const batchNodeIds = batchNodes.map((n) => n.id);
 
-      // 步骤 1：创建 new_threads（DB 幂等）
-      // - threads.id：随机 UUID
-      // - 幂等依赖 threads.origin_key 的 UNIQUE 约束：冲突时查询并复用已有 threadId
-      // newThreadIdByIndex：new_threads[i] -> threadId（最终落库用的 id）
-      // nodeIndexToNewThreadIndex：nodeIndex -> new_threads[i]（用于把 assignment.NEW 映射到具体 new_thread）
+      // Step 1: Create new_threads (DB idempotent)
+      // - threads.id: random UUID
+      // - Idempotency via threads.origin_key UNIQUE: query and reuse existing threadId on conflict
+      // newThreadIdByIndex: new_threads[i] -> threadId (final id for DB)
+      // nodeIndexToNewThreadIndex: nodeIndex -> new_threads[i] (maps assignment.NEW to specific new_thread)
       const newThreadIdByIndex = new Map<number, string>();
       const nodeIndexToNewThreadIndex = new Map<number, number>();
       for (let i = 0; i < output.newThreads.length; i++) {
@@ -448,7 +448,7 @@ export class ThreadRepository {
         }
       }
 
-      // 步骤 2：校验 assignments 里引用的“已有 threadId”必须真实存在
+      // Step 2: Validate that referenced "existing threadId" in assignments actually exists
       const existingThreadIds = output.assignments
         .filter((a) => a.threadId !== "NEW")
         .map((a) => a.threadId);
@@ -468,9 +468,9 @@ export class ThreadRepository {
         }
       }
 
-      // 步骤 3：构建 nodeIndex -> finalThreadId 的最终映射
-      // - assignment.threadId != NEW：直接使用
-      // - assignment.threadId == NEW：通过 nodeIndexToNewThreadIndex 找到 newThreadIndex，再取 newThreadIdByIndex
+      // Step 3: Build final nodeIndex -> finalThreadId mapping
+      // - assignment.threadId != NEW: use directly
+      // - assignment.threadId == NEW: resolve via nodeIndexToNewThreadIndex -> newThreadIndex -> newThreadIdByIndex
       const nodeIndexToThreadId = new Map<number, string>();
       for (const a of output.assignments) {
         if (a.threadId === "NEW") {
@@ -501,8 +501,8 @@ export class ThreadRepository {
         }
       }
 
-      // 步骤 4：写入 context_nodes.thread_id（只补不改）
-      // - 只对 thread_id IS NULL 的行写入，避免重试时覆盖已有 threadId
+      // Step 4: Write to context_nodes.thread_id (insert-only)
+      // - Only write to rows where thread_id IS NULL to avoid overwriting existing threadId on retry
       const assignedNodeIds: number[] = [];
       for (let i = 0; i < batchNodes.length; i++) {
         const node = batchNodes[i];
@@ -522,7 +522,7 @@ export class ThreadRepository {
         }
       }
 
-      // 步骤 5：应用 thread_updates（更新 title/summary/phase/focus + milestone 追加）
+      // Step 5: Apply thread_updates (update title/summary/phase/focus + append milestone)
       for (const u of output.threadUpdates) {
         const exists = tx
           .select({ id: threads.id })
@@ -562,9 +562,9 @@ export class ThreadRepository {
         }
       }
 
-      // 步骤 6：对受影响的 threads 做统计重算 + 补写本 batch 的 snapshot
-      // - 统计使用全量 event_time，保证 gap 规则一致
-      // - apps/entities 只取最近 N 条节点（首版允许弱化，避免全量 JSON 解析）
+      // Step 6: Recompute stats for affected threads + write snapshot for batch nodes
+      // - Stats use all event_times for consistent gap rules
+      // - apps/entities only use recent N nodes (acceptable weak consistency to avoid full JSON parsing)
       const affectedThreadIds = new Set<string>();
       nodeIndexToThreadId.forEach((id) => affectedThreadIds.add(id));
       for (const u of output.threadUpdates) {
@@ -576,7 +576,7 @@ export class ThreadRepository {
         now,
       });
 
-      // 步骤 7：标记 batch.thread_llm_status = succeeded
+      // Step 7: Mark batch.thread_llm_status = succeeded
       this.markBatchSucceeded(tx, { batchDbId: options.batchDbId, now });
 
       logger.info(
@@ -589,23 +589,23 @@ export class ThreadRepository {
   }
 
   /**
-   * 重算 threads 统计字段，并为“本 batch 的 nodes”补写 thread_snapshot_json。
+   * Recompute thread stats and write thread_snapshot_json for batch nodes.
    *
-   * 重要约束（幂等）：
-   * - snapshot 仅在 thread_snapshot_json IS NULL 时写入（只补不改）
+   * Key constraint (idempotent):
+   * - snapshot only written when thread_snapshot_json IS NULL (insert-only)
    *
-   * 统计策略：
-   * - duration/nodeCount/start/last：使用该 thread 的全量 event_time（保证 gap 规则正确）
-   * - apps/entities：只取最近 N 条节点做弱化聚合（避免全量 JSON parse 的性能成本）
+   * Stats strategy:
+   * - duration/nodeCount/start/last: use all event_times for correct gap rules
+   * - apps/entities: only aggregate recent N nodes to avoid full JSON parse overhead
    */
   private recomputeThreadsAndWriteSnapshots(
     tx: ReturnType<typeof getDb>,
     args: { threadIds: string[]; batchNodeIds: number[]; now: number }
   ): void {
-    // 对每个 thread：
-    // 1) 全量读取 event_time（用于 duration/nodeCount/start/last）
-    // 2) 读取最近 N 条节点（用于 apps/entities）
-    // 3) 更新 threads 表统计字段，并把 thread 快照写入“本 batch 的 nodes”（仅 thread_snapshot_json 为空时写入）
+    // For each thread:
+    // 1) Read all event_times (for duration/nodeCount/start/last)
+    // 2) Read recent N nodes (for apps/entities)
+    // 3) Update threads stats and write thread snapshot to batch nodes (only if thread_snapshot_json is empty)
     for (const threadId of args.threadIds) {
       const timeRows = tx
         .select({ eventTime: contextNodes.eventTime })
@@ -669,7 +669,7 @@ export class ThreadRepository {
         mainProject: updatedThread.mainProject,
       };
 
-      // 只对本 batch 的 nodes 补写 snapshot，且仅在 thread_snapshot_json 为空时写入（避免重试覆盖）
+      // Only write snapshot to batch nodes and only if thread_snapshot_json is empty (avoid retry overwrites)
       tx.update(contextNodes)
         .set({ threadSnapshot: JSON.stringify(snapshot), updatedAt: args.now })
         .where(
@@ -684,13 +684,13 @@ export class ThreadRepository {
   }
 
   /**
-   * 将 batches.thread_llm_status 标记为 succeeded，并清理 error/nextRun 字段。
+   * Mark batches.thread_llm_status as succeeded and clear error/nextRun fields.
    */
   private markBatchSucceeded(
     tx: ReturnType<typeof getDb>,
     args: { batchDbId: number; now: number }
   ): void {
-    // 线程分配成功后，清理 error/nextRun，并把状态置为 succeeded
+    // After successful thread assignment, clear error/nextRun and set status to succeeded
     tx.update(batches)
       .set({
         threadLlmStatus: "succeeded",
@@ -703,13 +703,13 @@ export class ThreadRepository {
   }
 
   /**
-   * 维护 threads 生命周期：超过 inactiveThresholdMs 未活跃的 thread 从 active -> inactive。
+   * Maintain thread lifecycle: mark threads as inactive if last active exceeds inactiveThresholdMs.
    */
   markInactiveThreads(): number {
     const db = getDb();
     const now = Date.now();
     const cutoff = now - processingConfig.thread.inactiveThresholdMs;
-    // 轻量维护：超过 inactiveThresholdMs 未活跃的 thread 标记为 inactive
+    // Lightweight maintenance: mark threads inactive if not active within inactiveThresholdMs
     const result = db
       .update(threads)
       .set({ status: "inactive", updatedAt: now })

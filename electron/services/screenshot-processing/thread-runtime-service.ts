@@ -374,7 +374,6 @@ class ThreadBriefService {
     }
   }
 }
-
 type ThreadRow = {
   id: string;
   title: string;

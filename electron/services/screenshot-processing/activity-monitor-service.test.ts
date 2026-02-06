@@ -157,4 +157,194 @@ describe("ActivityMonitorService", () => {
     mockAi.isInitialized.mockReturnValue(false);
     expect(await service.generateWindowSummary(0, 100)).toBe(false);
   });
+
+  it("getSummary returns data when found", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        {
+          all: [
+            {
+              id: 1,
+              windowStart: 0,
+              windowEnd: 100,
+              title: "W",
+              status: "succeeded",
+              summaryText: "Summary",
+              highlights: "[]",
+              stats: '{"nodeCount":1}',
+            },
+          ],
+        },
+        { all: [] },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const summary = await service.getSummary(0, 100);
+    expect(summary).toBeDefined();
+    expect(summary?.title).toBe("W");
+  });
+
+  it("getEventDetails returns data when found", async () => {
+    const eventRow = {
+      id: 5,
+      title: "E",
+      kind: "work",
+      startTs: 10,
+      endTs: 20,
+      durationMs: 10,
+      isLong: true,
+      confidence: 8,
+      importance: 7,
+      threadId: "t1",
+      nodeIds: "[1]",
+      detailsText: "Details",
+      detailsStatus: "succeeded",
+    };
+    mockDb = createDbMock({ selectSteps: [{ all: [eventRow] }] });
+    mockGetDb.mockReturnValue(mockDb);
+    const details = await service.getEventDetails(5);
+    expect(details.id).toBe(5);
+    expect(details.details).toBe("Details");
+  });
+
+  it("generateEventDetails returns false when AI is not initialized", async () => {
+    mockAi.isInitialized.mockReturnValue(false);
+    const result = await service.generateEventDetails(1);
+    expect(result).toBe(false);
+  });
+
+  it("generateEventDetails returns false when event is not long", async () => {
+    mockAi.isInitialized.mockReturnValue(true);
+    mockDb = createDbMock({
+      selectSteps: [
+        {
+          all: [
+            {
+              id: 1,
+              isLong: false,
+              threadId: "t1",
+              detailsStatus: "pending",
+              detailsAttempts: 0,
+              updatedAt: Date.now(),
+            },
+          ],
+        },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const result = await service.generateEventDetails(1);
+    expect(result).toBe(false);
+  });
+
+  it("generateEventDetails returns false when event has no threadId", async () => {
+    mockAi.isInitialized.mockReturnValue(true);
+    mockDb = createDbMock({
+      selectSteps: [
+        {
+          all: [
+            {
+              id: 1,
+              isLong: true,
+              threadId: null,
+              detailsStatus: "pending",
+              detailsAttempts: 0,
+              updatedAt: Date.now(),
+            },
+          ],
+        },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const result = await service.generateEventDetails(1);
+    expect(result).toBe(false);
+  });
+
+  it("generateEventDetails returns false when max attempts exceeded", async () => {
+    mockAi.isInitialized.mockReturnValue(true);
+    mockDb = createDbMock({
+      selectSteps: [
+        {
+          all: [
+            {
+              id: 1,
+              isLong: true,
+              threadId: "t1",
+              detailsStatus: "pending",
+              detailsAttempts: 3,
+              updatedAt: Date.now(),
+            },
+          ],
+        },
+      ],
+      updateSteps: [{ run: { changes: 1 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const result = await service.generateEventDetails(1);
+    expect(result).toBe(false);
+  });
+
+  it("upsertEvent inserts new event", async () => {
+    mockDb = createDbMock({
+      selectSteps: [{ all: [] }],
+      insertSteps: [{ run: { lastInsertRowid: 42 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const id = await service.upsertEvent({
+      eventKey: "key1",
+      title: "Test",
+      kind: "work",
+      startTs: 1000,
+      endTs: 2000,
+    });
+    expect(id).toBe(42);
+  });
+
+  it("upsertEvent updates existing event", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        {
+          all: [
+            {
+              id: 10,
+              eventKey: "key1",
+              title: "Old",
+              kind: "work",
+              startTs: 1000,
+              endTs: 2000,
+              durationMs: 1000,
+              isLong: false,
+              confidence: 5,
+              importance: 5,
+              threadId: null,
+              summaryId: null,
+              nodeIds: "[1]",
+            },
+          ],
+        },
+      ],
+      updateSteps: [{ run: { changes: 1 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const id = await service.upsertEvent({
+      eventKey: "key1",
+      title: "Updated",
+      kind: "work",
+      startTs: 500,
+      endTs: 3000,
+      nodeIds: [2, 3],
+    });
+    expect(id).toBe(10);
+  });
+
+  it("returns empty timeline for no data", async () => {
+    mockDb = createDbMock({
+      selectSteps: [{ all: [] }, { all: [] }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const timeline = await service.getTimeline(0, 100);
+    expect(timeline.windows).toEqual([]);
+    expect(timeline.longEvents).toEqual([]);
+  });
 });

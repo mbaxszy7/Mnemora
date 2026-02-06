@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Mnemora Log Monitor
- * 持续监控并分析 main.log 日志文件
+ * Continuously monitors and analyzes the main.log file
  */
 
 import fs from "fs";
@@ -10,10 +10,10 @@ import { createInterface } from "readline";
 import { spawn } from "child_process";
 
 const LOG_FILE = "/Users/yanzheyu/.mnemora/logs/main.log";
-const STATS_INTERVAL = 30000; // 30秒统计一次
+const STATS_INTERVAL = 30000; // Print stats every 30 seconds
 const TOP_ERRORS_COUNT = 5;
 
-// ANSI 颜色
+// ANSI colors
 const COLORS = {
   reset: "\x1b[0m",
   bright: "\x1b[1m",
@@ -26,7 +26,7 @@ const COLORS = {
   gray: "\x1b[90m",
 };
 
-// 日志级别颜色映射
+// Log level color mapping
 const LEVEL_COLORS = {
   FATAL: COLORS.red + COLORS.bright,
   ERROR: COLORS.red,
@@ -36,7 +36,7 @@ const LEVEL_COLORS = {
   TRACE: COLORS.gray,
 };
 
-// 统计数据
+// Statistics data
 const stats = {
   totalLines: 0,
   levelCounts: { FATAL: 0, ERROR: 0, WARN: 0, INFO: 0, DEBUG: 0, TRACE: 0 },
@@ -46,9 +46,9 @@ const stats = {
   startTime: Date.now(),
 };
 
-// 解析日志行
+// Parse a log line
 function parseLogLine(line) {
-  // 格式: [2026-02-01 15:39:27.392 +0800] LEVEL: [module] message
+  // Format: [2026-02-01 15:39:27.392 +0800] LEVEL: [module] message
   const match = line.match(
     /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ [+-]\d{4})\] (\w+): \[(.+?)\] (.+)$/
   );
@@ -63,26 +63,26 @@ function parseLogLine(line) {
   };
 }
 
-// 格式化输出日志行
+// Format log line for output
 function formatLogLine(parsed) {
   const levelColor = LEVEL_COLORS[parsed.level] || COLORS.reset;
-  const time = parsed.timestamp.split(" ")[1].split(".")[0]; // 只显示时分秒
+  const time = parsed.timestamp.split(" ")[1].split(".")[0]; // Show only HH:MM:SS
   return `${COLORS.gray}[${time}]${COLORS.reset} ${levelColor}${parsed.level.padEnd(5)}${COLORS.reset} ${COLORS.cyan}[${parsed.module}]${COLORS.reset} ${parsed.message}`;
 }
 
-// 更新统计
+// Update statistics
 function updateStats(parsed) {
   stats.totalLines++;
 
-  // 级别统计
+  // Level counts
   if (stats.levelCounts[parsed.level] !== undefined) {
     stats.levelCounts[parsed.level]++;
   }
 
-  // 模块统计
+  // Module counts
   stats.moduleCounts[parsed.module] = (stats.moduleCounts[parsed.module] || 0) + 1;
 
-  // 收集最近的错误和警告
+  // Collect recent errors and warnings
   if (parsed.level === "ERROR") {
     stats.recentErrors.unshift({ ...parsed, time: Date.now() });
     if (stats.recentErrors.length > 10) stats.recentErrors.pop();
@@ -93,7 +93,7 @@ function updateStats(parsed) {
   }
 }
 
-// 打印统计信息
+// Print statistics
 function printStats() {
   const runtime = Math.floor((Date.now() - stats.startTime) / 1000);
   const minutes = Math.floor(runtime / 60);
@@ -105,7 +105,7 @@ function printStats() {
   );
   console.log("=".repeat(80));
 
-  // 日志级别统计
+  // Log level statistics
   console.log(`\n${COLORS.bright}日志级别分布:${COLORS.reset}`);
   const total = stats.totalLines;
   for (const [level, count] of Object.entries(stats.levelCounts)) {
@@ -119,7 +119,7 @@ function printStats() {
   }
   console.log(`  ${COLORS.bright}总计:${COLORS.reset} ${total}`);
 
-  // 最活跃的模块
+  // Most active modules
   console.log(`\n${COLORS.bright}最活跃的模块 (Top 5):${COLORS.reset}`);
   const sortedModules = Object.entries(stats.moduleCounts)
     .sort((a, b) => b[1] - a[1])
@@ -128,7 +128,7 @@ function printStats() {
     console.log(`  ${COLORS.cyan}${module}${COLORS.reset}: ${count}`);
   }
 
-  // 最近的错误
+  // Recent errors
   if (stats.recentErrors.length > 0) {
     console.log(
       `\n${COLORS.red}${COLORS.bright}最近的错误 (${stats.recentErrors.length}条):${COLORS.reset}`
@@ -141,7 +141,7 @@ function printStats() {
     });
   }
 
-  // 最近的警告
+  // Recent warnings
   if (stats.recentWarnings.length > 0) {
     console.log(
       `\n${COLORS.yellow}${COLORS.bright}最近的警告 (${stats.recentWarnings.length}条):${COLORS.reset}`
@@ -157,15 +157,15 @@ function printStats() {
   console.log("=".repeat(80) + "\n");
 }
 
-// 监控模式 - 使用 tail -f
+// Monitor mode - uses tail -f
 function startTailMonitor() {
   console.log(`${COLORS.green}🚀 启动日志监控: ${LOG_FILE}${COLORS.reset}`);
   console.log(`${COLORS.gray}按 Ctrl+C 停止监控${COLORS.reset}\n`);
 
-  // 先打印统计信息
+  // Print stats first
   printStats();
 
-  // 启动 tail 进程
+  // Start tail process
   const tail = spawn("tail", ["-n", "0", "-f", LOG_FILE]);
 
   tail.stdout.on("data", (data) => {
@@ -178,7 +178,7 @@ function startTailMonitor() {
       const parsed = parseLogLine(line);
       if (parsed) {
         updateStats(parsed);
-        // 只打印 ERROR 和 WARN 级别的日志，其他级别静默处理
+        // Only print ERROR and WARN level logs, silently handle others
         if (parsed.level === "ERROR" || parsed.level === "WARN") {
           console.log(formatLogLine(parsed));
         }
@@ -195,10 +195,10 @@ function startTailMonitor() {
     process.exit(0);
   });
 
-  // 定期打印统计
+  // Print stats periodically
   const statsTimer = setInterval(printStats, STATS_INTERVAL);
 
-  // 处理退出
+  // Handle exit
   process.on("SIGINT", () => {
     console.log(`\n${COLORS.yellow}正在停止监控...${COLORS.reset}`);
     clearInterval(statsTimer);
@@ -208,7 +208,7 @@ function startTailMonitor() {
   });
 }
 
-// 分析历史日志
+// Analyze historical logs
 async function analyzeHistory(limit = 100) {
   console.log(`${COLORS.blue}📁 分析历史日志 (最近 ${limit} 条)...${COLORS.reset}\n`);
 
@@ -234,12 +234,12 @@ async function analyzeHistory(limit = 100) {
   printStats();
 }
 
-// 主函数
+// Main function
 async function main() {
   const args = process.argv.slice(2);
   const mode = args[0] || "monitor";
 
-  // 检查日志文件是否存在
+  // Check if log file exists
   if (!fs.existsSync(LOG_FILE)) {
     console.error(`${COLORS.red}错误: 日志文件不存在: ${LOG_FILE}${COLORS.reset}`);
     process.exit(1);
@@ -249,9 +249,9 @@ async function main() {
     const limit = parseInt(args[1]) || 1000;
     await analyzeHistory(limit);
   } else if (mode === "monitor") {
-    // 先分析最近的历史记录
+    // Analyze recent history first
     await analyzeHistory(500);
-    // 开始实时监控
+    // Start real-time monitoring
     startTailMonitor();
   } else {
     console.log(`

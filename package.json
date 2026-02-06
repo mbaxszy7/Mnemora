@@ -29,6 +29,7 @@
     "db:push": "drizzle-kit push",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:coverage:full": "vitest run --coverage --config vitest.coverage.full.config.ts",
     "test:coverage:open": "vitest run --coverage && open coverage/lcov-report/index.html || start coverage/lcov-report/index.html"
   },
   "dependencies": {

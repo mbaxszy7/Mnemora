@@ -205,9 +205,9 @@ export function getMockSummary(windowStart: number, windowEnd: number): WindowSu
 - Summary 生成使用严格 JSON schema，防止 LLM 幻觉输出
 
 ## Documents
-- [VLM Processor API Doc](file:///docs/vlm-api.md) — 视觉语言模型处理器接口文档
-- [Activity Monitor Design](file:///docs/am-design.md) — Activity Monitor 界面设计规范
-- [Context Graph Schema](file:///docs/context-graph.md) — 上下文图谱数据库设计
+- [VLM Processor API Doc](file:///docs/vlm-api.md) — Visual Language Model Processor API Documentation
+- [Activity Monitor Design](file:///docs/am-design.md) — Activity Monitor UI Design Specification
+- [Context Graph Schema](file:///docs/context-graph.md) — Context Graph Database Design
 
 ## Next Steps
 - 添加 Activity Monitor 单元测试覆盖，确保组件稳定性

@@ -171,13 +171,144 @@ describe("ThreadRepository", () => {
     expect(result.assignedNodeIds).toEqual([1, 2]);
   });
 
+  it("throws on duplicate assignment nodeIndex", () => {
+    expect(() =>
+      repository.applyThreadLlmResult({
+        batchDbId: 1,
+        batchNodesAsc: batchNodes,
+        output: {
+          assignments: [
+            { nodeIndex: 0, threadId: "t1", reason: "x" },
+            { nodeIndex: 0, threadId: "t1", reason: "x" },
+          ],
+          threadUpdates: [],
+          newThreads: [],
+        },
+      })
+    ).toThrow("Duplicate assignment");
+  });
+
+  it("throws on invalid nodeIndex", () => {
+    expect(() =>
+      repository.applyThreadLlmResult({
+        batchDbId: 1,
+        batchNodesAsc: batchNodes,
+        output: {
+          assignments: [
+            { nodeIndex: 0, threadId: "t1", reason: "x" },
+            { nodeIndex: 5, threadId: "t1", reason: "x" },
+          ],
+          threadUpdates: [],
+          newThreads: [],
+        },
+      })
+    ).toThrow("Invalid assignment nodeIndex");
+  });
+
+  it("throws when assignments contain NEW but new_threads is empty", () => {
+    expect(() =>
+      repository.applyThreadLlmResult({
+        batchDbId: 1,
+        batchNodesAsc: batchNodes,
+        output: {
+          assignments: [
+            { nodeIndex: 0, threadId: "NEW", reason: "x" },
+            { nodeIndex: 1, threadId: "t1", reason: "x" },
+          ],
+          threadUpdates: [],
+          newThreads: [],
+        },
+      })
+    ).toThrow("assignments contains NEW but new_threads is empty");
+  });
+
+  it("throws when missing assignment for a nodeIndex", () => {
+    expect(() =>
+      repository.applyThreadLlmResult({
+        batchDbId: 1,
+        batchNodesAsc: batchNodes,
+        output: {
+          assignments: [{ nodeIndex: 0, threadId: "t1", reason: "x" }],
+          threadUpdates: [],
+          newThreads: [],
+        },
+      })
+    ).toThrow("assignments length");
+  });
+
+  it("finalizeBatchWithExistingAssignments works for pre-assigned nodes", () => {
+    const assignedNodes = [
+      { ...batchNodes[0], threadId: "t1" },
+      { ...batchNodes[1], threadId: "t1" },
+    ];
+    mockDb = createDbMock({
+      selectSteps: [
+        { all: [{ eventTime: 1000 }, { eventTime: 2000 }] },
+        { all: [assignedNodes[1], assignedNodes[0]] },
+        {
+          get: {
+            id: "t1",
+            title: "T",
+            summary: "S",
+            durationMs: 1,
+            startTime: 1,
+            lastActiveAt: 2,
+            currentPhase: null,
+            currentFocus: null,
+            mainProject: null,
+          },
+        },
+      ],
+      updateSteps: [{ run: { changes: 1 } }, { run: { changes: 1 } }, { run: { changes: 1 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const result = repository.finalizeBatchWithExistingAssignments({
+      batchDbId: 1,
+      batchNodesAsc: assignedNodes,
+    });
+    expect(result.affectedThreadIds).toContain("t1");
+    expect(result.batchNodeIds).toEqual([1, 2]);
+  });
+
+  it("finalizeBatchWithExistingAssignments throws when no threads assigned", () => {
+    expect(() =>
+      repository.finalizeBatchWithExistingAssignments({
+        batchDbId: 1,
+        batchNodesAsc: batchNodes,
+      })
+    ).toThrow("Cannot finalize batch: no assigned threads");
+  });
+
   it("marks inactive threads", () => {
     mockDb = createDbMock({ updateSteps: [{ run: { changes: 3 } }] });
     mockGetDb.mockReturnValue(mockDb);
     expect(repository.markInactiveThreads()).toBe(3);
   });
 
-  it("computes duration with threshold gaps", () => {
-    expect(__test__.computeDurationMs([0, 1_000, 10_000], 2_000)).toBe(1_000);
+  describe("computeDurationMs", () => {
+    it("computes duration with threshold gaps", () => {
+      expect(__test__.computeDurationMs([0, 1_000, 10_000], 2_000)).toBe(1_000);
+    });
+
+    it("returns 0 for empty array", () => {
+      expect(__test__.computeDurationMs([], 2_000)).toBe(0);
+    });
+
+    it("returns 0 for single element", () => {
+      expect(__test__.computeDurationMs([100], 2_000)).toBe(0);
+    });
+
+    it("sums all deltas when within threshold", () => {
+      expect(__test__.computeDurationMs([0, 100, 200, 300], 500)).toBe(300);
+    });
+
+    it("excludes all gaps exceeding threshold", () => {
+      expect(__test__.computeDurationMs([0, 5000, 10000], 1000)).toBe(0);
+    });
+
+    it("mixes valid and invalid gaps", () => {
+      expect(__test__.computeDurationMs([0, 500, 5000, 5500], 1000)).toBe(1000);
+    });
   });
 });

@@ -47,8 +47,13 @@ describe("permissionService", () => {
   });
 
   it("open preferences is no-op on non-mac", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", { value: "linux", writable: true });
+
     await permissionService.openAccessibilityPreferences();
     await permissionService.openScreenRecordingPreferences();
     expect(mockOpenExternal).not.toHaveBeenCalled();
+
+    Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
   });
 });

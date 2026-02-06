@@ -5,8 +5,8 @@
 </p>
 
 <p align="center">
-  <strong>让你的屏幕成为第二大脑</strong><br>
-  <strong>Let your screen become your second brain</strong>
+  <strong>Let your screen become your second brain</strong><br>
+  <strong>让你的屏幕成为第二大脑</strong>
 </p>
 
 <p align="center">
@@ -23,11 +23,310 @@
 </p>
 
 <p align="center">
-  <a href="#中文">中文</a> | <a href="#english">English</a>
+  <a href="#english">English</a> | <a href="#中文">中文</a>
 </p>
 
 ---
+<h2 id="english">📖 English</h2>
 
+### 🎯 Project Overview
+
+Mnemora is a **privacy-first desktop “work memory” app**. It continuously captures your screen activity and turns what you see into searchable, structured context (knowledge, state snapshots, action items, and Threads) so you can quickly answer:
+
+- What was I working on?
+- Why did I do it this way?
+- What should I do next?
+
+**Core Philosophy:** "Let your screen become your second brain" — build a local context graph from your screen, so your work becomes traceable, searchable, and easy to resume.
+
+**What you can do with it:**
+
+- Review your recent work history in 20-minute activity windows
+- Retrieve “the page / document / screen I saw earlier” via semantic search
+- Use **Thread Lens** + Thread Brief to quickly regain context across apps and windows
+- Open the local monitoring dashboard to diagnose backlogs and AI failures
+
+**Who it's for:**
+
+- People who context-switch a lot (developers, researchers, writers)
+- Anyone who wants searchable knowledge from their screen while keeping data local-first
+
+**Why Mnemora:**
+
+- **Local-first by default**: data lives in SQLite + local files; no built-in third-party telemetry; you bring your own model endpoints
+- **Built to run continuously**: dedup + backpressure control to avoid uncontrolled growth
+- **Hybrid understanding**: batch VLM for structured understanding, plus local OCR (EN/ZH) when needed
+- **Observability included**: local-only web dashboard on `127.0.0.1` with SSE streaming
+
+### ✅ 3-Step Workflow (How you use it)
+
+- **Capture**: continuous screen awareness (multi-monitor/window) with dedup to reduce noise
+- **Understand**: batch VLM produces structured context; triggers local OCR (EN/ZH) when needed
+- **Retrieve & Resume**: semantic search to find what you saw; Thread Lens/Thread Brief to regain context fast
+
+![System Overview](./externals/assets/architecture_excalidraw.png)
+
+### ✨ Feature Highlights
+
+#### 1. Continuous Screen Awareness
+
+- **Intelligent Screen Capture** 🎥: Multi-monitor + window capture; on macOS uses a hybrid window-source strategy (`desktopCapturer` + `window_inspector`) to improve window metadata across Spaces
+- **Deduplication** 🧹: Perceptual hash (pHash) based deduplication to reduce noisy, near-duplicate screenshots
+- **Backpressure Control** 🧯: Adjusts capture frequency (and dedup sensitivity) based on backlog to prevent overload
+
+#### 2. Hybrid AI Processing Pipeline
+
+- **VLM Visual Understanding** 🧠: Batch multimodal analysis that extracts structured context from screenshots
+- **Local OCR** 🔤: Tesseract.js based local text recognition (Chinese + English)
+- **Smart Decision** ⚖️: VLM decides whether OCR is needed, balancing accuracy and performance
+
+#### 3. Context Graph Construction
+
+- **Semantic Search** 🧭: HNSW vector index + SQLite FTS for fast retrieval
+- **Thread Tracking** 🧵: Cross-time-window activity tracking that forms coherent workflows
+- **Knowledge Accumulation** 📚: Automatic extraction of knowledge, state snapshots, and action items
+
+#### 🧵 Thread (Thread Lens)
+
+Mnemora groups semantically related screen activity into **Threads** (e.g., “debugging login issues”, “writing a report”, “reading a paper”). In the Home page **Thread Lens**, you can:
+
+- See the most likely active thread plus other candidates
+- Temporarily focus on a candidate (Preview/Temporary Focus, without changing your pinned thread)
+- **Pin a thread** as your persistent context focus
+- Generate/refresh a **Thread Brief** to quickly regain context
+- Mark a thread as **Inactive** when it’s no longer in progress
+
+#### 4. Privacy-First Design
+
+- **Local-First** 🔒: SQLite stores metadata/OCR/context graph; raw captures and vector index are stored as local files (capture files may be cleaned up after processing)
+- **Configurable LLM** 🔧: Support for local models or custom API endpoints, data doesn't go through third parties
+- **Permission Control** 🛡️: Fine-grained system permission management, user fully controls data
+
+#### 5. Real-Time Activity Monitoring
+
+- **Activity Timeline** 🕒: 20-minute window activity aggregation and visualization
+- **Long Event Detection** ⏳: Automatic identification of deep work sessions lasting 25+ minutes
+- **Smart Notifications** 🔔: Desktop notifications for key state changes (capture paused, AI failure fuse tripped, activity summary ready)
+
+#### 6. 🔐 Privacy Vault (Local-Only)
+
+Mnemora is designed with “your data stays yours” in mind:
+
+- 📦 **Everything is stored locally**: screenshots, OCR text, vector index, threads, and context graph live on your machine.
+- 🔧 **Bring your own models**: VLM / LLM / Embeddings are configured by you in Settings via `baseUrl` + `model` + `apiKey` (OpenAI-compatible endpoints).
+- 🚫 **No built-in third-party telemetry**: the project does not ship with analytics / reporting integrations; outbound requests only happen when you configure model endpoints.
+
+**Default local data locations (source of truth in code):**
+
+- **Screenshot files (ephemeral)**: `~/.mnemora/images/`
+- **Vector index file**: `~/.mnemora/vector_index.bin`
+- **Main process logs**: `~/.mnemora/logs/main.log`
+- **SQLite database**: `app.getPath("userData")/mnemora.db`
+
+> Note: capture files are written with `storage_state = "ephemeral"` and are typically deleted after VLM/OCR completes (`"deleted"`); the database keeps metadata, OCR text, and context nodes.
+
+#### 7. 📈 Local Performance Monitoring Dashboard (Web)
+
+The app ships with a local web-based monitoring & diagnostics dashboard for event loop, CPU/memory, queue backlogs, and AI request/error traces:
+
+- 🧪 **Local-only server**: runs on `127.0.0.1` and is not exposed publicly.
+- ⚙️ **On-demand**: after the app starts, open **Settings** → _Monitoring Dashboard_.
+- 🔗 **URL**: `http://127.0.0.1:<port>` (tries available ports starting from `23333`), with real-time streaming over SSE `/api/stream`.
+
+---
+
+### 🏗️ Architecture (For Developers)
+
+#### System Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      Renderer Layer                             │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
+│  │   Home   │ │ Settings │ │  Search  │ │ Activity │          │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │              React + React Router + Tailwind             │ │
+│  └──────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              │ IPC (Typed Channels)
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Main Process                               │
+│  ┌──────────────────────────────────────────────────────────┐ │
+│  │              Electron Main Process                        │ │
+│  │         (Window Management, System Integration)           │ │
+│  └──────────────────────────────────────────────────────────┘ │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
+│  │ Screen       │ │ Screenshot   │ │ AI Runtime           │  │
+│  │ Capture      │ │ Processing   │ │ Service              │  │
+│  │ Module       │ │ Pipeline     │ │ (VLM/Text/Embed)     │  │
+│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
+│  │ Context      │ │ Thread       │ │ Vector Index         │  │
+│  │ Graph        │ │ Service      │ │ (HNSW)               │  │
+│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
+│  │ Activity     │ │ LLM Config   │ │ Monitoring           │  │
+│  │ Monitor      │ │ Service      │ │ Dashboard            │  │
+│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        Data Layer                               │
+│  ┌──────────────────┐  ┌──────────────────┐                   │
+│  │   SQLite         │  │   Vector Index   │                   │
+│  │   (better-sqlite3)│  │   (HNSW)         │                   │
+│  │                  │  │                  │                   │
+│  │  - screenshots   │  │  - hnsw index    │                   │
+│  │  - context_nodes │  │  - embeddings    │                   │
+│  │  - threads       │  │                  │                   │
+│  │  - batches       │  │                  │                   │
+│  └──────────────────┘  └──────────────────┘                   │
+│  ┌──────────────────┐                                          │
+│  │   File Storage   │                                          │
+│  │   ~/.mnemora/    │                                          │
+│  └──────────────────┘                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+![AI Processing Pipeline](./externals/assets/pipeline_excalidraw_v2.png)
+
+#### Core Module Relationships
+
+```
+ScreenCaptureModule
+    │
+    ├── CaptureService (desktopCapturer)
+    │
+    ├── CaptureScheduler (interval scheduling + backpressure)
+    │
+    ├── WindowFilter (window filtering + app name normalization)
+    │
+    └── ScreenshotProcessingModule
+            │
+            ├── BatchVlmScheduler (batch VLM analysis)
+            │
+            ├── OcrScheduler (local OCR)
+            │
+            ├── ThreadScheduler (thread tracking)
+            │
+            ├── VectorDocumentScheduler (embedding + indexing)
+            │
+            └── ActivityTimelineScheduler (activity timeline)
+```
+
+### 🔧 Key Implementations (Mechanisms, not code walkthroughs)
+
+#### 1. Adaptive Capture Backpressure
+
+Dynamic adjustment based on pending VLM batch count:
+
+- Backlog is mapped into discrete levels
+- Capture interval and dedup threshold are adjusted per level, with recovery hysteresis to avoid oscillation
+- Goal: keep the system stable for long-running usage
+
+#### 2. Hybrid OCR (VLM-triggered, local execution)
+
+VLM outputs language + optional ROI (`textRegion`). Only supported languages (`en`, `zh`) trigger local Tesseract.js OCR. OCR text is persisted; capture files are typically treated as ephemeral inputs and may be cleaned up after processing.
+
+#### 3. Thread Tracking (Thread Lens)
+
+Thread assignment is done batch-wise by the Thread LLM for nodes missing a thread association. Assignments are **write-once** (only set when missing), so there is **no automatic thread merging/overwriting**. Long-event detection uses a 25-minute threshold by default.
+
+#### 4. Semantic Search (SQLite FTS + HNSW + Deep Search)
+
+Combines keyword search (SQLite FTS) and vector search (HNSW index stored at `~/.mnemora/vector_index.bin`), with optional LLM query planning and answer synthesis.
+
+#### 5. Type-Safe IPC (shared channels + preload APIs)
+
+Centralized IPC channel definitions and a unified success/error envelope shared by both processes, with typed APIs exposed via preload to the renderer.
+
+#### 6. AI Runtime Concurrency + Failure Fuse
+
+Per-capability semaphores (VLM / text / embedding) with adaptive concurrency tuning (AIMD) and a circuit breaker that can pause/stop capture on repeated AI failures and auto-resume after config validation.
+
+### 🚀 Quick Start
+
+#### Requirements
+
+- **Node.js**: 22.x (see `.nvmrc`)
+- **pnpm**: 10.x
+- **Python**: 3.9+ (macOS only: required to build `window_inspector`)
+
+#### Install Dependencies
+
+```bash
+# Clone repository
+git clone https://github.com/mbaxszy7/Mnemora.git
+cd Mnemora
+
+# Install dependencies
+pnpm install
+
+# Build window_inspector (macOS-only Python tool; pnpm dev/build also triggers it)
+pnpm run build:window_inspector
+```
+
+#### Development
+
+```bash
+# Development mode
+pnpm dev
+
+# Or: use a custom Electron.app (dev-time icon/BundleId override; run from repo root)
+pnpm dev:custom-electron
+
+# If native modules fail to load (better-sqlite3 / hnswlib-node), try
+pnpm dev:rebuild
+```
+
+#### Production Build
+
+```bash
+# Production build
+pnpm build
+
+# Or: package with Electron Forge (zip + dmg on macOS)
+pnpm forge:make
+```
+
+#### Database Migrations
+
+```bash
+# Generate migrations
+pnpm db:generate
+
+# Apply migrations (also runs automatically on app startup)
+pnpm db:push
+
+# Database studio
+pnpm db:studio
+```
+
+### 🛠️ Tech Stack
+
+| Layer        | Tech                             |
+| ------------ | -------------------------------- |
+| **Desktop**  | Electron + Vite                  |
+| **UI**       | React + Tailwind CSS + shadcn/ui |
+| **State**    | React Query + Zustand            |
+| **Database** | SQLite + Drizzle ORM             |
+| **Vector**   | HNSW (hnswlib-node)              |
+| **AI SDK**   | Vercel AI SDK                    |
+| **OCR**      | Tesseract.js                     |
+| **Imaging**  | sharp                            |
+| **i18n**     | i18next                          |
+| **Logging**  | pino                             |
+| **Testing**  | Vitest                           |
+
+### 📄 License
+
+[MIT License](LICENSE)
+
+---
 <h2 id="中文">📖 中文介绍</h2>
 
 ### 🎯 项目概述
@@ -335,309 +634,8 @@ pnpm db:studio
 
 [MIT License](LICENSE)
 
----
-
-<h2 id="english">📖 English</h2>
-
-### 🎯 Project Overview
-
-Mnemora is a **privacy-first desktop “work memory” app**. It continuously captures your screen activity and turns what you see into searchable, structured context (knowledge, state snapshots, action items, and Threads) so you can quickly answer:
-
-- What was I working on?
-- Why did I do it this way?
-- What should I do next?
-
-**Core Philosophy:** "Let your screen become your second brain" — build a local context graph from your screen, so your work becomes traceable, searchable, and easy to resume.
-
-**What you can do with it:**
-
-- Review your recent work history in 20-minute activity windows
-- Retrieve “the page / document / screen I saw earlier” via semantic search
-- Use **Thread Lens** + Thread Brief to quickly regain context across apps and windows
-- Open the local monitoring dashboard to diagnose backlogs and AI failures
-
-**Who it's for:**
-
-- People who context-switch a lot (developers, researchers, writers)
-- Anyone who wants searchable knowledge from their screen while keeping data local-first
-
-**Why Mnemora:**
-
-- **Local-first by default**: data lives in SQLite + local files; no built-in third-party telemetry; you bring your own model endpoints
-- **Built to run continuously**: dedup + backpressure control to avoid uncontrolled growth
-- **Hybrid understanding**: batch VLM for structured understanding, plus local OCR (EN/ZH) when needed
-- **Observability included**: local-only web dashboard on `127.0.0.1` with SSE streaming
-
-### ✅ 3-Step Workflow (How you use it)
-
-- **Capture**: continuous screen awareness (multi-monitor/window) with dedup to reduce noise
-- **Understand**: batch VLM produces structured context; triggers local OCR (EN/ZH) when needed
-- **Retrieve & Resume**: semantic search to find what you saw; Thread Lens/Thread Brief to regain context fast
-
-![System Overview](./externals/assets/architecture_excalidraw.png)
-
-### ✨ Feature Highlights
-
-#### 1. Continuous Screen Awareness
-
-- **Intelligent Screen Capture** 🎥: Multi-monitor + window capture; on macOS uses a hybrid window-source strategy (`desktopCapturer` + `window_inspector`) to improve window metadata across Spaces
-- **Deduplication** 🧹: Perceptual hash (pHash) based deduplication to reduce noisy, near-duplicate screenshots
-- **Backpressure Control** 🧯: Adjusts capture frequency (and dedup sensitivity) based on backlog to prevent overload
-
-#### 2. Hybrid AI Processing Pipeline
-
-- **VLM Visual Understanding** 🧠: Batch multimodal analysis that extracts structured context from screenshots
-- **Local OCR** 🔤: Tesseract.js based local text recognition (Chinese + English)
-- **Smart Decision** ⚖️: VLM decides whether OCR is needed, balancing accuracy and performance
-
-#### 3. Context Graph Construction
-
-- **Semantic Search** 🧭: HNSW vector index + SQLite FTS for fast retrieval
-- **Thread Tracking** 🧵: Cross-time-window activity tracking that forms coherent workflows
-- **Knowledge Accumulation** 📚: Automatic extraction of knowledge, state snapshots, and action items
-
-#### 🧵 Thread (Thread Lens)
-
-Mnemora groups semantically related screen activity into **Threads** (e.g., “debugging login issues”, “writing a report”, “reading a paper”). In the Home page **Thread Lens**, you can:
-
-- See the most likely active thread plus other candidates
-- Temporarily focus on a candidate (Preview/Temporary Focus, without changing your pinned thread)
-- **Pin a thread** as your persistent context focus
-- Generate/refresh a **Thread Brief** to quickly regain context
-- Mark a thread as **Inactive** when it’s no longer in progress
-
-#### 4. Privacy-First Design
-
-- **Local-First** 🔒: SQLite stores metadata/OCR/context graph; raw captures and vector index are stored as local files (capture files may be cleaned up after processing)
-- **Configurable LLM** 🔧: Support for local models or custom API endpoints, data doesn't go through third parties
-- **Permission Control** 🛡️: Fine-grained system permission management, user fully controls data
-
-#### 5. Real-Time Activity Monitoring
-
-- **Activity Timeline** 🕒: 20-minute window activity aggregation and visualization
-- **Long Event Detection** ⏳: Automatic identification of deep work sessions lasting 25+ minutes
-- **Smart Notifications** 🔔: Desktop notifications for key state changes (capture paused, AI failure fuse tripped, activity summary ready)
-
-#### 6. 🔐 Privacy Vault (Local-Only)
-
-Mnemora is designed with “your data stays yours” in mind:
-
-- 📦 **Everything is stored locally**: screenshots, OCR text, vector index, threads, and context graph live on your machine.
-- 🔧 **Bring your own models**: VLM / LLM / Embeddings are configured by you in Settings via `baseUrl` + `model` + `apiKey` (OpenAI-compatible endpoints).
-- 🚫 **No built-in third-party telemetry**: the project does not ship with analytics / reporting integrations; outbound requests only happen when you configure model endpoints.
-
-**Default local data locations (source of truth in code):**
-
-- **Screenshot files (ephemeral)**: `~/.mnemora/images/`
-- **Vector index file**: `~/.mnemora/vector_index.bin`
-- **Main process logs**: `~/.mnemora/logs/main.log`
-- **SQLite database**: `app.getPath("userData")/mnemora.db`
-
-> Note: capture files are written with `storage_state = "ephemeral"` and are typically deleted after VLM/OCR completes (`"deleted"`); the database keeps metadata, OCR text, and context nodes.
-
-#### 7. 📈 Local Performance Monitoring Dashboard (Web)
-
-The app ships with a local web-based monitoring & diagnostics dashboard for event loop, CPU/memory, queue backlogs, and AI request/error traces:
-
-- 🧪 **Local-only server**: runs on `127.0.0.1` and is not exposed publicly.
-- ⚙️ **On-demand**: after the app starts, open **Settings** → _Monitoring Dashboard_.
-- 🔗 **URL**: `http://127.0.0.1:<port>` (tries available ports starting from `23333`), with real-time streaming over SSE `/api/stream`.
 
 ---
-
-### 🏗️ Architecture (For Developers)
-
-#### System Layer Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Renderer Layer                             │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐          │
-│  │   Home   │ │ Settings │ │  Search  │ │ Activity │          │
-│  └──────────┘ └──────────┘ └──────────┘ └──────────┘          │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │              React + React Router + Tailwind             │ │
-│  └──────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              │ IPC (Typed Channels)
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Main Process                               │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │              Electron Main Process                        │ │
-│  │         (Window Management, System Integration)           │ │
-│  └──────────────────────────────────────────────────────────┘ │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
-│  │ Screen       │ │ Screenshot   │ │ AI Runtime           │  │
-│  │ Capture      │ │ Processing   │ │ Service              │  │
-│  │ Module       │ │ Pipeline     │ │ (VLM/Text/Embed)     │  │
-│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
-│  │ Context      │ │ Thread       │ │ Vector Index         │  │
-│  │ Graph        │ │ Service      │ │ (HNSW)               │  │
-│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────────┐  │
-│  │ Activity     │ │ LLM Config   │ │ Monitoring           │  │
-│  │ Monitor      │ │ Service      │ │ Dashboard            │  │
-│  └──────────────┘ └──────────────┘ └──────────────────────┘  │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                        Data Layer                               │
-│  ┌──────────────────┐  ┌──────────────────┐                   │
-│  │   SQLite         │  │   Vector Index   │                   │
-│  │   (better-sqlite3)│  │   (HNSW)         │                   │
-│  │                  │  │                  │                   │
-│  │  - screenshots   │  │  - hnsw index    │                   │
-│  │  - context_nodes │  │  - embeddings    │                   │
-│  │  - threads       │  │                  │                   │
-│  │  - batches       │  │                  │                   │
-│  └──────────────────┘  └──────────────────┘                   │
-│  ┌──────────────────┐                                          │
-│  │   File Storage   │                                          │
-│  │   ~/.mnemora/    │                                          │
-│  └──────────────────┘                                          │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-![AI Processing Pipeline](./externals/assets/pipeline_excalidraw_v2.png)
-
-#### Core Module Relationships
-
-```
-ScreenCaptureModule
-    │
-    ├── CaptureService (desktopCapturer)
-    │
-    ├── CaptureScheduler (interval scheduling + backpressure)
-    │
-    ├── WindowFilter (window filtering + app name normalization)
-    │
-    └── ScreenshotProcessingModule
-            │
-            ├── BatchVlmScheduler (batch VLM analysis)
-            │
-            ├── OcrScheduler (local OCR)
-            │
-            ├── ThreadScheduler (thread tracking)
-            │
-            ├── VectorDocumentScheduler (embedding + indexing)
-            │
-            └── ActivityTimelineScheduler (activity timeline)
-```
-
-### 🔧 Key Implementations (Mechanisms, not code walkthroughs)
-
-#### 1. Adaptive Capture Backpressure
-
-Dynamic adjustment based on pending VLM batch count:
-
-- Backlog is mapped into discrete levels
-- Capture interval and dedup threshold are adjusted per level, with recovery hysteresis to avoid oscillation
-- Goal: keep the system stable for long-running usage
-
-#### 2. Hybrid OCR (VLM-triggered, local execution)
-
-VLM outputs language + optional ROI (`textRegion`). Only supported languages (`en`, `zh`) trigger local Tesseract.js OCR. OCR text is persisted; capture files are typically treated as ephemeral inputs and may be cleaned up after processing.
-
-#### 3. Thread Tracking (Thread Lens)
-
-Thread assignment is done batch-wise by the Thread LLM for nodes missing a thread association. Assignments are **write-once** (only set when missing), so there is **no automatic thread merging/overwriting**. Long-event detection uses a 25-minute threshold by default.
-
-#### 4. Semantic Search (SQLite FTS + HNSW + Deep Search)
-
-Combines keyword search (SQLite FTS) and vector search (HNSW index stored at `~/.mnemora/vector_index.bin`), with optional LLM query planning and answer synthesis.
-
-#### 5. Type-Safe IPC (shared channels + preload APIs)
-
-Centralized IPC channel definitions and a unified success/error envelope shared by both processes, with typed APIs exposed via preload to the renderer.
-
-#### 6. AI Runtime Concurrency + Failure Fuse
-
-Per-capability semaphores (VLM / text / embedding) with adaptive concurrency tuning (AIMD) and a circuit breaker that can pause/stop capture on repeated AI failures and auto-resume after config validation.
-
-### 🚀 Quick Start
-
-#### Requirements
-
-- **Node.js**: 22.x (see `.nvmrc`)
-- **pnpm**: 10.x
-- **Python**: 3.9+ (macOS only: required to build `window_inspector`)
-
-#### Install Dependencies
-
-```bash
-# Clone repository
-git clone https://github.com/mbaxszy7/Mnemora.git
-cd Mnemora
-
-# Install dependencies
-pnpm install
-
-# Build window_inspector (macOS-only Python tool; pnpm dev/build also triggers it)
-pnpm run build:window_inspector
-```
-
-#### Development
-
-```bash
-# Development mode
-pnpm dev
-
-# Or: use a custom Electron.app (dev-time icon/BundleId override; run from repo root)
-pnpm dev:custom-electron
-
-# If native modules fail to load (better-sqlite3 / hnswlib-node), try
-pnpm dev:rebuild
-```
-
-#### Production Build
-
-```bash
-# Production build
-pnpm build
-
-# Or: package with Electron Forge (zip + dmg on macOS)
-pnpm forge:make
-```
-
-#### Database Migrations
-
-```bash
-# Generate migrations
-pnpm db:generate
-
-# Apply migrations (also runs automatically on app startup)
-pnpm db:push
-
-# Database studio
-pnpm db:studio
-```
-
-### 🛠️ Tech Stack
-
-| Layer        | Tech                             |
-| ------------ | -------------------------------- |
-| **Desktop**  | Electron + Vite                  |
-| **UI**       | React + Tailwind CSS + shadcn/ui |
-| **State**    | React Query + Zustand            |
-| **Database** | SQLite + Drizzle ORM             |
-| **Vector**   | HNSW (hnswlib-node)              |
-| **AI SDK**   | Vercel AI SDK                    |
-| **OCR**      | Tesseract.js                     |
-| **Imaging**  | sharp                            |
-| **i18n**     | i18next                          |
-| **Logging**  | pino                             |
-| **Testing**  | Vitest                           |
-
-### 📄 License
-
-[MIT License](LICENSE)
-
----
-
 <p align="center">
   Made with ❤️ by <a href="https://github.com/mbaxszy7">Frank Yan</a>
 </p>

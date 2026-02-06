@@ -120,4 +120,103 @@ describe("ThreadsService", () => {
     mockGetDb.mockReturnValue(mockDb);
     expect(service.getActiveThreadCandidates()[0]?.id).toBe("t1");
   });
+
+  it("returns empty when no active and no fallback candidates", () => {
+    mockDb = createDbMock({
+      selectSteps: [{ all: [] }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    expect(service.getActiveThreadCandidates()).toEqual([]);
+  });
+
+  it("getActiveThreadCandidatesWithPinned includes pinned thread first", async () => {
+    const pinnedRow = { ...threadRow, id: "pinned" };
+    mockDb = createDbMock({
+      selectSteps: [
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: "pinned", pinnedThreadUpdatedAt: 100 } },
+        { get: pinnedRow },
+        { all: [threadRow] },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const result = await service.getActiveThreadCandidatesWithPinned();
+    expect(result[0]?.id).toBe("pinned");
+  });
+
+  it("getResolvedActiveThread returns pinned when available", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: "t1", pinnedThreadUpdatedAt: 100 } },
+        { get: threadRow },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const resolved = await service.getResolvedActiveThread();
+    expect(resolved?.id).toBe("t1");
+  });
+
+  it("getResolvedActiveThread returns first candidate when no pinned", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: null, pinnedThreadUpdatedAt: 100 } },
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: null, pinnedThreadUpdatedAt: 100 } },
+        { all: [threadRow] },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const resolved = await service.getResolvedActiveThread();
+    expect(resolved?.id).toBe("t1");
+  });
+
+  it("getResolvedActiveThread returns null when no candidates", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: null, pinnedThreadUpdatedAt: 100 } },
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: null, pinnedThreadUpdatedAt: 100 } },
+        { all: [] },
+        { all: [] },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const resolved = await service.getResolvedActiveThread();
+    expect(resolved).toBeNull();
+  });
+
+  it("pinThread with empty id returns current state", async () => {
+    mockDb = createDbMock({
+      selectSteps: [
+        { get: { id: 1 } },
+        { get: { id: 1 } },
+        { get: { pinnedThreadId: null, pinnedThreadUpdatedAt: 100 } },
+      ],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const state = await service.pinThread("  ");
+    expect(state.pinnedThreadId).toBeNull();
+  });
+
+  it("listThreads uses default limit when not provided", () => {
+    mockDb = createDbMock({
+      selectSteps: [{ all: [threadRow] }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    expect(service.listThreads().length).toBe(1);
+  });
+
+  it("rowToThread handles invalid JSON in apps/keyEntities gracefully", () => {
+    const badRow = { ...threadRow, apps: "bad-json", keyEntities: "bad-json" };
+    mockDb = createDbMock({
+      selectSteps: [{ get: badRow }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+    const thread = service.getThreadById("t1");
+    expect(thread?.apps).toEqual([]);
+    expect(thread?.keyEntities).toEqual([]);
+  });
 });

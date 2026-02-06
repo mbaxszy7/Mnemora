@@ -688,6 +688,9 @@ describe("TrayService", () => {
     });
 
     it("should return early when icon not found on win32", async () => {
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32", writable: true });
+
       const { existsSync } = await import("node:fs");
       vi.mocked(existsSync).mockReturnValue(false);
 
@@ -704,6 +707,7 @@ describe("TrayService", () => {
       expect(mockTray.setToolTip).not.toHaveBeenCalled();
 
       // Restore
+      Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
       vi.mocked(existsSync).mockReturnValue(true);
     });
 
@@ -730,6 +734,10 @@ describe("TrayService", () => {
       expect(mockTray.setToolTip).not.toHaveBeenCalled();
 
       Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
+      vi.mocked(nativeImage.createFromPath).mockReturnValue({
+        isEmpty: () => false,
+        setTemplateImage: vi.fn(),
+      } as unknown as ReturnType<typeof nativeImage.createFromPath>);
     });
 
     it("should handle icon file not found warning on non-win32", async () => {
@@ -759,6 +767,10 @@ describe("TrayService", () => {
 
       Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
       vi.mocked(existsSync).mockReturnValue(true);
+      vi.mocked(nativeImage.createFromPath).mockReturnValue({
+        isEmpty: () => false,
+        setTemplateImage: vi.fn(),
+      } as unknown as ReturnType<typeof nativeImage.createFromPath>);
     });
 
     it("should create new window when getMainWindow returns null", () => {

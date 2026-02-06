@@ -51,6 +51,7 @@ dev.db-wal
 
 # Coverage / build artifacts
 coverage
+coverage-full
 *.tsbuildinfo
 
 # Common secret/cert/key formats

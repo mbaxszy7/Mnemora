@@ -196,7 +196,6 @@ class VLMProcessor {
 
     return results;
   }
-
   private buildScreenshotMeta(screenshots: ScreenshotWithData[]): VLMScreenshotMeta[] {
     return screenshots.map((s, index) => ({
       screenshot_index: index + 1,

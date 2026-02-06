@@ -159,15 +159,8 @@ export abstract class BaseScheduler {
   protected scheduleNext(): void {
     this.clearTimer();
     if (!this.isRunning) return;
-    // 计算下一次需要执行的最早时间（nextRunAt），用于动态调度下一轮 cycle
-
-    // 防 tight loop：即使任务已经 due（earliestNextRun <= now）或者马上 due，
-    // 也至少等待一个最小间隔再跑下一轮。
-    // 这样可以显著降低 CPU/DB 压力，并给 VLM/embedding 等异步流水线留出推进时间。
-
-    // 如果有 earliestNextRun，则把 delay clamp 到 [minDelayMs, defaultIntervalMs]。
-    // - 不会因为 due task 导致 0ms/1s 紧循环
-    // - 也不会 sleep 超过默认周期（防止调度“睡过头”）
+    // Compute the earliest next run time to dynamically schedule the next cycle.
+    // Clamp delay to [minDelayMs, defaultIntervalMs] to prevent tight loops and oversleeping.
 
     let earliestNextRun: number | null;
     try {

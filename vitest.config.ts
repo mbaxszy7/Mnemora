@@ -56,21 +56,9 @@ export default defineConfig({
         // Monitoring (HTTP server, perf_hooks, DB polling)
         "electron/services/monitoring/monitoring-server.ts",
         "electron/services/monitoring/metrics-collector.ts",
-        // Screenshot-processing heavy orchestrators/schedulers:
-        // unit tests exist, but deterministic branch coverage remains low due DB/IO/AI orchestration.
-        "electron/services/screenshot-processing/screenshot-processing-module.ts",
-        "electron/services/screenshot-processing/thread-runtime-service.ts",
-        "electron/services/screenshot-processing/activity-monitor-service.ts",
-        "electron/services/screenshot-processing/context-search-service.ts",
-        "electron/services/screenshot-processing/deep-search-service.ts",
-        "electron/services/screenshot-processing/thread-repository.ts",
-        "electron/services/screenshot-processing/threads-service.ts",
-        "electron/services/screenshot-processing/vlm-processor.ts",
-        "electron/services/screenshot-processing/schedulers/activity-timeline-scheduler.ts",
-        "electron/services/screenshot-processing/schedulers/batch-vlm-scheduler.ts",
-        "electron/services/screenshot-processing/schedulers/thread-scheduler.ts",
-        "electron/services/screenshot-processing/schedulers/vector-document-scheduler.ts",
-        "electron/services/screenshot-processing/schedulers/ocr-scheduler.ts",
+        // Screenshot-processing orchestration modules (kept out of coverage gates)
+        "electron/services/screenshot-processing/{vlm-processor,activity-monitor-service,context-search-service,deep-search-service,thread-runtime-service,thread-repository}.ts",
+        "electron/services/screenshot-processing/schedulers/{activity-timeline-scheduler,batch-vlm-scheduler,thread-scheduler,vector-document-scheduler,ocr-scheduler}.ts",
         // Shared: type-only and barrel modules
         "shared/**/*-types.ts",
         "shared/index.ts",

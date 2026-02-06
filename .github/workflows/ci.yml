@@ -34,6 +34,19 @@ jobs:
         id: tests
         run: pnpm test:coverage
 
+      - name: Run full coverage report (non-blocking)
+        id: full_coverage
+        if: steps.tests.outcome == 'success'
+        continue-on-error: true
+        run: pnpm test:coverage:full
+
+      - name: Upload full coverage artifact
+        if: steps.full_coverage.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-full
+          path: ./coverage-full
+
       - name: Upload coverage to Codecov
         if: always() && steps.tests.outcome != 'skipped'
         uses: codecov/codecov-action@v5

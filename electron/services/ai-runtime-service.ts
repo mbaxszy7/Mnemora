@@ -10,22 +10,22 @@ import type { CaptureSchedulerState } from "./screen-capture/types";
 import { LLMConfigService } from "./llm-config-service";
 
 /**
- * AI 能力类型（贯穿 semaphore/tuner/breaker 以及所有调用点）。
+ * AI capability types (used across semaphore/tuner/breaker and all call sites).
  *
- * - `vlm`: 视觉模型相关（截图理解/分片分析等）
- * - `text`: 纯文本 LLM（summary、deep search、merge hint 等）
- * - `embedding`: 向量化（写入/更新向量索引）
+ * - `vlm`: Vision model related (screenshot understanding/segment analysis, etc.)
+ * - `text`: Pure text LLM (summary, deep search, merge hint, etc.)
+ * - `embedding`: Vectorization (write/update vector index)
  */
 export type AICapability = "vlm" | "text" | "embedding";
 
 const runtimeLogger = getLogger("ai-runtime-service");
 
 /**
- * breaker 熔断时的默认广播实现：向所有 BrowserWindow 发送 IPC 事件。
+ * Default broadcast implementation when breaker trips: send IPC events to all BrowserWindows.
  *
- * 设计要点：
- * - 放在模块级，避免 `AIRuntimeService` 构造时创建闭包/绑定 `this`
- * - 单元测试可通过依赖注入替换为 mock
+ * Design choices:
+ * - Module-level placement avoids closure creation/`this` binding during `AIRuntimeService` construction
+ * - Can be replaced with mock via dependency injection for unit tests
  */
 function defaultSendToAllWindows(payload: AIFailureFuseTrippedPayload): void {
   try {
@@ -42,11 +42,11 @@ function defaultSendToAllWindows(payload: AIFailureFuseTrippedPayload): void {
 }
 
 /**
- * breaker 恢复时的默认配置校验实现。
+ * Default config validation implementation when breaker recovers.
  *
- * breaker tripped 后：
- * - 等待用户保存配置（LLM_CONFIG_SAVE）
- * - 调用 validate，成功才允许自动恢复 capture
+ * After breaker trips:
+ * - Wait for user to save config (LLM_CONFIG_SAVE)
+ * - Call validate; only allow auto-resume on success
  */
 async function defaultValidateConfig(config: LLMConfig): Promise<{ success: boolean }> {
   const res = await LLMConfigService.getInstance().validateConfiguration(config);
@@ -58,30 +58,30 @@ async function defaultValidateConfig(config: LLMConfig): Promise<{ success: bool
 // =========================================================================
 
 /**
- * 一个简单的计数信号量（counting semaphore）。
+ * A simple counting semaphore.
  *
- * 目的：
- * - 为不同 AI capability 提供“全局并发上限”，避免同时发起过多请求
- * - 支持动态调整并发（`setLimit`），用于自适应 tuner
+ * Purpose:
+ * - Provides a "global concurrency limit" for different AI capabilities to prevent too many concurrent requests
+ * - Supports dynamic concurrency adjustment (`setLimit`) for adaptive tuner
  *
- * 关键字段：
- * - `limit`: 当前允许的最大并发（上限）
- * - `inUse`: 当前已经被 acquire 的 permit 数（正在占用的并发数）
- * - `permits`: 当前仍可用的 permit 数（可立即 acquire 的数量）
- * - `waiting`: 等待队列（FIFO）。当 `permits` 变为正数时按顺序唤醒。
+ * Key fields:
+ * - `limit`: Current maximum allowed concurrency (upper bound)
+ * - `inUse`: Number of permits currently acquired (active concurrent tasks)
+ * - `permits`: Number of permits currently available (can be acquired immediately)
+ * - `waiting`: Wait queue (FIFO). Wakes up in order when `permits` becomes positive.
  */
 class Semaphore {
-  /** 可用 permit 数（可立即 acquire 的数量） */
+  /** Available permits (can be acquired immediately) */
   private permits: number;
 
-  /** 并发上限（最大同时 inUse） */
+  /** Concurrency limit (max concurrent inUse) */
   private limit: number;
 
-  /** 已占用 permit 数（正在并发中的任务数量） */
+  /** Used permits (number of tasks currently in progress) */
   private inUse: number;
 
   /**
-   * 等待队列（FIFO）。当有空余 permit 时，会 shift 出队并唤醒。
+   * Wait queue (FIFO). When permits become available, shift and wake up waiters.
    */
   private waiting: Array<() => void> = [];
 
@@ -104,8 +104,8 @@ class Semaphore {
       throw new Error("Semaphore limit must be positive");
     }
 
-    // 调整上限后，重新计算“可用 permit”。
-    // 注意：当 limit 降到 < inUse 时，可用 permit 会变成 0（表示没有 capacity）。
+    // Recalculate available permits after limit adjustment.
+    // Note: When limit drops below inUse, available permits become 0 (no capacity).
     this.limit = next;
     this.permits = Math.max(0, this.limit - this.inUse);
 
@@ -125,8 +125,8 @@ class Semaphore {
 
     return new Promise((resolve) => {
       this.waiting.push(() => {
-        // 只有在被唤醒时才会真正占用 permit。
-        // 被唤醒的前提：release/setLimit 确认当前有 capacity。
+        // Only consume permit when awakened.
+        // Precondition for waking: release/setLimit confirms current capacity.
         this.permits--;
         this.inUse++;
         resolve(() => this.release());
@@ -156,22 +156,22 @@ class Semaphore {
 
 class AISemaphoreManager {
   /**
-   * 每个 capability 一个 semaphore。
+   * One semaphore per capability.
    *
-   * 设计选择：lazy init（按需创建）。
-   * - 避免主进程启动时无意义初始化
-   * - 也减少测试里不必要的副作用
+   * Design choice: lazy init (create on demand).
+   * - Avoids unnecessary initialization at main process startup
+   * - Reduces side effects in tests
    */
   private _vlm: Semaphore | null = null;
   private _text: Semaphore | null = null;
   private _embedding: Semaphore | null = null;
 
   /**
-   * 根据 capability 返回对应的 semaphore。
+   * Returns the semaphore for the given capability.
    *
-   * 设计要点：
-   * - 这里统一路由，保证调用方只关心 capability，不关心具体实例
-   * - 内部通过 getter 保证 lazy init
+   * Design choices:
+   * - Unified routing ensures callers only care about capability, not the specific instance
+   * - Internal getters ensure lazy init
    */
   private ensure(capability: AICapability): Semaphore {
     switch (capability) {
@@ -205,17 +205,17 @@ class AISemaphoreManager {
     return this._embedding;
   }
 
-  /** 获取指定 capability 的 permit（调用方拿到 release() 回调后必须确保最终调用） */
+  /** Acquire permit for the specified capability (caller must ensure release() is eventually called) */
   acquire(capability: AICapability): Promise<() => void> {
     return this.ensure(capability).acquire();
   }
 
-  /** 返回当前 semaphore 的并发上限（limit） */
+  /** Returns current concurrency limit of the semaphore */
   getLimit(capability: AICapability): number {
     return this.ensure(capability).getLimit();
   }
 
-  /** 设置当前 semaphore 的并发上限（供 tuner 动态调整） */
+  /** Sets current concurrency limit of the semaphore (for tuner dynamic adjustment) */
   setLimit(capability: AICapability, limit: number): void {
     this.ensure(capability).setLimit(limit);
   }
@@ -233,36 +233,36 @@ class AISemaphoreManager {
 // =========================================================================
 
 type CapabilityState = {
-  /** 初始并发上限（通常来自 processingConfig.ai.*GlobalConcurrency） */
+  /** Base concurrency limit (usually from processingConfig.ai.*GlobalConcurrency) */
   base: number;
 
-  /** 当前并发上限（会被 degrade/recover 调整） */
+  /** Current concurrency limit (adjusted by degrade/recover) */
   current: number;
 
-  /** 滑动窗口：true=success / false=failure，用于计算 failure rate */
+  /** Sliding window: true=success / false=failure, used to calculate failure rate */
   window: boolean[];
 
-  /** 连续失败次数（用于快速触发降级） */
+  /** Consecutive failure count (for fast degradation trigger) */
   consecutiveFailures: number;
 
-  /** 连续成功次数（用于触发恢复） */
+  /** Consecutive success count (for recovery trigger) */
   consecutiveSuccesses: number;
 
-  /** 上一次调整并发的时间戳，用于 cooldown */
+  /** Timestamp of last concurrency adjustment, used for cooldown */
   lastAdjustedAt: number;
 };
 
 /**
- * Adaptive Concurrency Tuner（自适应并发调节器）。
+ * Adaptive Concurrency Tuner.
  *
- * 目标：在 AI 请求稳定时逐步恢复到 base 并发；当失败变多时快速降级并发，
- * 从而降低错误雪崩与 provider 限流风险。
+ * Goal: Gradually recover to base concurrency when AI requests are stable;
+ * quickly degrade when failures increase, reducing error cascades and provider rate-limit risks.
  *
- * 机制概览：
- * - 维护一个 success/failure 滑动窗口 + 连续成功/失败计数
- * - 每次 record 后，在 cooldown 允许时判断是否需要降级/恢复
- * - 降级：current /= 2（下限为 adaptiveMinConcurrency）
- * - 恢复：current += adaptiveRecoveryStep，直到 base
+ * Mechanism overview:
+ * - Maintains a success/failure sliding window + consecutive success/failure counters
+ * - After each record, checks if degrade/recover is needed when cooldown allows
+ * - Degrade: current /= 2 (floor at adaptiveMinConcurrency)
+ * - Recover: current += adaptiveRecoveryStep, up to base
  */
 class AIConcurrencyTuner {
   private readonly logger = getLogger("ai-concurrency-tuner");
@@ -394,11 +394,11 @@ class AIConcurrencyTuner {
 }
 
 /**
- * breaker 对 capture 的控制回调。
+ * Control callbacks for breaker to manage capture.
  *
- * - `stop`: breaker 熔断时调用（通常停止截图）
- * - `start`: breaker 在“配置修复且允许自动恢复”时调用（通常恢复截图）
- * - `getState`: 可选，用于判断是否应该自动恢复（比如当时是 running/paused/idle）
+ * - `stop`: Called when breaker trips (typically stops screen capture)
+ * - `start`: Called when breaker allows auto-recovery after config fix (typically resumes screen capture)
+ * - `getState`: Optional, used to determine if auto-recovery should happen (e.g., was running/paused/idle)
  */
 type CaptureControlCallbacks = {
   stop: () => Promise<void>;
@@ -407,9 +407,9 @@ type CaptureControlCallbacks = {
 };
 
 /**
- * 记录熔断窗口内的失败事件。
+ * Records failure events within the circuit breaker window.
  *
- * breaker 的判断逻辑只依赖：时间戳 + event 数量（阈值），不做复杂分类。
+ * Breaker logic only depends on: timestamp + event count (threshold), no complex classification.
  */
 interface FailureEvent {
   ts: number;
@@ -419,18 +419,18 @@ interface FailureEvent {
 }
 
 /**
- * AIFailureCircuitBreaker（失败熔断器）。
+ * AIFailureCircuitBreaker.
  *
- * 目标：当 AI 连续失败（通常是 provider 不可用/配置错误/网络问题）时，
- * 快速停止 screen capture，避免无意义地继续截图并触发更多 AI 调用。
+ * Goal: When AI fails continuously (usually provider unavailable/config error/network issues),
+ * quickly stop screen capture to avoid meaningless continued screenshots and more AI calls.
  *
- * 机制：
- * - 维护一个固定时间窗口（`windowMs`）内的失败 events
- * - 当窗口内失败数 >= `threshold` 时 tripped
- * - tripped 后：
- *   - 调用 captureControlCallbacks.stop()
- *   - 广播 IPC 事件（用于 UI 提示）
- *   - 等待用户保存配置，validate 成功后可选 auto resume
+ * Mechanism:
+ * - Maintains failure events within a fixed time window (`windowMs`)
+ * - Trips when failures in window >= `threshold`
+ * - After tripped:
+ *   - Calls captureControlCallbacks.stop()
+ *   - Broadcasts IPC event (for UI notification)
+ *   - Waits for user to save config, optional auto resume after validate success
  */
 class AIFailureCircuitBreaker {
   private readonly logger = getLogger("ai-failure-circuit-breaker");
@@ -442,20 +442,20 @@ class AIFailureCircuitBreaker {
   private readonly validateConfig: (config: LLMConfig) => Promise<{ success: boolean }>;
   private readonly sendToAllWindows: (payload: AIFailureFuseTrippedPayload) => void;
 
-  /** 熔断窗口内的失败记录（会按 windowMs 滚动裁剪） */
+  /** Failure records within circuit breaker window (trimmed by windowMs) */
   private events: FailureEvent[] = [];
 
-  /** breaker 是否已 tripped */
+  /** Whether breaker has tripped */
   private tripped = false;
 
   /**
-   * 是否应该在恢复时自动 start capture。
+   * Whether to auto-start capture on recovery.
    *
-   * 该值在 trip 时根据 getState() 判断。
+   * Determined by getState() at trip time.
    */
   private shouldAutoResumeCapture = false;
 
-  /** ScreenCaptureModule 注册的控制回调（避免直接依赖导致循环引用） */
+  /** Control callbacks registered by ScreenCaptureModule (avoids circular dependency) */
   private captureControlCallbacks: CaptureControlCallbacks | null = null;
 
   constructor(args: {
@@ -473,9 +473,9 @@ class AIFailureCircuitBreaker {
   }
 
   /**
-   * 记录一次失败。
+   * Records a failure.
    *
-   * 注意：这里并不区分失败类型/可恢复性，只做“短窗口内失败数量”判断。
+   * Note: Does not distinguish failure types/recoverability, only checks "failure count in short window".
    */
   recordFailure(capability: AICapability, err: unknown): void {
     const now = this.nowFn();
@@ -503,7 +503,7 @@ class AIFailureCircuitBreaker {
     }
   }
 
-  /** 手动重置 breaker（例如用户点击重新开始 capture 或重新初始化时） */
+  /** Manually reset breaker (e.g., when user clicks restart capture or reinitialize) */
   reset(): void {
     this.logger.info("Resetting circuit breaker");
     this.events = [];
@@ -559,12 +559,12 @@ class AIFailureCircuitBreaker {
   }
 
   /**
-   * 在用户保存配置后尝试恢复。
+   * Attempts recovery after user saves config.
    *
-   * 设计：
-   * - 只在 tripped 状态下触发
-   * - validate 成功后：如果当时 capture 状态允许自动恢复，则调用 start()
-   * - 最后 reset()，清空熔断状态与窗口
+   * Design:
+   * - Only triggers when tripped
+   * - After validate success: if capture state allows auto-recovery, call start()
+   * - Finally reset() to clear breaker state and window
    */
   async handleConfigSaved(config: LLMConfig): Promise<void> {
     if (!this.tripped) return;
@@ -598,19 +598,19 @@ class AIFailureCircuitBreaker {
 // =========================================================================
 
 /**
- * AIRuntimeService（统一运行时服务）。
+ * AIRuntimeService (unified runtime service).
  *
- * 这是对外的唯一入口（通过 `aiRuntimeService` 单例导出）。
- * 目的：把“并发控制 + 自适应并发调节 + 失败熔断”统一在一处，避免不同模块
- * 各自实现导致策略不一致。
+ * This is the only external entry point (exported via `aiRuntimeService` singleton).
+ * Purpose: Unifies "concurrency control + adaptive concurrency tuning + failure circuit breaker"
+ * in one place to avoid inconsistent strategies across modules.
  *
- * 对外 API：
- * - `acquire(capability)`: 获取 permit（返回 release() 回调）
- * - `recordSuccess(capability)`: 记录成功（用于 tuner 恢复并发）
- * - `recordFailure(capability, err, { tripBreaker })`: 记录失败（用于 tuner 降级；可选触发 breaker）
- * - `registerCaptureControlCallbacks(...)`: 由 ScreenCaptureModule 注册
- * - `handleConfigSaved(config)`: 由 llm-config-handlers 在保存配置后调用
- * - `isTripped()/resetBreaker()`: breaker 状态管理
+ * External API:
+ * - `acquire(capability)`: Acquire permit (returns release() callback)
+ * - `recordSuccess(capability)`: Record success (for tuner to recover concurrency)
+ * - `recordFailure(capability, err, { tripBreaker })`: Record failure (for tuner to degrade; optionally trip breaker)
+ * - `registerCaptureControlCallbacks(...)`: Registered by ScreenCaptureModule
+ * - `handleConfigSaved(config)`: Called by llm-config-handlers after config save
+ * - `isTripped()/resetBreaker()`: Breaker state management
  */
 class AIRuntimeService {
   private readonly semaphores: AISemaphoreManager;
@@ -639,7 +639,7 @@ class AIRuntimeService {
     return this.semaphores.acquire(capability);
   }
 
-  /** 读取当前并发上限（底层来自 semaphore.limit） */
+  /** Read current concurrency limit (from semaphore.limit) */
   getLimit(capability: AICapability): number {
     return this.semaphores.getLimit(capability);
   }
@@ -649,13 +649,13 @@ class AIRuntimeService {
   }
 
   /**
-   * 记录失败：
-   * - 一定会走 tuner（用于降级并发）
-   * - 默认也会走 breaker（用于熔断），但可通过 `tripBreaker:false` 关闭
+   * Records failure:
+   * - Always goes through tuner (for degrading concurrency)
+   * - Also goes through breaker by default (for tripping), but can be disabled via `tripBreaker:false`
    *
-   * 典型用法：
-   * - deep-search / activity-monitor：失败不应影响 capture => tripBreaker:false
-   * - screenshot processing pipeline：失败可能反映 provider/配置问题 => 默认 tripBreaker:true
+   * Typical usage:
+   * - deep-search / activity-monitor: failures shouldn't affect capture => tripBreaker:false
+   * - screenshot processing pipeline: failures may indicate provider/config issues => default tripBreaker:true
    */
   recordFailure(capability: AICapability, err: unknown, options?: { tripBreaker?: boolean }): void {
     this.tuner.recordFailure(capability, err);
@@ -686,9 +686,9 @@ class AIRuntimeService {
 export const aiRuntimeService = new AIRuntimeService();
 
 /**
- * 测试入口：避免业务代码依赖内部 class。
+ * Test entry point: prevents business code from depending on internal classes.
  *
- * 业务侧请只依赖 `aiRuntimeService`。
+ * Business code should only depend on `aiRuntimeService`.
  */
 export const __testing = {
   Semaphore,

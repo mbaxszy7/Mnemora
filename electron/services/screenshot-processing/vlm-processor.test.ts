@@ -235,10 +235,49 @@ describe("vlmProcessor", () => {
       );
     });
 
-    it("uses correct MIME type based on file extension", async () => {
-      // Skip this test - fs mock is complex for default imports
-      // The VLM processor correctly handles file extensions in the source code
-      expect(true).toBe(true);
+    it("handles screenshots without filePath", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: { totalTokens: 50 },
+      });
+
+      const batch: VlmBatchInput = {
+        batchId: "test-batch-1",
+        sourceKey: "screen:0",
+        screenshots: [
+          {
+            id: 1,
+            ts: Date.now(),
+            sourceKey: "screen:0",
+            filePath: null,
+            appHint: "vscode",
+            windowTitle: "test.ts",
+          },
+        ],
+      };
+
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+      expect(mockReadFile).not.toHaveBeenCalled();
+    });
+
+    it("handles usage without totalTokens", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: undefined,
+      });
+
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch = createMockBatch(1);
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+      expect(mockLlmUsageService.logEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          totalTokens: 0,
+          usageStatus: "missing",
+        })
+      );
     });
 
     it("respects abort timeout", async () => {
@@ -261,6 +300,236 @@ describe("vlmProcessor", () => {
 
       // Should complete normally with short timeout in tests
       await expect(vlmProcessor.processBatch(batch)).resolves.toBeDefined();
+    });
+
+    it("handles non-Error thrown in catch block", async () => {
+      mockNoObjectGeneratedError.isInstance.mockReturnValueOnce(false);
+      mockGenerateObject.mockRejectedValueOnce("string-error");
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch = createMockBatch(1);
+      await expect(vlmProcessor.processBatch(batch)).rejects.toBe("string-error");
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          errorName: "UNKNOWN",
+          errorMessage: "string-error",
+        }),
+        "VLM processBatch failed"
+      );
+    });
+
+    it("processes .webp file extension correctly", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: { totalTokens: 50 },
+      });
+
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch: VlmBatchInput = {
+        batchId: "test-batch-webp",
+        sourceKey: "screen:0",
+        screenshots: [
+          {
+            id: 1,
+            ts: Date.now(),
+            sourceKey: "screen:0",
+            filePath: "/tmp/test.webp",
+            appHint: null,
+            windowTitle: null,
+          },
+        ],
+      };
+
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+    });
+
+    it("processes .jpg file extension correctly", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: { totalTokens: 50 },
+      });
+
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch: VlmBatchInput = {
+        batchId: "test-batch-jpg",
+        sourceKey: "screen:0",
+        screenshots: [
+          {
+            id: 1,
+            ts: Date.now(),
+            sourceKey: "screen:0",
+            filePath: "/tmp/test.jpg",
+            appHint: "chrome",
+            windowTitle: "page",
+          },
+        ],
+      };
+
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+    });
+
+    it("processes .jpeg file extension correctly", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: { totalTokens: 50 },
+      });
+
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch: VlmBatchInput = {
+        batchId: "test-batch-jpeg",
+        sourceKey: "screen:0",
+        screenshots: [
+          {
+            id: 1,
+            ts: Date.now(),
+            sourceKey: "screen:0",
+            filePath: "/tmp/test.jpeg",
+            appHint: "chrome",
+            windowTitle: "page",
+          },
+        ],
+      };
+
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+    });
+
+    it("defaults to image/jpeg for unknown file extension", async () => {
+      mockGenerateObject.mockResolvedValueOnce({
+        object: createValidVLMOutput([1]),
+        usage: { totalTokens: 50 },
+      });
+
+      mockReadFile.mockResolvedValue(Buffer.from("fake-image-data"));
+
+      const batch: VlmBatchInput = {
+        batchId: "test-batch-bmp",
+        sourceKey: "screen:0",
+        screenshots: [
+          {
+            id: 1,
+            ts: Date.now(),
+            sourceKey: "screen:0",
+            filePath: "/tmp/test.bmp",
+            appHint: null,
+            windowTitle: null,
+          },
+        ],
+      };
+
+      const result = await vlmProcessor.processBatch(batch);
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  describe("buildVLMRequest", () => {
+    it("builds request with text and image content", () => {
+      const screenshots = [
+        {
+          id: 1,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/test.png",
+          appHint: "vscode",
+          windowTitle: "test.ts",
+          base64: "aGVsbG8=",
+          mime: "image/png",
+        },
+      ];
+
+      const request = vlmProcessor.buildVLMRequest(screenshots);
+      expect(request.system).toBe("test system prompt");
+      expect(request.userContent).toHaveLength(2);
+      expect(request.userContent[0]).toEqual({ type: "text", text: "test user prompt" });
+      expect(request.userContent[1]).toEqual({
+        type: "image",
+        image: "data:image/png;base64,aGVsbG8=",
+      });
+    });
+
+    it("skips images with empty base64", () => {
+      const screenshots = [
+        {
+          id: 1,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/test.png",
+          appHint: null,
+          windowTitle: null,
+          base64: "",
+          mime: null,
+        },
+      ];
+
+      const request = vlmProcessor.buildVLMRequest(screenshots);
+      expect(request.userContent).toHaveLength(1);
+      expect(request.userContent[0].type).toBe("text");
+    });
+
+    it("uses image/jpeg as default mime when null", () => {
+      const screenshots = [
+        {
+          id: 1,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/test.png",
+          appHint: "app",
+          windowTitle: "win",
+          base64: "aGVsbG8=",
+          mime: null,
+        },
+      ];
+
+      const request = vlmProcessor.buildVLMRequest(screenshots);
+      expect(request.userContent[1]).toEqual({
+        type: "image",
+        image: "data:image/jpeg;base64,aGVsbG8=",
+      });
+    });
+
+    it("handles multiple screenshots with mixed base64", () => {
+      const screenshots = [
+        {
+          id: 1,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/a.png",
+          appHint: null,
+          windowTitle: null,
+          base64: "abc",
+          mime: "image/png",
+        },
+        {
+          id: 2,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/b.png",
+          appHint: null,
+          windowTitle: null,
+          base64: "",
+          mime: null,
+        },
+        {
+          id: 3,
+          ts: Date.now(),
+          sourceKey: "screen:0",
+          filePath: "/tmp/c.webp",
+          appHint: null,
+          windowTitle: null,
+          base64: "def",
+          mime: "image/webp",
+        },
+      ];
+
+      const request = vlmProcessor.buildVLMRequest(screenshots);
+      // 1 text + 2 images (screenshot 2 has empty base64)
+      expect(request.userContent).toHaveLength(3);
     });
   });
 });

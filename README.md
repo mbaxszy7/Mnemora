@@ -32,9 +32,28 @@
 
 ### 🎯 项目概述
 
-Mnemora 是一款智能上下文感知的桌面应用程序，通过持续的屏幕捕获、语义理解和智能分析，帮助用户自动记录工作/学习轨迹、获取实时洞见并沉淀知识。
+Mnemora 是一款 **隐私优先的桌面“工作记忆”应用**：它持续捕获你的屏幕活动，并用 AI 将画面转成可检索的结构化上下文（知识、状态、行动项、线程），帮助你在“我刚刚在干什么/为什么这么做/接下来做什么”之间快速切换。
 
-**核心理念：** "让你的屏幕成为第二大脑" —— 让计算机主动感知并理解你的工作上下文，成为真正的智能助手。
+**核心理念：** "让你的屏幕成为第二大脑" —— 让计算机在本地构建你的上下文图谱，把碎片化的屏幕信息变成可追溯、可搜索、可回到现场的工作记忆。
+
+**你可以用它做什么：**
+
+- 回溯某个时间段的工作轨迹（按 20 分钟窗口聚合）
+- 通过语义搜索找回“当时看到的页面 / 文档 / 对话内容”
+- 用 **Thread Lens** 把跨应用、跨窗口的同一件事串起来，并用 Thread Brief 快速“恢复上下文”
+- 当 AI 出错或队列堆积时，打开本地监控面板进行诊断（本机 Web Dashboard）
+
+**适合谁：**
+
+- 多任务切换频繁、需要“随时回到上下文”的开发者/研究者/写作者
+- 想把屏幕上的信息沉淀为可检索知识的人（同时又希望数据尽可能保留在本地）
+
+**为什么是 Mnemora：**
+
+- **真正的本地优先**：数据落在 SQLite + 本地文件，默认不接入遥测；模型端点由你配置
+- **可持续运行**：有背压与去重机制，避免“截图越跑越快、资源越堆越多”
+- **混合理解链路**：VLM 批处理做结构化理解，必要时触发本地 OCR（中英文）补齐文本
+- **可观测性内建**：本机 `127.0.0.1` 的监控面板 + SSE 流，能看到队列与 AI 请求/错误
 
 ![System Overview](./externals/assets/architecture_excalidraw.png)
 
@@ -43,20 +62,20 @@ Mnemora 是一款智能上下文感知的桌面应用程序，通过持续的屏
 #### 1. 持续屏幕感知 🎥
 
 - **智能屏幕捕获**：支持多显示器、窗口捕获；macOS 使用 `desktopCapturer` + `window_inspector` 的混合策略补全窗口元信息（跨 Space）
-- **去重机制**：基于感知哈希（pHash）的图像去重，避免存储相似截图
-- **背压控制**：动态调整捕获频率，避免系统资源过载
+- **去重机制**：基于感知哈希（pHash）的图像去重，减少重复与噪声
+- **背压控制**：按队列堆积动态调整捕获频率与去重阈值，避免系统资源过载
 
 #### 2. 混合 AI 处理流水线 🧠
 
-- **VLM 视觉理解**：使用多模态大语言模型分析屏幕内容，提取结构化信息
+- **VLM 视觉理解**：批量分析屏幕内容，输出结构化上下文（标题/摘要/关键词/实体/知识/状态）
 - **本地 OCR**：基于 Tesseract.js 的本地文本识别，支持中英文
-- **智能决策**：VLM 决定是否需要 OCR 辅助，平衡精度与性能
+- **智能决策**：由 VLM 决定是否需要 OCR 辅助，在精度与性能之间取得平衡
 
 #### 3. 上下文图谱构建 🧭
 
-- **语义向量化**：使用 HNSW 向量索引实现高效的语义搜索
-- **Thread 线程追踪**：跨时间窗口追踪用户活动主题，形成连贯的工作流
-- **知识沉淀**：自动提取知识、状态快照、待办事项
+- **语义搜索**：HNSW 向量索引 + SQLite FTS，让“找回当时看到的内容”更直接
+- **Thread 线程追踪**：跨时间窗口追踪活动主题，把碎片化屏幕变成连贯的工作流
+- **知识沉淀**：自动提取知识、状态快照、待办事项，减少重复整理
 
 #### 🧵 Thread 线程（Thread Lens）
 
@@ -364,9 +383,32 @@ pnpm db:studio
 
 ### 🎯 Project Overview
 
-Mnemora is an intelligent context-aware desktop application that continuously captures your screen, understands the semantics, and provides smart analysis to help you automatically track work/study history, gain real-time insights, and accumulate knowledge.
+Mnemora is a **privacy-first desktop “work memory” app**. It continuously captures your screen activity and turns what you see into searchable, structured context (knowledge, state snapshots, action items, and Threads) so you can quickly answer:
 
-**Core Philosophy:** "Let your screen become your second brain" — enabling computers to proactively perceive and understand your work context, becoming a truly intelligent assistant.
+- What was I working on?
+- Why did I do it this way?
+- What should I do next?
+
+**Core Philosophy:** "Let your screen become your second brain" — build a local context graph from your screen, so your work becomes traceable, searchable, and easy to resume.
+
+**What you can do with it:**
+
+- Review your recent work history in 20-minute activity windows
+- Retrieve “the page / document / screen I saw earlier” via semantic search
+- Use **Thread Lens** + Thread Brief to quickly regain context across apps and windows
+- Open the local monitoring dashboard to diagnose backlogs and AI failures
+
+**Who it's for:**
+
+- People who context-switch a lot (developers, researchers, writers)
+- Anyone who wants searchable knowledge from their screen while keeping data local-first
+
+**Why Mnemora:**
+
+- **Local-first by default**: data lives in SQLite + local files; no built-in third-party telemetry; you bring your own model endpoints
+- **Built to run continuously**: dedup + backpressure control to avoid uncontrolled growth
+- **Hybrid understanding**: batch VLM for structured understanding, plus local OCR (EN/ZH) when needed
+- **Observability included**: local-only web dashboard on `127.0.0.1` with SSE streaming
 
 ![System Overview](./externals/assets/architecture_excalidraw.png)
 
@@ -375,19 +417,19 @@ Mnemora is an intelligent context-aware desktop application that continuously ca
 #### 1. Continuous Screen Awareness
 
 - **Intelligent Screen Capture** 🎥: Multi-monitor + window capture; on macOS uses a hybrid window-source strategy (`desktopCapturer` + `window_inspector`) to improve window metadata across Spaces
-- **Deduplication** 🧹: Perceptual hash (pHash) based image deduplication to avoid storing similar screenshots
-- **Backpressure Control** 🧯: Dynamic adjustment of capture frequency to prevent system overload
+- **Deduplication** 🧹: Perceptual hash (pHash) based deduplication to reduce noisy, near-duplicate screenshots
+- **Backpressure Control** 🧯: Adjusts capture frequency (and dedup sensitivity) based on backlog to prevent overload
 
 #### 2. Hybrid AI Processing Pipeline
 
-- **VLM Visual Understanding** 🧠: Multimodal large language model analysis of screen content, extracting structured information
-- **Local OCR** 🔤: Tesseract.js based local text recognition, supporting Chinese and English
-- **Smart Decision** ⚖️: VLM decides whether OCR assistance is needed, balancing accuracy and performance
+- **VLM Visual Understanding** 🧠: Batch multimodal analysis that extracts structured context from screenshots
+- **Local OCR** 🔤: Tesseract.js based local text recognition (Chinese + English)
+- **Smart Decision** ⚖️: VLM decides whether OCR is needed, balancing accuracy and performance
 
 #### 3. Context Graph Construction
 
-- **Semantic Vectorization** 🧭: HNSW vector index for efficient semantic search
-- **Thread Tracking** 🧵: Cross-time-window user activity tracking, forming coherent workflows
+- **Semantic Search** 🧭: HNSW vector index + SQLite FTS for fast retrieval
+- **Thread Tracking** 🧵: Cross-time-window activity tracking that forms coherent workflows
 - **Knowledge Accumulation** 📚: Automatic extraction of knowledge, state snapshots, and action items
 
 #### 🧵 Thread (Thread Lens)

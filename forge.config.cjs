@@ -6,11 +6,6 @@ const { execSync } = require("node:child_process");
 const electronCacheRoot = path.resolve(__dirname, ".electron-cache");
 const fallbackElectronMirror = "https://npmmirror.com/mirrors/electron/";
 const appDisplayName = process.env.MNEMORA_APP_NAME ?? "Mnemora";
-const macSigningIdentity = process.env.APPLE_SIGNING_IDENTITY?.trim();
-const hasMacSigningIdentity = Boolean(macSigningIdentity);
-const hasMacNotarizationCredentials = Boolean(
-  process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID
-);
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const electronChecksums = require("electron/checksums.json");
 
@@ -119,11 +114,60 @@ function copyWindowInspectorIntoResources({ buildPath }) {
   fs.rmSync(destDir, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(destDir), { recursive: true });
   fs.cpSync(inspectorDir, destDir, { recursive: true });
+  rewriteWindowInspectorAbsoluteSymlinks({ inspectorDir, destDir });
 
   const exePath = path.join(destDir, "window_inspector");
   if (fileExists(exePath)) {
     fs.chmodSync(exePath, 0o755);
   }
+}
+
+function walkDirectory(rootDir, visit) {
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    if (!currentDir) continue;
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      visit(fullPath, entry);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+      }
+    }
+  }
+}
+
+function rewriteWindowInspectorAbsoluteSymlinks({ inspectorDir, destDir }) {
+  const sourcePrefix = `${inspectorDir}${path.sep}`;
+  const marker = `${path.sep}window_inspector${path.sep}`;
+
+  walkDirectory(destDir, (fullPath, entry) => {
+    if (!entry.isSymbolicLink()) return;
+
+    let target = "";
+    try {
+      target = fs.readlinkSync(fullPath);
+    } catch {
+      return;
+    }
+
+    if (!path.isAbsolute(target)) return;
+
+    let mappedTarget = "";
+    if (target.startsWith(sourcePrefix)) {
+      mappedTarget = path.join(destDir, path.relative(inspectorDir, target));
+    } else {
+      const markerIndex = target.lastIndexOf(marker);
+      if (markerIndex < 0) return;
+      const insideWindowInspector = target.slice(markerIndex + marker.length);
+      mappedTarget = path.join(destDir, insideWindowInspector);
+    }
+
+    const relativeTarget = path.relative(path.dirname(fullPath), mappedTarget) || ".";
+    fs.unlinkSync(fullPath);
+    fs.symlinkSync(relativeTarget, fullPath);
+  });
 }
 
 function copyLocalesIntoResources({ buildPath }) {
@@ -275,24 +319,6 @@ module.exports = {
       /^\/node_modules\/\.cache($|\/)/,
       /^\/.*\.traineddata$/i,
     ],
-    osxSign: hasMacSigningIdentity
-      ? {
-          identity: macSigningIdentity,
-          hardenedRuntime: true,
-          gatekeeperAssess: false,
-          entitlements: "build/entitlements.mac.plist",
-          "entitlements-inherit": "build/entitlements.mac.inherit.plist",
-        }
-      : undefined,
-    osxNotarize:
-      hasMacSigningIdentity && hasMacNotarizationCredentials
-        ? {
-            tool: "notarytool",
-            appleId: process.env.APPLE_ID,
-            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
-            teamId: process.env.APPLE_TEAM_ID,
-          }
-        : undefined,
   },
   makers: [
     {

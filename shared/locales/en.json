@@ -38,6 +38,37 @@
       "opened": "Monitoring dashboard opened",
       "openFailed": "Failed to open monitoring dashboard"
     },
+    "updates": {
+      "title": "App Updates",
+      "description": "Check and install the latest stable app version.",
+      "currentVersion": "Current version:",
+      "availableVersion": "Available version:",
+      "statusLabel": "Status:",
+      "lastCheckedAt": "Last checked:",
+      "never": "Never",
+      "actions": {
+        "checkNow": "Check now",
+        "checking": "Checking...",
+        "restartToUpdate": "Restart to update",
+        "installing": "Installing...",
+        "downloadLatest": "Download latest",
+        "opening": "Opening..."
+      },
+      "status": {
+        "idle": "Idle",
+        "checking": "Checking",
+        "available": "Update available",
+        "not-available": "Up to date",
+        "downloading": "Downloading",
+        "downloaded": "Ready to install",
+        "error": "Check failed"
+      },
+      "errors": {
+        "checkFailed": "Failed to check for updates.",
+        "installFailed": "Failed to install the update.",
+        "openDownloadFailed": "Failed to open the download page."
+      }
+    },
     "language": "Language",
     "languageDescription": "Select your preferred language",
     "theme": "Theme",

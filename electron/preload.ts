@@ -64,6 +64,7 @@ import type {
   NotificationToastPayload,
   ShowNotificationRequest,
 } from "@shared/notification-types";
+import type { AppUpdateStatus, CheckNowResult } from "@shared/app-update-types";
 
 export interface I18nApi {
   changeLanguage(lang: SupportedLanguage): Promise<void>;
@@ -506,6 +507,38 @@ const appApi: AppApi = {
 
 contextBridge.exposeInMainWorld("appApi", appApi);
 contextBridge.exposeInMainWorld("usageApi", usageApi);
+
+export interface AppUpdateApi {
+  getStatus(): Promise<IPCResult<AppUpdateStatus>>;
+  checkNow(): Promise<IPCResult<CheckNowResult>>;
+  restartAndInstall(): Promise<IPCResult<void>>;
+  openDownloadPage(): Promise<IPCResult<{ url: string }>>;
+  onStatusChanged(callback: (payload: AppUpdateStatus) => void): () => void;
+}
+
+const appUpdateApi: AppUpdateApi = {
+  async getStatus(): Promise<IPCResult<AppUpdateStatus>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_GET_STATUS);
+  },
+  async checkNow(): Promise<IPCResult<CheckNowResult>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_CHECK_NOW);
+  },
+  async restartAndInstall(): Promise<IPCResult<void>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_RESTART_AND_INSTALL);
+  },
+  async openDownloadPage(): Promise<IPCResult<{ url: string }>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.APP_UPDATE_OPEN_DOWNLOAD_PAGE);
+  },
+  onStatusChanged(callback: (payload: AppUpdateStatus) => void) {
+    const subscription = (_event: unknown, payload: AppUpdateStatus) => callback(payload);
+    ipcRenderer.on(IPC_CHANNELS.APP_UPDATE_STATUS_CHANGED, subscription);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.APP_UPDATE_STATUS_CHANGED, subscription);
+    };
+  },
+};
+
+contextBridge.exposeInMainWorld("appUpdateApi", appUpdateApi);
 
 // --------- Expose Activity Monitor API to the Renderer process ---------
 export interface ActivityMonitorApi {

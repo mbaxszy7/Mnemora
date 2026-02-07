@@ -1,5 +1,4 @@
 import { app, BrowserWindow, Menu, nativeImage, screen } from "electron";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
@@ -17,6 +16,7 @@ import { registerUsageHandlers } from "./ipc/usage-handlers";
 import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
 import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
 import { registerAppHandlers } from "./ipc/app-handlers";
+import { registerAppUpdateHandlers } from "./ipc/app-update-handlers";
 import { registerNotificationHandlers } from "./ipc/notification-handlers";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
@@ -29,12 +29,11 @@ import { TrayService } from "./services/tray-service";
 import { monitoringServer } from "./services/monitoring";
 import { userSettingService } from "./services/user-setting-service";
 import { notificationService } from "./services/notification/notification-service";
+import { appUpdateService } from "./services/app-update-service";
 
 // ============================================================================
 // Environment Setup
 // ============================================================================
-
-const require = createRequire(import.meta.url);
 
 process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
@@ -109,7 +108,7 @@ class AppLifecycleController {
     this.logger = getLogger("main");
     this.logger.info("App is ready, initializing...");
 
-    this.initAutoUpdate();
+    appUpdateService.initialize();
     await this.initializeApp();
 
     this.mainWindow = this.createMainWindow();
@@ -129,28 +128,6 @@ class AppLifecycleController {
       })
       .init();
     this.logger.info("Main window created");
-  }
-
-  private initAutoUpdate(): void {
-    if (!app.isPackaged || process.platform !== "win32") {
-      return;
-    }
-
-    try {
-      const mod = require("update-electron-app");
-      const updateElectronApp =
-        mod?.updateElectronApp ?? mod?.default?.updateElectronApp ?? mod?.default ?? mod;
-
-      if (typeof updateElectronApp !== "function") {
-        this.logger.warn("update-electron-app is installed but did not export updateElectronApp()");
-        return;
-      }
-
-      updateElectronApp({ owner: "mbaxszy7", repo: "Mnemora" });
-      this.logger.info("Auto-update initialized (Windows packaged app)");
-    } catch (error) {
-      this.logger.warn({ error }, "Auto-update not initialized (missing dependency or misconfig)");
-    }
   }
 
   private warmupOcrOnSplash(): void {
@@ -304,6 +281,7 @@ class AppLifecycleController {
     registerActivityMonitorHandlers();
     registerMonitoringHandlers();
     registerAppHandlers();
+    registerAppUpdateHandlers();
     registerNotificationHandlers();
     this.logger.info("IPC handlers registered");
   }
@@ -360,6 +338,7 @@ class AppLifecycleController {
     captureScheduleController.stop();
     screenCaptureModule.dispose();
     powerMonitorService.dispose();
+    appUpdateService.dispose();
     monitoringServer.stop();
     databaseService.close();
     this.trayService?.dispose();

@@ -656,8 +656,8 @@ pnpm db:studio
 - For local testing only, you can remove quarantine attributes:
 
 ```bash
-xattr -dr com.apple.quarantine "/Applications/Mnemora.app"
-xattr -dr com.apple.quarantine "/Applications/Mnemora - Nightly.app"
+sudo xattr -dr com.apple.quarantine "/Applications/Mnemora.app"
+sudo xattr -dr com.apple.quarantine "/Applications/Mnemora - Nightly.app"
 ```
 
 ### How Stable Releases Are Created

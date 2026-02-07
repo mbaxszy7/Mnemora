@@ -10,6 +10,9 @@ const tMap: Record<string, string> = {
   "settings.updates.description": "Check and install the latest stable app version.",
   "settings.updates.currentVersion": "Current version:",
   "settings.updates.availableVersion": "Available version:",
+  "settings.updates.channel": "Channel:",
+  "settings.updates.channels.stable": "Stable",
+  "settings.updates.channels.nightly": "Nightly",
   "settings.updates.statusLabel": "Status:",
   "settings.updates.lastCheckedAt": "Last checked:",
   "settings.updates.never": "Never",
@@ -32,6 +35,7 @@ vi.mock("react-i18next", () => ({
 
 function createStatus(overrides: Partial<AppUpdateStatus> = {}): AppUpdateStatus {
   return {
+    channel: "stable",
     phase: "idle",
     currentVersion: "0.0.1",
     availableVersion: null,

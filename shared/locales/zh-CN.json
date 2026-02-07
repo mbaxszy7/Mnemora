@@ -43,6 +43,11 @@
       "description": "检查并安装最新稳定版本。",
       "currentVersion": "当前版本：",
       "availableVersion": "可用版本：",
+      "channel": "通道：",
+      "channels": {
+        "stable": "稳定版",
+        "nightly": "夜间版"
+      },
       "statusLabel": "状态：",
       "lastCheckedAt": "上次检查：",
       "never": "从未",

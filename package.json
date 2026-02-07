@@ -27,6 +27,8 @@
     "db:migrate": "echo 'Migrations run automatically at app startup. Use pnpm db:generate to create new migrations.'",
     "db:studio": "drizzle-kit studio",
     "db:push": "drizzle-kit push",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "typecheck:full": "tsc --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:coverage:full": "vitest run --coverage --config vitest.coverage.full.config.ts",

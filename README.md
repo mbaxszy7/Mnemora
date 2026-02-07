@@ -648,6 +648,18 @@ pnpm db:studio
 - Stable (latest): [https://github.com/mbaxszy7/Mnemora/releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
 - Nightly (rolling): [https://github.com/mbaxszy7/Mnemora/releases/tag/nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
 
+### macOS Install Note (applies to Stable and Nightly)
+
+- If you see `Apple cannot verify "Mnemora..."` when opening the `.dmg` app, it means Gatekeeper blocked an unsigned/unnotarized build.
+- Open once via Finder: right click `Mnemora.app` or `Mnemora - Nightly.app` -> `Open`.
+- Or allow from `System Settings -> Privacy & Security -> Open Anyway`.
+- For local testing only, you can remove quarantine attributes:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Mnemora.app"
+xattr -dr com.apple.quarantine "/Applications/Mnemora - Nightly.app"
+```
+
 ### How Stable Releases Are Created
 
 1. Merge regular feature/fix PRs into `master` (Conventional Commits).

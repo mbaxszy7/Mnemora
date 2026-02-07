@@ -67,7 +67,6 @@ export default function SettingsPage() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [isOpeningUpdateDownload, setIsOpeningUpdateDownload] = useState(false);
-  const showUpdateCard = true;
 
   const screenRecordingStatusRef = useRef<PermissionStatus | null>(null);
   const accessibilityStatusRef = useRef<PermissionStatus | null>(null);
@@ -663,20 +662,16 @@ export default function SettingsPage() {
           </Button>
         </div>
 
-        {showUpdateCard && (
-          <>
-            <Separator />
-            <AppUpdateCard
-              status={updateStatus}
-              isChecking={isCheckingUpdate}
-              isInstalling={isInstallingUpdate}
-              isOpeningDownload={isOpeningUpdateDownload}
-              onCheckNow={() => void handleCheckUpdate()}
-              onRestartAndInstall={() => void handleRestartAndInstall()}
-              onOpenDownload={() => void handleOpenUpdateDownload()}
-            />
-          </>
-        )}
+        <Separator />
+        <AppUpdateCard
+          status={updateStatus}
+          isChecking={isCheckingUpdate}
+          isInstalling={isInstallingUpdate}
+          isOpeningDownload={isOpeningUpdateDownload}
+          onCheckNow={() => void handleCheckUpdate()}
+          onRestartAndInstall={() => void handleRestartAndInstall()}
+          onOpenDownload={() => void handleOpenUpdateDownload()}
+        />
       </div>
     </div>
   );

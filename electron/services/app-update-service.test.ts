@@ -13,6 +13,8 @@ const mockLogger = vi.hoisted(() => ({
   debug: vi.fn(),
 }));
 const mockShowNotification = vi.hoisted(() => vi.fn(async () => {}));
+const mockExistsSync = vi.hoisted(() => vi.fn(() => false));
+const mockReadFileSync = vi.hoisted(() => vi.fn(() => ""));
 
 const mockIsPackaged = vi.hoisted(() => ({ value: true }));
 const mockAppName = vi.hoisted(() => ({ value: "Mnemora" }));
@@ -45,6 +47,11 @@ vi.mock("update-electron-app", () => ({
   updateElectronApp: mockUpdateElectronApp,
 }));
 
+vi.mock("node:fs", () => ({
+  existsSync: mockExistsSync,
+  readFileSync: mockReadFileSync,
+}));
+
 vi.mock("./logger", () => ({
   getLogger: vi.fn(() => mockLogger),
 }));
@@ -67,6 +74,13 @@ describe("AppUpdateService", () => {
     Object.defineProperty(process, "platform", { value: "darwin" });
     mockIsPackaged.value = true;
     mockAppName.value = "Mnemora";
+    mockExistsSync.mockReturnValue(false);
+    mockReadFileSync.mockReturnValue("");
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
     delete process.env.MNEMORA_UPDATE_CHANNEL;
   });
 
@@ -355,6 +369,56 @@ describe("AppUpdateService", () => {
     service.initialize();
 
     expect(mockUpdateElectronApp).not.toHaveBeenCalled();
+  });
+
+  it("nightly does not show available when remote commit equals local build sha", async () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "nightly";
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ buildSha: "abc123def456" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "nightly",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly",
+          prerelease: true,
+          draft: false,
+          name: "nightly",
+          target_commitish: "abc123def4567890",
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    await service.checkNow();
+
+    expect(service.getStatus().phase).toBe("not-available");
+  });
+
+  it("nightly shows available when remote commit differs from local build sha", async () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "nightly";
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ buildSha: "abc123def456" }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "nightly",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly",
+          prerelease: true,
+          draft: false,
+          name: "nightly",
+          target_commitish: "fff999",
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    await service.checkNow();
+
+    expect(service.getStatus().phase).toBe("available");
   });
 
   it("handles non-Error updater error payload on windows", () => {

@@ -69,6 +69,7 @@ jobs:
         env:
           MNEMORA_UPDATE_CHANNEL: nightly
           MNEMORA_APP_NAME: Mnemora - Nightly
+          MNEMORA_BUILD_SHA: ${{ github.sha }}
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
       - name: Upload make artifacts
         uses: actions/upload-artifact@v4
@@ -93,10 +94,48 @@ jobs:
           set -euo pipefail
           mkdir -p release-upload
           find release-assets -type f -print0 | while IFS= read -r -d '' file; do
-            rel="${file#release-assets/}"
-            artifact_dir="${rel%%/*}"
             base="$(basename "$file")"
-            cp "$file" "release-upload/${artifact_dir}-${base}"
+            case "$base" in
+              *.dmg)
+                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
+                ;;
+              *.zip)
+                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
+                ;;
+              *.Setup.exe)
+                if [[ "$base" == *"arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-arm64-Setup.exe"
+                elif [[ "$base" == *"x64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-x64-Setup.exe"
+                fi
+                ;;
+              *full.nupkg)
+                if [[ "$base" == *"arm64"* ]]; then
+                  cp -f "$file" "release-upload/mnemora-nightly-arm64-full.nupkg"
+                elif [[ "$base" == *"x64"* ]]; then
+                  cp -f "$file" "release-upload/mnemora-nightly-x64-full.nupkg"
+                fi
+                ;;
+              RELEASES)
+                rel="${file#release-assets/}"
+                if [[ "$rel" == *"win32-arm64"* ]]; then
+                  cp -f "$file" "release-upload/RELEASES-arm64"
+                elif [[ "$rel" == *"win32-x64"* ]]; then
+                  cp -f "$file" "release-upload/RELEASES-x64"
+                fi
+                ;;
+            esac
+          done
+      - name: Remove existing nightly assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].id' | while read -r asset_id; do
+            if [[ -n "$asset_id" ]]; then
+              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+            fi
           done
       - name: Publish Nightly Release
         uses: softprops/action-gh-release@v2

@@ -19,6 +19,7 @@ class MockTray {
 vi.mock("electron", () => ({
   app: {
     isPackaged: false,
+    getName: vi.fn(() => "Mnemora"),
   },
   Menu: {
     buildFromTemplate: vi.fn(() => ({ items: [] })),

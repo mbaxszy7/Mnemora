@@ -70,3 +70,7 @@ externals/python/window_inspector/__pycache__/
 externals/python/window_inspector/**/*.pyc
 externals/python/window_inspector/*.spec
 !externals/python/window_inspector/window_inspector.spec
+
+# Local OCR model files
+chi_sim.traineddata
+eng.traineddata

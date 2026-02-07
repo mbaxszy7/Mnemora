@@ -102,6 +102,12 @@ export const userSetting = sqliteTable("user_setting", {
     .default(false),
   contextRulesMarkdown: text("context_rules_markdown").notNull().default(""),
   contextRulesUpdatedAt: integer("context_rules_updated_at"),
+  onboardingProgress: text("onboarding_progress", {
+    enum: ["pending_home", "pending_settings", "completed", "skipped"],
+  })
+    .notNull()
+    .default("pending_home"),
+  onboardingUpdatedAt: integer("onboarding_updated_at"),
 
   pinnedThreadId: text("pinned_thread_id"),
   pinnedThreadUpdatedAt: integer("pinned_thread_updated_at"),

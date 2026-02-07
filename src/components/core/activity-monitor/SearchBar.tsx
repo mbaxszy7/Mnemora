@@ -117,7 +117,7 @@ export function SearchBar({
   return (
     <motion.div layout className="flex items-center gap-4 px-2 py-3 w-full" variants={variants}>
       {/* Search Input */}
-      <form onSubmit={handleSubmit} className="flex-1 relative">
+      <form onSubmit={handleSubmit} className="flex-1 relative" data-tour-id="home-search">
         <motion.div
           animate={{
             boxShadow: isFocused ? "0 0 0 2px hsl(var(--ring))" : "0 0 0 0px transparent",
@@ -205,6 +205,7 @@ export function SearchBar({
                 onClick={() => navigate("/settings")}
                 className="h-10 w-10"
                 disabled={isSearching}
+                data-tour-id="home-settings-button"
               >
                 <Settings className="h-5 w-5" />
               </Button>

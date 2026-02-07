@@ -148,7 +148,12 @@ class AppUpdateService {
   }
 
   restartAndInstall(): void {
-    if (process.platform !== "win32") return;
+    if (process.platform !== "win32") {
+      throw new Error("Restart-and-install is only supported on Windows.");
+    }
+    if (this.status.phase !== "downloaded") {
+      throw new Error("Update package is not ready to install.");
+    }
     autoUpdater.quitAndInstall();
   }
 

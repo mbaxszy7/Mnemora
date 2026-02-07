@@ -217,7 +217,7 @@ export class TrayService {
     if (!this.tray) return;
     const status = this.schedulerStatus;
     const statusText = mainI18n.t(`tray.status.${status}` as const);
-    this.tray.setToolTip(`Mnemora - ${statusText}`);
+    this.tray.setToolTip(`${app.getName()} - ${statusText}`);
   }
 
   private handleToggleRecording(): void {

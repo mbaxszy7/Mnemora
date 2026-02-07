@@ -59,6 +59,11 @@ function ensureWindowInspectorBuilt() {
     );
   }
 
+  // PyInstaller output can contain absolute symlinks from the CI build path
+  // (e.g. /Users/runner/work/...). Rewrite them to package-local relative
+  // symlinks before copying into the app bundle.
+  normalizeWindowInspectorSymlinks(inspectorDir);
+
   return inspectorDir;
 }
 
@@ -99,6 +104,21 @@ function resolvePackagedResourcesDir(buildPath) {
   }
 
   return resourcesDir;
+}
+
+function resolvePackagedAppDir(buildPath) {
+  if (buildPath.endsWith(".app") && fileExists(buildPath)) {
+    return buildPath;
+  }
+
+  const directApp = fs
+    .readdirSync(buildPath, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
+  if (directApp) {
+    return path.join(buildPath, directApp.name);
+  }
+
+  return null;
 }
 
 function copyWindowInspectorIntoResources({ buildPath }) {
@@ -170,6 +190,33 @@ function rewriteWindowInspectorAbsoluteSymlinks({ inspectorDir, destDir }) {
   });
 }
 
+function normalizeWindowInspectorSymlinks(inspectorDir) {
+  const marker = `${path.sep}window_inspector${path.sep}`;
+
+  walkDirectory(inspectorDir, (fullPath, entry) => {
+    if (!entry.isSymbolicLink()) return;
+
+    let target = "";
+    try {
+      target = fs.readlinkSync(fullPath);
+    } catch {
+      return;
+    }
+
+    if (!path.isAbsolute(target)) return;
+
+    const markerIndex = target.lastIndexOf(marker);
+    if (markerIndex < 0) return;
+
+    const insideWindowInspector = target.slice(markerIndex + marker.length);
+    const mappedTarget = path.join(inspectorDir, insideWindowInspector);
+    const relativeTarget = path.relative(path.dirname(fullPath), mappedTarget) || ".";
+
+    fs.unlinkSync(fullPath);
+    fs.symlinkSync(relativeTarget, fullPath);
+  });
+}
+
 function copyLocalesIntoResources({ buildPath }) {
   const resourcesDir = resolvePackagedResourcesDir(buildPath);
   const localesSrc = path.resolve(__dirname, "shared", "locales");
@@ -195,6 +242,17 @@ function writeBuildMetadataIntoResources({ buildPath }) {
 
   fs.mkdirSync(path.dirname(metadataDest), { recursive: true });
   fs.writeFileSync(metadataDest, JSON.stringify(metadata, null, 2), "utf8");
+}
+
+function resignMacAppBundle({ buildPath }) {
+  const appDir = resolvePackagedAppDir(buildPath);
+  if (!appDir) {
+    throw new Error(`Unable to locate .app bundle under: ${buildPath}`);
+  }
+
+  // Re-sign after all file mutations in packaging hooks. This keeps bundle
+  // signature consistent and avoids Gatekeeper "damaged" errors on unsigned builds.
+  execSync(`codesign --force --deep --sign - "${appDir}"`, { stdio: "inherit" });
 }
 
 function rebuildNativeModules() {
@@ -402,6 +460,16 @@ module.exports = {
       copyWindowInspectorIntoResources({ buildPath });
       copyLocalesIntoResources({ buildPath });
       writeBuildMetadataIntoResources({ buildPath });
+    },
+    postPackage: async (_forgeConfig, results) => {
+      if (process.platform !== "darwin") return;
+
+      const resultArray = Array.isArray(results) ? results : [results];
+      for (const result of resultArray) {
+        const buildPath = result?.outputPaths?.[0];
+        if (!buildPath) continue;
+        resignMacAppBundle({ buildPath });
+      }
     },
   },
 };

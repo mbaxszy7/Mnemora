@@ -14,21 +14,67 @@ const NIGHTLY_RELEASES_API = "https://api.github.com/repos/mbaxszy7/Mnemora/rele
 const DEFAULT_STABLE_RELEASE_URL = "https://github.com/mbaxszy7/Mnemora/releases/latest";
 const DEFAULT_NIGHTLY_RELEASE_URL = "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly";
 
-function resolveUpdateChannel(): AppUpdateChannel {
+interface LocalBuildMetadata {
+  channel: AppUpdateChannel | null;
+  buildSha: string | null;
+}
+
+function normalizeUpdateChannel(value: unknown): AppUpdateChannel | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "nightly") return "nightly";
+  if (normalized === "stable") return "stable";
+  return null;
+}
+
+function readLocalBuildMetadata(): LocalBuildMetadata {
+  const resourcesPath = process.resourcesPath;
+  if (!resourcesPath) {
+    return { channel: null, buildSha: null };
+  }
+
+  const metadataPath = path.join(resourcesPath, "shared", "build-metadata.json");
+  if (!existsSync(metadataPath)) {
+    return { channel: null, buildSha: null };
+  }
+
+  try {
+    const raw = readFileSync(metadataPath, "utf8");
+    const metadata = JSON.parse(raw) as { channel?: unknown; buildSha?: unknown };
+    return {
+      channel: normalizeUpdateChannel(metadata.channel),
+      buildSha: typeof metadata.buildSha === "string" ? metadata.buildSha : null,
+    };
+  } catch (error) {
+    logger.warn({ error }, "Failed to read local build metadata");
+    return { channel: null, buildSha: null };
+  }
+}
+
+function resolveUpdateChannel(localMetadata: LocalBuildMetadata): AppUpdateChannel {
   const envChannel = process.env.MNEMORA_UPDATE_CHANNEL;
-  if (envChannel === "nightly") return "nightly";
-  if (envChannel === "stable") return "stable";
+  const normalizedEnvChannel = normalizeUpdateChannel(envChannel);
+  if (normalizedEnvChannel) return normalizedEnvChannel;
+
+  if (localMetadata.channel) return localMetadata.channel;
 
   const appName = app.getName().toLowerCase();
   return appName.includes("nightly") ? "nightly" : "stable";
 }
 
-function createInitialStatus(): AppUpdateStatus {
+function formatCurrentVersion(baseVersion: string, channel: AppUpdateChannel): string {
+  if (channel !== "nightly") return baseVersion;
+  return "nightly";
+}
+
+function createInitialStatus(localMetadata: LocalBuildMetadata): AppUpdateStatus {
+  const channel = resolveUpdateChannel(localMetadata);
+  const baseVersion = app.getVersion();
   const now = Date.now();
   return {
-    channel: resolveUpdateChannel(),
+    channel,
     phase: "idle",
-    currentVersion: app.getVersion(),
+    currentVersion: formatCurrentVersion(baseVersion, channel),
     availableVersion: null,
     releaseUrl: null,
     platformAction: "none",
@@ -64,14 +110,19 @@ function compareVersions(a: string, b: string): number {
 class AppUpdateService {
   private static instance: AppUpdateService | null = null;
 
-  private status: AppUpdateStatus = createInitialStatus();
+  private readonly localMetadata: LocalBuildMetadata;
+  private status: AppUpdateStatus;
   private initialized = false;
   private checking = false;
   private windowsCheckInFlight = false;
   private intervalId: NodeJS.Timeout | null = null;
   private notifiedAvailableVersion: string | null = null;
   private notifiedDownloadedVersion: string | null = null;
-  private localNightlyBuildSha: string | null | undefined;
+
+  constructor() {
+    this.localMetadata = readLocalBuildMetadata();
+    this.status = createInitialStatus(this.localMetadata);
+  }
 
   static getInstance(): AppUpdateService {
     if (!AppUpdateService.instance) {
@@ -379,32 +430,7 @@ class AppUpdateService {
   }
 
   private getLocalNightlyBuildSha(): string | null {
-    if (this.localNightlyBuildSha !== undefined) {
-      return this.localNightlyBuildSha;
-    }
-
-    const resourcesPath = process.resourcesPath;
-    if (!resourcesPath) {
-      this.localNightlyBuildSha = null;
-      return this.localNightlyBuildSha;
-    }
-
-    const metadataPath = path.join(resourcesPath, "shared", "build-metadata.json");
-    if (!existsSync(metadataPath)) {
-      this.localNightlyBuildSha = null;
-      return this.localNightlyBuildSha;
-    }
-
-    try {
-      const raw = readFileSync(metadataPath, "utf8");
-      const metadata = JSON.parse(raw) as { buildSha?: unknown };
-      this.localNightlyBuildSha = typeof metadata.buildSha === "string" ? metadata.buildSha : null;
-      return this.localNightlyBuildSha;
-    } catch (error) {
-      logger.warn({ error }, "Failed to read local build metadata for nightly update check");
-      this.localNightlyBuildSha = null;
-      return this.localNightlyBuildSha;
-    }
+    return this.localMetadata.buildSha;
   }
 
   private isSameBuild(a: string, b: string): boolean {
@@ -447,10 +473,12 @@ class AppUpdateService {
   }
 
   private updateStatus(patch: Partial<AppUpdateStatus>): void {
+    const nextChannel = patch.channel ?? this.status.channel;
     this.status = {
       ...this.status,
       ...patch,
-      currentVersion: app.getVersion(),
+      channel: nextChannel,
+      currentVersion: formatCurrentVersion(app.getVersion(), nextChannel),
       updatedAt: Date.now(),
     };
 

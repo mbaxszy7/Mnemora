@@ -71,6 +71,21 @@ jobs:
           MNEMORA_APP_NAME: Mnemora - Nightly
           MNEMORA_BUILD_SHA: ${{ github.sha }}
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Verify mac app bundle signature integrity
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find out -type d -name "*.app" | grep -E '/Mnemora( - Nightly)?\.app$' | head -n 1 || true)
+          if [[ -z "$APP_PATH" ]]; then
+            APP_PATH=$(find out -type d -name "*.app" | head -n 1 || true)
+          fi
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No macOS app bundle found after build"
+            exit 1
+          fi
+          echo "Verifying app bundle: $APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
       - name: Upload make artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -93,48 +108,75 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-upload
+          echo "Discovered source artifacts:"
+          find release-assets -type f | sort
           find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#release-assets/}"
             base="$(basename "$file")"
-            case "$base" in
+            lower_base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+            lower_rel="$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')"
+            case "$lower_base" in
               *.dmg)
-                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
+                fi
                 ;;
               *.zip)
-                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
+                fi
                 ;;
-              *.Setup.exe)
-                if [[ "$base" == *"arm64"* ]]; then
+              *setup.exe)
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/Mnemora-Nightly-arm64-Setup.exe"
-                elif [[ "$base" == *"x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/Mnemora-Nightly-x64-Setup.exe"
                 fi
                 ;;
               *full.nupkg)
-                if [[ "$base" == *"arm64"* ]]; then
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/mnemora-nightly-arm64-full.nupkg"
-                elif [[ "$base" == *"x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/mnemora-nightly-x64-full.nupkg"
                 fi
                 ;;
-              RELEASES)
-                rel="${file#release-assets/}"
-                if [[ "$rel" == *"win32-arm64"* ]]; then
+              releases)
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/RELEASES-arm64"
-                elif [[ "$rel" == *"win32-x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/RELEASES-x64"
                 fi
                 ;;
             esac
           done
+          ls -la release-upload
+          missing=0
+          for required in \
+            Mnemora-Nightly-arm64.dmg \
+            Mnemora-Nightly-arm64.zip \
+            Mnemora-Nightly-arm64-Setup.exe \
+            Mnemora-Nightly-x64-Setup.exe \
+            mnemora-nightly-arm64-full.nupkg \
+            mnemora-nightly-x64-full.nupkg \
+            RELEASES-arm64 \
+            RELEASES-x64; do
+            if [[ ! -f "release-upload/$required" ]]; then
+              echo "::error::Missing expected release asset: $required"
+              missing=1
+            fi
+          done
+          if [[ $missing -ne 0 ]]; then
+            exit 1
+          fi
       - name: Remove existing nightly assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].id' | while read -r asset_id; do
-            if [[ -n "$asset_id" ]]; then
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r asset_name; do
+            if [[ -n "$asset_name" ]]; then
+              gh release delete-asset nightly "$asset_name" --repo "$GITHUB_REPOSITORY" -y
             fi
           done
       - name: Publish Nightly Release

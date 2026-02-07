@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 // import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
 import {
   Select,
@@ -595,18 +596,6 @@ export default function SettingsPage() {
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
 
-        {showUpdateCard && (
-          <AppUpdateCard
-            status={updateStatus}
-            isChecking={isCheckingUpdate}
-            isInstalling={isInstallingUpdate}
-            isOpeningDownload={isOpeningUpdateDownload}
-            onCheckNow={() => void handleCheckUpdate()}
-            onRestartAndInstall={() => void handleRestartAndInstall()}
-            onOpenDownload={() => void handleOpenUpdateDownload()}
-          />
-        )}
-
         {/* <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">
             <Label htmlFor="autoStart">{t("settings.autoStart.label")}</Label>
@@ -673,6 +662,21 @@ export default function SettingsPage() {
             {t("onboarding.replay.action")}
           </Button>
         </div>
+
+        {showUpdateCard && (
+          <>
+            <Separator />
+            <AppUpdateCard
+              status={updateStatus}
+              isChecking={isCheckingUpdate}
+              isInstalling={isInstallingUpdate}
+              isOpeningDownload={isOpeningUpdateDownload}
+              onCheckNow={() => void handleCheckUpdate()}
+              onRestartAndInstall={() => void handleRestartAndInstall()}
+              onOpenDownload={() => void handleOpenUpdateDownload()}
+            />
+          </>
+        )}
       </div>
     </div>
   );

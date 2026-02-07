@@ -245,3 +245,111 @@ body::-webkit-scrollbar-thumb:hover {
   background-color: hsl(var(--muted-foreground) / 0.6);
   border: 2px solid transparent;
 }
+
+/* Driver.js onboarding */
+.mnemora-driver-popover.driver-popover {
+  min-width: 280px;
+  max-width: 340px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 12px;
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  box-shadow:
+    0 20px 28px -12px hsl(222 45% 8% / 0.28),
+    0 6px 12px -8px hsl(222 45% 8% / 0.24);
+  padding: 16px;
+}
+
+.mnemora-driver-popover .driver-popover-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: hsl(var(--foreground));
+  margin-right: 30px;
+}
+
+.mnemora-driver-popover .driver-popover-description {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: hsl(var(--muted-foreground));
+}
+
+.mnemora-driver-popover .driver-popover-footer {
+  margin-top: 14px;
+}
+
+.mnemora-driver-popover .driver-popover-progress-text {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+}
+
+.mnemora-driver-popover .driver-popover-close-btn {
+  color: hsl(var(--muted-foreground));
+}
+
+.mnemora-driver-popover .driver-popover-close-btn:hover,
+.mnemora-driver-popover .driver-popover-close-btn:focus {
+  color: hsl(var(--foreground));
+}
+
+.mnemora-driver-popover .driver-popover-navigation-btns button {
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  text-shadow: none;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.mnemora-driver-popover .driver-popover-navigation-btns button:hover,
+.mnemora-driver-popover .driver-popover-navigation-btns button:focus {
+  background: hsl(var(--accent));
+}
+
+.mnemora-driver-popover .driver-popover-next-btn {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.mnemora-driver-popover .driver-popover-next-btn:hover,
+.mnemora-driver-popover .driver-popover-next-btn:focus {
+  background: hsl(var(--primary) / 0.88);
+  border-color: hsl(var(--primary) / 0.88);
+}
+
+.mnemora-driver-popover .driver-popover-arrow-side-top {
+  border-top-color: hsl(var(--card));
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  border-left-color: transparent;
+}
+
+.mnemora-driver-popover .driver-popover-arrow-side-bottom {
+  border-bottom-color: hsl(var(--card));
+  border-right-color: transparent;
+  border-top-color: transparent;
+  border-left-color: transparent;
+}
+
+.mnemora-driver-popover .driver-popover-arrow-side-left {
+  border-left-color: hsl(var(--card));
+  border-right-color: transparent;
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+}
+
+.mnemora-driver-popover .driver-popover-arrow-side-right {
+  border-right-color: hsl(var(--card));
+  border-left-color: transparent;
+  border-top-color: transparent;
+  border-bottom-color: transparent;
+}
+
+.dark .mnemora-driver-popover.driver-popover {
+  box-shadow:
+    0 24px 36px -16px hsl(220 50% 2% / 0.7),
+    0 8px 16px -10px hsl(220 50% 2% / 0.6);
+}

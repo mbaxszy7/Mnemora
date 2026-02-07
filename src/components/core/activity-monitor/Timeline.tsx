@@ -115,7 +115,7 @@ export function Timeline({
   };
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col" data-tour-id="home-timeline">
       {/* Header */}
       <motion.div className="flex items-center gap-2 px-4 py-3" variants={variants}>
         <Clock className="h-4 w-4 text-primary" />

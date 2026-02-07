@@ -1,4 +1,17 @@
 export type CaptureManualOverride = "none" | "force_on" | "force_off";
+export type OnboardingProgress = "pending_home" | "pending_settings" | "completed" | "skipped";
+export const ONBOARDING_PROGRESS_VALUES: readonly OnboardingProgress[] = [
+  "pending_home",
+  "pending_settings",
+  "completed",
+  "skipped",
+] as const;
+
+export function isOnboardingProgress(value: unknown): value is OnboardingProgress {
+  return (
+    typeof value === "string" && ONBOARDING_PROGRESS_VALUES.includes(value as OnboardingProgress)
+  );
+}
 
 export const CONTEXT_RULES_MAX_CHARS = 8000;
 
@@ -17,6 +30,9 @@ export interface UserSettings {
   contextRulesEnabled: boolean;
   contextRulesMarkdown: string;
   contextRulesUpdatedAt: number | null;
+
+  onboardingProgress: OnboardingProgress;
+  onboardingUpdatedAt: number | null;
 }
 
 export interface UserSettingsResponse {
@@ -38,4 +54,8 @@ export interface UpdateUserSettingsRequest {
 
 export interface SetCaptureManualOverrideRequest {
   mode: CaptureManualOverride;
+}
+
+export interface SetOnboardingProgressRequest {
+  progress: OnboardingProgress;
 }

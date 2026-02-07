@@ -2,10 +2,12 @@ import { useMutation, useQueryClient, useSuspenseQuery } from "@tanstack/react-q
 
 import type { IPCResult } from "@shared/ipc-types";
 import type {
+  OnboardingProgress,
   UpdateUserSettingsRequest,
   UserSettings,
   UserSettingsResponse,
 } from "@shared/user-settings-types";
+import { isOnboardingProgress } from "@shared/user-settings-types";
 import { DEFAULT_CAPTURE_ALLOWED_WINDOWS } from "@shared/user-settings-utils";
 
 export const USER_SETTINGS_QUERY_KEY = ["user-settings"] as const;
@@ -20,6 +22,8 @@ const DEFAULT_SETTINGS: UserSettings = {
   contextRulesEnabled: false,
   contextRulesMarkdown: "",
   contextRulesUpdatedAt: null,
+  onboardingProgress: "pending_home",
+  onboardingUpdatedAt: null,
 };
 
 export function useUserSettings() {
@@ -76,8 +80,27 @@ export function useUserSettings() {
     },
   });
 
-  const settings =
+  const onboardingMutation = useMutation({
+    mutationFn: async (progress: OnboardingProgress) => {
+      const result = await window.userSettingsApi.setOnboardingProgress(progress);
+      if (!result.success) {
+        throw new Error(result.error?.message ?? "Failed to update onboarding progress");
+      }
+      return result;
+    },
+    onSuccess: (result) => {
+      queryClient.setQueryData(USER_SETTINGS_QUERY_KEY, result);
+    },
+  });
+
+  const settingsRaw =
     query.data?.success && query.data.data ? query.data.data.settings : DEFAULT_SETTINGS;
+  const settings: UserSettings = {
+    ...settingsRaw,
+    onboardingProgress: isOnboardingProgress(settingsRaw.onboardingProgress)
+      ? settingsRaw.onboardingProgress
+      : "pending_home",
+  };
 
   return {
     ...query,
@@ -85,5 +108,8 @@ export function useUserSettings() {
     updateSettings: mutation.mutate,
     updateSettingsAsync: mutation.mutateAsync,
     isUpdating: mutation.isPending,
+    setOnboardingProgress: onboardingMutation.mutate,
+    setOnboardingProgressAsync: onboardingMutation.mutateAsync,
+    isUpdatingOnboarding: onboardingMutation.isPending,
   };
 }

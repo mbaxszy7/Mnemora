@@ -534,6 +534,72 @@
       "to": "To"
     }
   },
+  "onboarding": {
+    "actions": {
+      "next": "Next",
+      "back": "Back",
+      "done": "Finish",
+      "continue": "Continue"
+    },
+    "progress": "{{current}} / {{total}}",
+    "home": {
+      "search": {
+        "title": "Search your context",
+        "description": "Ask natural-language questions about your recent work and let Mnemora find related context."
+      },
+      "settingsButton": {
+        "title": "Open Settings",
+        "description": "Use Settings to configure permissions, models, and capture behavior."
+      },
+      "captureToggle": {
+        "title": "Quick capture control",
+        "description": "Start, pause, or resume capture directly from the top bar. On macOS, Screen Recording and Accessibility permissions must be enabled first for screen awareness."
+      },
+      "emptyActions": {
+        "title": "First-time setup actions",
+        "description": "If no activity is available yet, grant permissions and start capture here."
+      },
+      "timeline": {
+        "title": "Timeline",
+        "description": "Browse captured time windows and select the one you want to inspect."
+      },
+      "summary": {
+        "title": "Summary panel",
+        "description": "Read generated summaries, highlights, and related events for the selected window."
+      }
+    },
+    "settings": {
+      "language": {
+        "title": "Language",
+        "description": "Switch between supported languages at any time."
+      },
+      "permissions": {
+        "title": "Permissions",
+        "description": "On macOS, you must enable both Screen Recording and Accessibility permissions, otherwise Mnemora cannot perform screen awareness."
+      },
+      "llmConfig": {
+        "title": "LLM configuration",
+        "description": "Configure your model endpoints and API keys for analysis."
+      },
+      "captureSources": {
+        "title": "Capture sources",
+        "description": "Choose which screens and windows can be captured."
+      },
+      "theme": {
+        "title": "Appearance",
+        "description": "Choose light, dark, or follow system theme."
+      },
+      "replay": {
+        "title": "Replay onboarding",
+        "description": "Restart this guided tour whenever you need a quick refresher."
+      }
+    },
+    "replay": {
+      "label": "Guided onboarding",
+      "description": "Restart the full home + settings onboarding flow.",
+      "action": "Start Again"
+    }
+  },
   "splashScreen": {
     "slogans": {
       "pixelsToMemory": "Pixels to memory.",

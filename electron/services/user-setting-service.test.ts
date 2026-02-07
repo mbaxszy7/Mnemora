@@ -83,6 +83,7 @@ describe("UserSettingService", () => {
   it("initializes singleton row when absent", async () => {
     const settings = await service.getSettings();
     expect(settings.capturePrimaryScreenOnly).toBe(true);
+    expect(settings.onboardingProgress).toBe("pending_home");
     expect(mockUpdateFromUserSettings).toHaveBeenCalled();
   });
 
@@ -111,5 +112,12 @@ describe("UserSettingService", () => {
     });
     expect(prefs.enabled).toBe(false);
     expect(prefs.soundEnabled).toBe(false);
+  });
+
+  it("updates onboarding progress", async () => {
+    await service.getSettings();
+    const settings = await service.setOnboardingProgress("pending_settings");
+    expect(settings.onboardingProgress).toBe("pending_settings");
+    expect(settings.onboardingUpdatedAt).toBeTypeOf("number");
   });
 });

@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { driver, type Driver } from "driver.js";
 import {
   AlertTriangle,
   Camera,
@@ -33,8 +34,14 @@ import {
 import type { SearchResult } from "@shared/context-types";
 import type { WindowSummary } from "@shared/activity-types";
 import type { PermissionCheckResult, SchedulerStatePayload } from "@shared/ipc-types";
+import { useUserSettings } from "@/pages/settings/hooks/useUserSettings";
 import { useInitServices } from "@/hooks/use-capture-source";
 import { cn } from "@/lib/utils";
+import {
+  buildHomeOnboardingSteps,
+  resolveHomeProgressOnDone,
+  resolveProgressOnTourClose,
+} from "@/features/onboarding";
 
 function DashboardSkeleton() {
   return (
@@ -65,6 +72,8 @@ export default function HomePage() {
   const { t } = useTranslation();
   const { navigate } = useViewTransition();
   const { initServices } = useInitServices();
+  const { settings, setOnboardingProgressAsync } = useUserSettings();
+  const homeOnboardingRef = useRef<Driver | null>(null);
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -340,6 +349,71 @@ export default function HomePage() {
     setSelectedSummary(null);
   }, [showTimelineEmptyState]);
 
+  useEffect(() => {
+    if (settings.onboardingProgress !== "pending_home") return;
+    if (isLoadingTimeline) return;
+    if (homeOnboardingRef.current?.isActive()) return;
+
+    const steps = buildHomeOnboardingSteps({
+      t,
+      showTimelineEmptyState,
+    });
+    if (steps.length === 0) {
+      void setOnboardingProgressAsync(resolveProgressOnTourClose());
+      return;
+    }
+
+    const onboarding = driver({
+      steps,
+      allowClose: true,
+      showProgress: true,
+      stagePadding: 8,
+      stageRadius: 14,
+      popoverClass: "mnemora-driver-popover",
+      overlayColor: "rgba(6, 9, 20, 0.55)",
+      nextBtnText: t("onboarding.actions.next"),
+      prevBtnText: t("onboarding.actions.back"),
+      doneBtnText: t("onboarding.actions.continue"),
+      progressText: t("onboarding.progress", { current: "{{current}}", total: "{{total}}" }),
+      onPrevClick: (_element, _step, opts) => {
+        opts.driver.movePrevious();
+      },
+      onNextClick: (_element, _step, opts) => {
+        if (opts.driver.isLastStep()) {
+          void (async () => {
+            await setOnboardingProgressAsync(resolveHomeProgressOnDone());
+            opts.driver.destroy();
+            navigate("/settings", { type: "slide-left", duration: 300 });
+          })();
+          return;
+        }
+        opts.driver.moveNext();
+      },
+      onCloseClick: (_element, _step, opts) => {
+        void setOnboardingProgressAsync(resolveProgressOnTourClose());
+        opts.driver.destroy();
+      },
+    });
+
+    homeOnboardingRef.current = onboarding;
+    const timer = window.setTimeout(() => onboarding.drive(), 120);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (homeOnboardingRef.current?.isActive()) {
+        homeOnboardingRef.current.destroy();
+      }
+      homeOnboardingRef.current = null;
+    };
+  }, [
+    isLoadingTimeline,
+    navigate,
+    setOnboardingProgressAsync,
+    settings.onboardingProgress,
+    showTimelineEmptyState,
+    t,
+  ]);
+
   return (
     <motion.div
       className="min-h-[calc(100vh-88px)] flex flex-col -mt-2"
@@ -478,7 +552,10 @@ export default function HomePage() {
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-2 w-full">
+                        <div
+                          className="flex flex-col gap-2 w-full"
+                          data-tour-id="home-empty-actions"
+                        >
                           {!allPermissionsGranted ? (
                             <Button
                               onClick={handleRequestPermissions}

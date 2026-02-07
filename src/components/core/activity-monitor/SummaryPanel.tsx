@@ -47,7 +47,10 @@ export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps
   // Return early if no summary and not loading
   if (!summary && !isLoading) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-center p-8 bg-card/50 rounded-xl border border-border/50">
+      <div
+        className="h-full flex flex-col items-center justify-center text-center p-8 bg-card/50 rounded-xl border border-border/50"
+        data-tour-id="home-summary"
+      >
         <motion.div variants={variants}>
           <FileText className="h-16 w-16 text-muted-foreground/30 mb-4" />
           <h3 className="text-lg font-medium text-muted-foreground mb-2">
@@ -82,7 +85,10 @@ export function SummaryPanel({ summary, isLoading, variants }: SummaryPanelProps
   })();
 
   return (
-    <div className="relative h-full overflow-hidden rounded-xl border border-border/50 bg-card/50">
+    <div
+      className="relative h-full overflow-hidden rounded-xl border border-border/50 bg-card/50"
+      data-tour-id="home-summary"
+    >
       <AnimatePresence mode="wait">
         {isLoading && !summary ? (
           <motion.div

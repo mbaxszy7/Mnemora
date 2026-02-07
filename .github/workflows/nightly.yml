@@ -71,6 +71,17 @@ jobs:
           MNEMORA_APP_NAME: Mnemora - Nightly
           MNEMORA_BUILD_SHA: ${{ github.sha }}
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Verify mac app bundle signature integrity
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find out -type d -path "*/Mnemora.app" | head -n 1)
+          if [[ -z "$APP_PATH" ]]; then
+            echo "Mnemora.app not found after build"
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
       - name: Upload make artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -134,9 +145,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].id' | while read -r asset_id; do
-            if [[ -n "$asset_id" ]]; then
-              gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | while read -r asset_name; do
+            if [[ -n "$asset_name" ]]; then
+              gh release delete-asset nightly "$asset_name" --repo "$GITHUB_REPOSITORY" -y
             fi
           done
       - name: Publish Nightly Release

@@ -59,6 +59,11 @@ function ensureWindowInspectorBuilt() {
     );
   }
 
+  // PyInstaller output can contain absolute symlinks from the CI build path
+  // (e.g. /Users/runner/work/...). Rewrite them to package-local relative
+  // symlinks before copying into the app bundle.
+  normalizeWindowInspectorSymlinks(inspectorDir);
+
   return inspectorDir;
 }
 
@@ -165,6 +170,33 @@ function rewriteWindowInspectorAbsoluteSymlinks({ inspectorDir, destDir }) {
     }
 
     const relativeTarget = path.relative(path.dirname(fullPath), mappedTarget) || ".";
+    fs.unlinkSync(fullPath);
+    fs.symlinkSync(relativeTarget, fullPath);
+  });
+}
+
+function normalizeWindowInspectorSymlinks(inspectorDir) {
+  const marker = `${path.sep}window_inspector${path.sep}`;
+
+  walkDirectory(inspectorDir, (fullPath, entry) => {
+    if (!entry.isSymbolicLink()) return;
+
+    let target = "";
+    try {
+      target = fs.readlinkSync(fullPath);
+    } catch {
+      return;
+    }
+
+    if (!path.isAbsolute(target)) return;
+
+    const markerIndex = target.lastIndexOf(marker);
+    if (markerIndex < 0) return;
+
+    const insideWindowInspector = target.slice(markerIndex + marker.length);
+    const mappedTarget = path.join(inspectorDir, insideWindowInspector);
+    const relativeTarget = path.relative(path.dirname(fullPath), mappedTarget) || ".";
+
     fs.unlinkSync(fullPath);
     fs.symlinkSync(relativeTarget, fullPath);
   });

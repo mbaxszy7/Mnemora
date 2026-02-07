@@ -4,6 +4,9 @@ on:
   pull_request:
     branches:
       - master
+  push:
+    branches:
+      - master
 
 permissions:
   contents: read
@@ -46,6 +49,7 @@ jobs:
         with:
           name: coverage-full
           path: ./coverage-full
+          retention-days: 3
 
       - name: Upload coverage to Codecov
         if: always() && steps.tests.outcome != 'skipped'

@@ -533,8 +533,18 @@
       "title": "采集已暂停",
       "body": "屏幕采集已暂停。"
     },
+    "appUpdateAvailable": {
+      "title": "发现新版本",
+      "body": "检测到 Mnemora {{version}} 可用，请前往设置查看更新选项。"
+    },
+    "appUpdateDownloaded": {
+      "title": "更新已下载",
+      "body": "Mnemora {{version}} 已下载完成，重启应用即可安装。"
+    },
     "actions": {
-      "openLlmConfig": "打开 LLM 配置"
+      "openLlmConfig": "打开 LLM 配置",
+      "openSettingsUpdate": "打开设置",
+      "restartUpdate": "重启更新"
     }
   },
   "notificationsPage": {

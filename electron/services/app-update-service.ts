@@ -3,6 +3,7 @@ import { UpdateSourceType, updateElectronApp } from "update-electron-app";
 import type { AppUpdateStatus } from "@shared/app-update-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { getLogger } from "./logger";
+import { notificationService } from "./notification/notification-service";
 
 const logger = getLogger("app-update-service");
 
@@ -52,6 +53,8 @@ class AppUpdateService {
   private initialized = false;
   private checking = false;
   private intervalId: NodeJS.Timeout | null = null;
+  private notifiedAvailableVersion: string | null = null;
+  private notifiedDownloadedVersion: string | null = null;
 
   static getInstance(): AppUpdateService {
     if (!AppUpdateService.instance) {
@@ -190,6 +193,7 @@ class AppUpdateService {
 
     updater.on("update-available", (...args: unknown[]) => {
       const info = (args[0] ?? {}) as { version?: string; releaseNotes?: string };
+      void this.notifyUpdateAvailable(info.version ?? null);
       this.updateStatus({
         phase: "downloading",
         availableVersion: info.version ?? null,
@@ -209,6 +213,7 @@ class AppUpdateService {
 
     updater.on("update-downloaded", (...args: unknown[]) => {
       const info = (args[0] ?? {}) as { version?: string };
+      void this.notifyUpdateDownloaded(info.version ?? null);
       this.updateStatus({
         phase: "downloaded",
         availableVersion: info.version ?? this.status.availableVersion,
@@ -278,6 +283,40 @@ class AppUpdateService {
       releaseUrl: release.html_url ?? null,
       platformAction: "open-download-page",
       message: release.name ?? null,
+    });
+    await this.notifyUpdateAvailable(remoteVersion);
+  }
+
+  private async notifyUpdateAvailable(version: string | null): Promise<void> {
+    if (!version || this.notifiedAvailableVersion === version) return;
+    this.notifiedAvailableVersion = version;
+
+    await notificationService.show({
+      id: `app-update-available:${version}`,
+      type: "app-update-available",
+      priority: "normal",
+      title: "notifications.appUpdateAvailable.title",
+      body: "notifications.appUpdateAvailable.body",
+      data: { version },
+      toastActions: [
+        { id: "open-settings-update", label: "notifications.actions.openSettingsUpdate" },
+      ],
+    });
+  }
+
+  private async notifyUpdateDownloaded(version: string | null): Promise<void> {
+    const resolvedVersion = version ?? this.status.availableVersion;
+    if (!resolvedVersion || this.notifiedDownloadedVersion === resolvedVersion) return;
+    this.notifiedDownloadedVersion = resolvedVersion;
+
+    await notificationService.show({
+      id: `app-update-downloaded:${resolvedVersion}`,
+      type: "app-update-downloaded",
+      priority: "high",
+      title: "notifications.appUpdateDownloaded.title",
+      body: "notifications.appUpdateDownloaded.body",
+      data: { version: resolvedVersion },
+      toastActions: [{ id: "restart-update", label: "notifications.actions.restartUpdate" }],
     });
   }
 

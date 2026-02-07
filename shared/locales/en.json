@@ -532,8 +532,18 @@
       "title": "Capture paused",
       "body": "Screen capture has been paused."
     },
+    "appUpdateAvailable": {
+      "title": "Update available",
+      "body": "Mnemora {{version}} is available. Open Settings to review update options."
+    },
+    "appUpdateDownloaded": {
+      "title": "Update ready",
+      "body": "Mnemora {{version}} has been downloaded. Restart the app to install."
+    },
     "actions": {
-      "openLlmConfig": "Open LLM Config"
+      "openLlmConfig": "Open LLM Config",
+      "openSettingsUpdate": "Open Settings",
+      "restartUpdate": "Restart to update"
     }
   },
   "notificationsPage": {

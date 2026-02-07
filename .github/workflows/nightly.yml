@@ -94,7 +94,9 @@ jobs:
           set -euo pipefail
           mkdir -p release-upload
           find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#release-assets/}"
             base="$(basename "$file")"
+            lower_rel="$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')"
             case "$base" in
               *.dmg)
                 cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
@@ -103,29 +105,29 @@ jobs:
                 cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
                 ;;
               *.Setup.exe)
-                if [[ "$base" == *"arm64"* ]]; then
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/Mnemora-Nightly-arm64-Setup.exe"
-                elif [[ "$base" == *"x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/Mnemora-Nightly-x64-Setup.exe"
                 fi
                 ;;
               *full.nupkg)
-                if [[ "$base" == *"arm64"* ]]; then
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/mnemora-nightly-arm64-full.nupkg"
-                elif [[ "$base" == *"x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/mnemora-nightly-x64-full.nupkg"
                 fi
                 ;;
               RELEASES)
-                rel="${file#release-assets/}"
-                if [[ "$rel" == *"win32-arm64"* ]]; then
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/RELEASES-arm64"
-                elif [[ "$rel" == *"win32-x64"* ]]; then
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
                   cp -f "$file" "release-upload/RELEASES-x64"
                 fi
                 ;;
             esac
           done
+          ls -la release-upload
       - name: Remove existing nightly assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

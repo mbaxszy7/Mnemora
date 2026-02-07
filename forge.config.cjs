@@ -106,6 +106,21 @@ function resolvePackagedResourcesDir(buildPath) {
   return resourcesDir;
 }
 
+function resolvePackagedAppDir(buildPath) {
+  if (buildPath.endsWith(".app") && fileExists(buildPath)) {
+    return buildPath;
+  }
+
+  const directApp = fs
+    .readdirSync(buildPath, { withFileTypes: true })
+    .find((entry) => entry.isDirectory() && entry.name.endsWith(".app"));
+  if (directApp) {
+    return path.join(buildPath, directApp.name);
+  }
+
+  return null;
+}
+
 function copyWindowInspectorIntoResources({ buildPath }) {
   if (process.platform !== "darwin") {
     return;
@@ -227,6 +242,17 @@ function writeBuildMetadataIntoResources({ buildPath }) {
 
   fs.mkdirSync(path.dirname(metadataDest), { recursive: true });
   fs.writeFileSync(metadataDest, JSON.stringify(metadata, null, 2), "utf8");
+}
+
+function resignMacAppBundle({ buildPath }) {
+  const appDir = resolvePackagedAppDir(buildPath);
+  if (!appDir) {
+    throw new Error(`Unable to locate .app bundle under: ${buildPath}`);
+  }
+
+  // Re-sign after all file mutations in packaging hooks. This keeps bundle
+  // signature consistent and avoids Gatekeeper "damaged" errors on unsigned builds.
+  execSync(`codesign --force --deep --sign - "${appDir}"`, { stdio: "inherit" });
 }
 
 function rebuildNativeModules() {
@@ -434,6 +460,16 @@ module.exports = {
       copyWindowInspectorIntoResources({ buildPath });
       copyLocalesIntoResources({ buildPath });
       writeBuildMetadataIntoResources({ buildPath });
+    },
+    postPackage: async (_forgeConfig, results) => {
+      if (process.platform !== "darwin") return;
+
+      const resultArray = Array.isArray(results) ? results : [results];
+      for (const result of resultArray) {
+        const buildPath = result?.outputPaths?.[0];
+        if (!buildPath) continue;
+        resignMacAppBundle({ buildPath });
+      }
     },
   },
 };

@@ -84,6 +84,17 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: release-assets
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-upload
+          find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#release-assets/}"
+            artifact_dir="${rel%%/*}"
+            base="$(basename "$file")"
+            cp "$file" "release-upload/${artifact_dir}-${base}"
+          done
       - name: Publish Nightly Release
         uses: softprops/action-gh-release@v2
         with:
@@ -94,4 +105,4 @@ jobs:
           make_latest: false
           generate_release_notes: false
           overwrite_files: true
-          files: release-assets/**/*
+          files: release-upload/*

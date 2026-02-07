@@ -52,6 +52,7 @@ class AppUpdateService {
   private status: AppUpdateStatus = createInitialStatus();
   private initialized = false;
   private checking = false;
+  private windowsCheckInFlight = false;
   private intervalId: NodeJS.Timeout | null = null;
   private notifiedAvailableVersion: string | null = null;
   private notifiedDownloadedVersion: string | null = null;
@@ -123,6 +124,7 @@ class AppUpdateService {
 
     try {
       if (process.platform === "win32") {
+        this.windowsCheckInFlight = true;
         autoUpdater.checkForUpdates();
       } else if (process.platform === "darwin") {
         await this.checkMacStableRelease();
@@ -143,7 +145,9 @@ class AppUpdateService {
       });
       return false;
     } finally {
-      this.checking = false;
+      if (process.platform !== "win32" || !this.windowsCheckInFlight) {
+        this.checking = false;
+      }
     }
   }
 
@@ -208,6 +212,8 @@ class AppUpdateService {
     });
 
     updater.on("update-not-available", () => {
+      this.windowsCheckInFlight = false;
+      this.checking = false;
       this.updateStatus({
         phase: "not-available",
         availableVersion: null,
@@ -218,6 +224,8 @@ class AppUpdateService {
 
     updater.on("update-downloaded", (...args: unknown[]) => {
       const info = (args[0] ?? {}) as { version?: string };
+      this.windowsCheckInFlight = false;
+      this.checking = false;
       void this.notifyUpdateDownloaded(info.version ?? null);
       this.updateStatus({
         phase: "downloaded",
@@ -229,6 +237,8 @@ class AppUpdateService {
 
     updater.on("error", (...args: unknown[]) => {
       const error = args[0] instanceof Error ? args[0] : new Error(String(args[0] ?? "Unknown"));
+      this.windowsCheckInFlight = false;
+      this.checking = false;
       logger.error({ error }, "Windows updater error");
       this.updateStatus({
         phase: "error",

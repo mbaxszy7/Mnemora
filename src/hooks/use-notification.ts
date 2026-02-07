@@ -36,6 +36,10 @@ export function useNotification(): void {
         case "capture-paused":
           navigate("/settings/capture-sources");
           return;
+        case "app-update-available":
+        case "app-update-downloaded":
+          navigate("/settings");
+          return;
         default:
           return;
       }
@@ -71,6 +75,18 @@ export function useNotification(): void {
         toast.warning(title, {
           id: n.id,
           description: body,
+        });
+        return;
+      }
+
+      if (n.type === "app-update-downloaded") {
+        toast.success(title, {
+          id: n.id,
+          description: body,
+          action: {
+            label: tt("notifications.actions.openSettingsUpdate"),
+            onClick: () => navigate("/settings"),
+          },
         });
         return;
       }

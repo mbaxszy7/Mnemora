@@ -1,4 +1,9 @@
-export type NotificationType = "activity-summary" | "llm-broken" | "capture-paused";
+export type NotificationType =
+  | "activity-summary"
+  | "llm-broken"
+  | "capture-paused"
+  | "app-update-available"
+  | "app-update-downloaded";
 
 export type NotificationPriority = "low" | "normal" | "high" | "critical";
 

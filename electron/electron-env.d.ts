@@ -276,6 +276,23 @@ interface Window {
     onNavigate(callback: (path: string) => void): () => void;
     updateTitleBar(payload: import("../shared/ipc-types").AppUpdateTitleBarPayload): Promise<void>;
   };
+  appUpdateApi: {
+    getStatus(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/app-update-types").AppUpdateStatus>
+    >;
+    checkNow(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/app-update-types").CheckNowResult>
+    >;
+    restartAndInstall(): Promise<import("../shared/ipc-types").IPCResult<void>>;
+    openDownloadPage(): Promise<
+      import("../shared/ipc-types").IPCResult<{
+        url: string;
+      }>
+    >;
+    onStatusChanged(
+      callback: (payload: import("../shared/app-update-types").AppUpdateStatus) => void
+    ): () => void;
+  };
   activityMonitorApi: {
     getTimeline(req: {
       fromTs: number;

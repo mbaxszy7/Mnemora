@@ -32,6 +32,17 @@
 </p>
 
 ---
+## Release Channels
+
+- **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
+- **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
+
+### How Stable Releases Are Created
+
+1. Merge regular feature/fix PRs into `master` (Conventional Commits).
+2. Release Please automatically maintains a release PR with changelog and version bump.
+3. Merge that release PR to publish a new stable release and assets.
+
 <h2 id="english">📖 English</h2>
 
 ### 🎯 Project Overview

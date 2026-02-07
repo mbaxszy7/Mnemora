@@ -100,6 +100,11 @@ export const IPC_CHANNELS = {
   NOTIFICATION_TOAST: "notification:toast",
   // App channels
   APP_UPDATE_TITLE_BAR: "app:update-title-bar",
+  APP_UPDATE_GET_STATUS: "app-update:get-status",
+  APP_UPDATE_CHECK_NOW: "app-update:check-now",
+  APP_UPDATE_RESTART_AND_INSTALL: "app-update:restart-and-install",
+  APP_UPDATE_OPEN_DOWNLOAD_PAGE: "app-update:open-download-page",
+  APP_UPDATE_STATUS_CHANGED: "app-update:status-changed",
   // Screen Capture Real-time events
   SCREEN_CAPTURE_CAPTURING_STARTED: "screen-capture:capturing-started",
   SCREEN_CAPTURE_CAPTURING_FINISHED: "screen-capture:capturing-finished",

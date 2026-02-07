@@ -184,6 +184,19 @@ function copyLocalesIntoResources({ buildPath }) {
   fs.cpSync(localesSrc, localesDest, { recursive: true });
 }
 
+function writeBuildMetadataIntoResources({ buildPath }) {
+  const resourcesDir = resolvePackagedResourcesDir(buildPath);
+  const metadataDest = path.join(resourcesDir, "shared", "build-metadata.json");
+  const metadata = {
+    channel: process.env.MNEMORA_UPDATE_CHANNEL ?? "stable",
+    buildSha: process.env.MNEMORA_BUILD_SHA ?? null,
+    builtAt: new Date().toISOString(),
+  };
+
+  fs.mkdirSync(path.dirname(metadataDest), { recursive: true });
+  fs.writeFileSync(metadataDest, JSON.stringify(metadata, null, 2), "utf8");
+}
+
 function rebuildNativeModules() {
   // Replacement for @electron-forge/plugin-electron-rebuild:
   // rely on the repo's existing `electron-rebuild` workflow.
@@ -388,6 +401,7 @@ module.exports = {
     packageAfterCopy: async (_forgeConfig, buildPath) => {
       copyWindowInspectorIntoResources({ buildPath });
       copyLocalesIntoResources({ buildPath });
+      writeBuildMetadataIntoResources({ buildPath });
     },
   },
 };

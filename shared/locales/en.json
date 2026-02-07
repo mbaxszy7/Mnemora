@@ -43,6 +43,11 @@
       "description": "Check and install the latest stable app version.",
       "currentVersion": "Current version:",
       "availableVersion": "Available version:",
+      "channel": "Channel:",
+      "channels": {
+        "stable": "Stable",
+        "nightly": "Nightly"
+      },
       "statusLabel": "Status:",
       "lastCheckedAt": "Last checked:",
       "never": "Never",

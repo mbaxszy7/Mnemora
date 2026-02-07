@@ -66,6 +66,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
       - name: Build platform packages
+        env:
+          MNEMORA_UPDATE_CHANNEL: nightly
+          MNEMORA_APP_NAME: Mnemora - Nightly
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
       - name: Upload make artifacts
         uses: actions/upload-artifact@v4

@@ -15,12 +15,14 @@ const mockLogger = vi.hoisted(() => ({
 const mockShowNotification = vi.hoisted(() => vi.fn(async () => {}));
 
 const mockIsPackaged = vi.hoisted(() => ({ value: true }));
+const mockAppName = vi.hoisted(() => ({ value: "Mnemora" }));
 
 vi.mock("electron", () => ({
   app: {
     get isPackaged() {
       return mockIsPackaged.value;
     },
+    getName: vi.fn(() => mockAppName.value),
     getVersion: vi.fn(() => "0.0.1"),
   },
   autoUpdater: {
@@ -64,6 +66,8 @@ describe("AppUpdateService", () => {
     AppUpdateService.resetInstance();
     Object.defineProperty(process, "platform", { value: "darwin" });
     mockIsPackaged.value = true;
+    mockAppName.value = "Mnemora";
+    delete process.env.MNEMORA_UPDATE_CHANNEL;
   });
 
   afterEach(() => {
@@ -257,6 +261,100 @@ describe("AppUpdateService", () => {
     expect(mockOpenExternal).toHaveBeenCalledWith(
       "https://github.com/mbaxszy7/Mnemora/releases/latest"
     );
+  });
+
+  it("detects nightly channel from app name and opens nightly download page", async () => {
+    mockAppName.value = "Mnemora - Nightly";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "nightly",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly",
+          prerelease: true,
+          draft: false,
+          name: "nightly",
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    await service.checkNow();
+    const status = service.getStatus();
+
+    expect(status.channel).toBe("nightly");
+    expect(status.platformAction).toBe("open-download-page");
+    expect(status.releaseUrl).toBe("https://github.com/mbaxszy7/Mnemora/releases/tag/nightly");
+  });
+
+  it("prefers explicit update channel env over app name", async () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "nightly";
+    mockAppName.value = "Mnemora";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "nightly",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly",
+          prerelease: true,
+          draft: false,
+          name: "nightly",
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    await service.checkNow();
+
+    expect(service.getStatus().channel).toBe("nightly");
+  });
+
+  it("uses nightly fallback url when nightly release url is absent", async () => {
+    mockAppName.value = "Mnemora - Nightly";
+    const service = AppUpdateService.getInstance();
+    const result = await service.openDownloadPage();
+
+    expect(result.url).toBe("https://github.com/mbaxszy7/Mnemora/releases/tag/nightly");
+    expect(mockOpenExternal).toHaveBeenCalledWith(
+      "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly"
+    );
+  });
+
+  it("treats draft nightly release as not available", async () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "nightly";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "nightly",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly",
+          prerelease: true,
+          draft: true,
+          name: "nightly",
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    await service.checkNow();
+    const status = service.getStatus();
+
+    expect(status.phase).toBe("not-available");
+    expect(status.platformAction).toBe("none");
+  });
+
+  it("does not initialize windows auto updater for nightly channel", () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "nightly";
+    Object.defineProperty(process, "platform", { value: "win32" });
+
+    const service = AppUpdateService.getInstance();
+    service.initialize();
+
+    expect(mockUpdateElectronApp).not.toHaveBeenCalled();
   });
 
   it("handles non-Error updater error payload on windows", () => {

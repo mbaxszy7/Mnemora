@@ -8,8 +8,10 @@ export type AppUpdatePhase =
   | "error";
 
 export type AppUpdatePlatformAction = "restart-and-install" | "open-download-page" | "none";
+export type AppUpdateChannel = "stable" | "nightly";
 
 export interface AppUpdateStatus {
+  channel: AppUpdateChannel;
   phase: AppUpdatePhase;
   currentVersion: string;
   availableVersion: string | null;

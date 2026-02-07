@@ -46,6 +46,12 @@ export function AppUpdateCard(props: AppUpdateCardProps) {
           <span className="font-medium">{status?.availableVersion ?? "-"}</span>
         </div>
         <div>
+          <span className="text-muted-foreground">{t("settings.updates.channel")} </span>
+          <span className="font-medium">
+            {t(`settings.updates.channels.${status?.channel ?? "stable"}`)}
+          </span>
+        </div>
+        <div>
           <span className="text-muted-foreground">{t("settings.updates.statusLabel")} </span>
           <span className="font-medium">
             {t(`settings.updates.status.${status?.phase ?? "idle"}`)}

@@ -1,6 +1,6 @@
 import { app, autoUpdater, BrowserWindow, shell } from "electron";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
-import type { AppUpdateStatus } from "@shared/app-update-types";
+import type { AppUpdateChannel, AppUpdateStatus } from "@shared/app-update-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { getLogger } from "./logger";
 import { notificationService } from "./notification/notification-service";
@@ -8,10 +8,23 @@ import { notificationService } from "./notification/notification-service";
 const logger = getLogger("app-update-service");
 
 const STABLE_RELEASES_API = "https://api.github.com/repos/mbaxszy7/Mnemora/releases/latest";
+const NIGHTLY_RELEASES_API = "https://api.github.com/repos/mbaxszy7/Mnemora/releases/tags/nightly";
+const DEFAULT_STABLE_RELEASE_URL = "https://github.com/mbaxszy7/Mnemora/releases/latest";
+const DEFAULT_NIGHTLY_RELEASE_URL = "https://github.com/mbaxszy7/Mnemora/releases/tag/nightly";
+
+function resolveUpdateChannel(): AppUpdateChannel {
+  const envChannel = process.env.MNEMORA_UPDATE_CHANNEL;
+  if (envChannel === "nightly") return "nightly";
+  if (envChannel === "stable") return "stable";
+
+  const appName = app.getName().toLowerCase();
+  return appName.includes("nightly") ? "nightly" : "stable";
+}
 
 function createInitialStatus(): AppUpdateStatus {
   const now = Date.now();
   return {
+    channel: resolveUpdateChannel(),
     phase: "idle",
     currentVersion: app.getVersion(),
     availableVersion: null,
@@ -82,7 +95,7 @@ class AppUpdateService {
       return;
     }
 
-    if (process.platform === "win32") {
+    if (process.platform === "win32" && this.status.channel === "stable") {
       this.initializeWindowsUpdater();
     }
 
@@ -123,7 +136,9 @@ class AppUpdateService {
     });
 
     try {
-      if (process.platform === "win32") {
+      if (this.status.channel === "nightly") {
+        await this.checkNightlyRelease();
+      } else if (process.platform === "win32") {
         this.windowsCheckInFlight = true;
         autoUpdater.checkForUpdates();
       } else if (process.platform === "darwin") {
@@ -162,7 +177,9 @@ class AppUpdateService {
   }
 
   async openDownloadPage(): Promise<{ url: string }> {
-    const url = this.status.releaseUrl ?? "https://github.com/mbaxszy7/Mnemora/releases/latest";
+    const fallbackUrl =
+      this.status.channel === "nightly" ? DEFAULT_NIGHTLY_RELEASE_URL : DEFAULT_STABLE_RELEASE_URL;
+    const url = this.status.releaseUrl ?? fallbackUrl;
     await shell.openExternal(url);
     return { url };
   }
@@ -300,6 +317,47 @@ class AppUpdateService {
       message: release.name ?? null,
     });
     await this.notifyUpdateAvailable(remoteVersion);
+  }
+
+  private async checkNightlyRelease(): Promise<void> {
+    const response = await fetch(NIGHTLY_RELEASES_API, {
+      headers: {
+        Accept: "application/vnd.github+json",
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`Nightly release check failed with status ${response.status}`);
+    }
+
+    const release = (await response.json()) as {
+      tag_name?: string;
+      html_url?: string;
+      name?: string;
+      draft?: boolean;
+      prerelease?: boolean;
+    };
+
+    if (!release.tag_name || release.draft) {
+      this.updateStatus({
+        phase: "not-available",
+        platformAction: "none",
+        availableVersion: null,
+        releaseUrl: null,
+        message: null,
+      });
+      return;
+    }
+
+    const availableVersion = release.name ?? release.tag_name;
+    this.updateStatus({
+      phase: "available",
+      availableVersion,
+      releaseUrl: release.html_url ?? DEFAULT_NIGHTLY_RELEASE_URL,
+      platformAction: "open-download-page",
+      message: release.prerelease ? "Nightly build available." : (release.name ?? null),
+    });
+    await this.notifyUpdateAvailable(availableVersion);
   }
 
   private async notifyUpdateAvailable(version: string | null): Promise<void> {

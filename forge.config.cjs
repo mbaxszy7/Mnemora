@@ -5,6 +5,7 @@ const { execSync } = require("node:child_process");
 
 const electronCacheRoot = path.resolve(__dirname, ".electron-cache");
 const fallbackElectronMirror = "https://npmmirror.com/mirrors/electron/";
+const appDisplayName = process.env.MNEMORA_APP_NAME ?? "Mnemora";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const electronChecksums = require("electron/checksums.json");
 
@@ -238,7 +239,7 @@ async function ensureElectronDownloaded({ platform, arch }) {
 
 module.exports = {
   packagerConfig: {
-    name: "Mnemora",
+    name: appDisplayName,
     appBundleId: "com.mnemora.app",
     icon: "public/logo",
     asar: {

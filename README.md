@@ -31,18 +31,6 @@
   <a href="#english">English</a> | <a href="#中文">中文</a>
 </p>
 
----
-## Release Channels
-
-- **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
-- **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
-
-### How Stable Releases Are Created
-
-1. Merge regular feature/fix PRs into `master` (Conventional Commits).
-2. Release Please automatically maintains a release PR with changelog and version bump.
-3. Merge that release PR to publish a new stable release and assets.
-
 <h2 id="english">📖 English</h2>
 
 ### 🎯 Project Overview
@@ -650,6 +638,21 @@ pnpm db:studio
 
 [MIT License](LICENSE)
 
+## Release Channels
+
+- **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
+- **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
+
+### Downloads
+
+- Stable (latest): [https://github.com/mbaxszy7/Mnemora/releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
+- Nightly (rolling): [https://github.com/mbaxszy7/Mnemora/releases/tag/nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
+
+### How Stable Releases Are Created
+
+1. Merge regular feature/fix PRs into `master` (Conventional Commits).
+2. Release Please automatically maintains a release PR with changelog and version bump.
+3. Merge that release PR to publish a new stable release and assets.
 
 ---
 <p align="center">

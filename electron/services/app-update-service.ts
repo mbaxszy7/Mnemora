@@ -1,4 +1,6 @@
 import { app, autoUpdater, BrowserWindow, shell } from "electron";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { UpdateSourceType, updateElectronApp } from "update-electron-app";
 import type { AppUpdateChannel, AppUpdateStatus } from "@shared/app-update-types";
 import { IPC_CHANNELS } from "@shared/ipc-types";
@@ -69,6 +71,7 @@ class AppUpdateService {
   private intervalId: NodeJS.Timeout | null = null;
   private notifiedAvailableVersion: string | null = null;
   private notifiedDownloadedVersion: string | null = null;
+  private localNightlyBuildSha: string | null | undefined;
 
   static getInstance(): AppUpdateService {
     if (!AppUpdateService.instance) {
@@ -336,6 +339,7 @@ class AppUpdateService {
       name?: string;
       draft?: boolean;
       prerelease?: boolean;
+      target_commitish?: string;
     };
 
     if (!release.tag_name || release.draft) {
@@ -350,6 +354,20 @@ class AppUpdateService {
     }
 
     const availableVersion = release.name ?? release.tag_name;
+    const remoteBuildSha = release.target_commitish?.trim() || null;
+    const localBuildSha = this.getLocalNightlyBuildSha();
+
+    if (remoteBuildSha && localBuildSha && this.isSameBuild(remoteBuildSha, localBuildSha)) {
+      this.updateStatus({
+        phase: "not-available",
+        platformAction: "none",
+        availableVersion: null,
+        releaseUrl: release.html_url ?? DEFAULT_NIGHTLY_RELEASE_URL,
+        message: null,
+      });
+      return;
+    }
+
     this.updateStatus({
       phase: "available",
       availableVersion,
@@ -358,6 +376,41 @@ class AppUpdateService {
       message: release.prerelease ? "Nightly build available." : (release.name ?? null),
     });
     await this.notifyUpdateAvailable(availableVersion);
+  }
+
+  private getLocalNightlyBuildSha(): string | null {
+    if (this.localNightlyBuildSha !== undefined) {
+      return this.localNightlyBuildSha;
+    }
+
+    const resourcesPath = process.resourcesPath;
+    if (!resourcesPath) {
+      this.localNightlyBuildSha = null;
+      return this.localNightlyBuildSha;
+    }
+
+    const metadataPath = path.join(resourcesPath, "shared", "build-metadata.json");
+    if (!existsSync(metadataPath)) {
+      this.localNightlyBuildSha = null;
+      return this.localNightlyBuildSha;
+    }
+
+    try {
+      const raw = readFileSync(metadataPath, "utf8");
+      const metadata = JSON.parse(raw) as { buildSha?: unknown };
+      this.localNightlyBuildSha = typeof metadata.buildSha === "string" ? metadata.buildSha : null;
+      return this.localNightlyBuildSha;
+    } catch (error) {
+      logger.warn({ error }, "Failed to read local build metadata for nightly update check");
+      this.localNightlyBuildSha = null;
+      return this.localNightlyBuildSha;
+    }
+  }
+
+  private isSameBuild(a: string, b: string): boolean {
+    const left = a.trim().toLowerCase();
+    const right = b.trim().toLowerCase();
+    return left === right || left.startsWith(right) || right.startsWith(left);
   }
 
   private async notifyUpdateAvailable(version: string | null): Promise<void> {

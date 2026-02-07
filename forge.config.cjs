@@ -6,6 +6,11 @@ const { execSync } = require("node:child_process");
 const electronCacheRoot = path.resolve(__dirname, ".electron-cache");
 const fallbackElectronMirror = "https://npmmirror.com/mirrors/electron/";
 const appDisplayName = process.env.MNEMORA_APP_NAME ?? "Mnemora";
+const macSigningIdentity = process.env.APPLE_SIGNING_IDENTITY?.trim();
+const hasMacSigningIdentity = Boolean(macSigningIdentity);
+const hasMacNotarizationCredentials = Boolean(
+  process.env.APPLE_ID && process.env.APPLE_APP_SPECIFIC_PASSWORD && process.env.APPLE_TEAM_ID
+);
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const electronChecksums = require("electron/checksums.json");
 
@@ -270,6 +275,24 @@ module.exports = {
       /^\/node_modules\/\.cache($|\/)/,
       /^\/.*\.traineddata$/i,
     ],
+    osxSign: hasMacSigningIdentity
+      ? {
+          identity: macSigningIdentity,
+          hardenedRuntime: true,
+          gatekeeperAssess: false,
+          entitlements: "build/entitlements.mac.plist",
+          "entitlements-inherit": "build/entitlements.mac.inherit.plist",
+        }
+      : undefined,
+    osxNotarize:
+      hasMacSigningIdentity && hasMacNotarizationCredentials
+        ? {
+            tool: "notarytool",
+            appleId: process.env.APPLE_ID,
+            appleIdPassword: process.env.APPLE_APP_SPECIFIC_PASSWORD,
+            teamId: process.env.APPLE_TEAM_ID,
+          }
+        : undefined,
   },
   makers: [
     {

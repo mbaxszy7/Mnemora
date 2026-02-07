@@ -65,10 +65,29 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+      - name: Import Apple signing certificate
+        if: matrix.platform == 'darwin' && secrets.APPLE_CERTIFICATE_P12_BASE64 != '' && secrets.APPLE_CERTIFICATE_P12_PASSWORD != '' && secrets.APPLE_KEYCHAIN_PASSWORD != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/mnemora-signing.keychain-db"
+          CERT_PATH="$RUNNER_TEMP/mnemora-signing.p12"
+          echo "${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}" | base64 --decode > "$CERT_PATH"
+          security create-keychain -p "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -P "${{ secrets.APPLE_CERTIFICATE_P12_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "${{ secrets.APPLE_KEYCHAIN_PASSWORD }}" "$KEYCHAIN_PATH"
+          rm -f "$CERT_PATH"
       - name: Build platform packages
         env:
           MNEMORA_UPDATE_CHANNEL: nightly
           MNEMORA_APP_NAME: Mnemora - Nightly
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
       - name: Upload make artifacts
         uses: actions/upload-artifact@v4

@@ -43,6 +43,23 @@
 2. Release Please automatically maintains a release PR with changelog and version bump.
 3. Merge that release PR to publish a new stable release and assets.
 
+### macOS Signing & Notarization (for downloadable builds)
+
+Unsigned macOS apps are frequently blocked by Gatekeeper with messages like "app is damaged".  
+This repo supports optional signing/notarization in CI. It is recommended even for open-source projects if users download `.dmg`/`.zip` directly from Releases.
+
+Required GitHub repository secrets:
+
+- `APPLE_CERTIFICATE_P12_BASE64`: base64-encoded Developer ID Application certificate (`.p12`)
+- `APPLE_CERTIFICATE_P12_PASSWORD`: password for the `.p12` file
+- `APPLE_KEYCHAIN_PASSWORD`: temporary keychain password used in CI
+- `APPLE_SIGNING_IDENTITY`: signing identity, e.g. `Developer ID Application: Your Name (TEAMID)`
+- `APPLE_ID`: Apple ID email used for notarization
+- `APPLE_APP_SPECIFIC_PASSWORD`: app-specific password for notarization
+- `APPLE_TEAM_ID`: Apple Developer Team ID
+
+When these secrets are present, macOS builds in `nightly.yml` and `publish-stable.yml` will sign and notarize automatically.
+
 <h2 id="english">📖 English</h2>
 
 ### 🎯 Project Overview

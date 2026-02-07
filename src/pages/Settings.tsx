@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { driver, type Driver } from "driver.js";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 // import { Switch } from "@/components/ui/switch";
@@ -26,11 +27,18 @@ import {
   Monitor,
   Activity,
   ArrowLeft,
+  Sparkles,
 } from "lucide-react";
 import { useLanguage } from "@/hooks/use-language";
 import { useViewTransition } from "@/components/core/view-transition";
 import type { SupportedLanguage } from "@shared/i18n-types";
 import type { PermissionStatus } from "@shared/ipc-types";
+import { useUserSettings } from "@/pages/settings/hooks/useUserSettings";
+import {
+  buildSettingsOnboardingSteps,
+  resolveProgressOnTourClose,
+  resolveSettingsProgressOnDone,
+} from "@/features/onboarding";
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -43,6 +51,8 @@ export default function SettingsPage() {
     languageDisplayNames,
   } = useLanguage();
   const { theme, setTheme } = useTheme();
+  const { settings, setOnboardingProgressAsync, isUpdatingOnboarding } = useUserSettings();
+  const settingsOnboardingRef = useRef<Driver | null>(null);
 
   // Permission state
   const [screenRecordingStatus, setScreenRecordingStatus] = useState<PermissionStatus | null>(null);
@@ -193,6 +203,64 @@ export default function SettingsPage() {
     changeLanguage(value as SupportedLanguage);
   };
 
+  const handleReplayOnboarding = useCallback(async () => {
+    await setOnboardingProgressAsync("pending_home");
+    navigate("/", { type: "slide-right", duration: 300 });
+  }, [navigate, setOnboardingProgressAsync]);
+
+  useEffect(() => {
+    if (settings.onboardingProgress !== "pending_settings") return;
+    if (settingsOnboardingRef.current?.isActive()) return;
+
+    const steps = buildSettingsOnboardingSteps({ t });
+    if (steps.length === 0) {
+      void setOnboardingProgressAsync(resolveProgressOnTourClose());
+      return;
+    }
+
+    const onboarding = driver({
+      steps,
+      allowClose: true,
+      showProgress: true,
+      stagePadding: 8,
+      stageRadius: 14,
+      popoverClass: "mnemora-driver-popover",
+      overlayColor: "rgba(6, 9, 20, 0.55)",
+      nextBtnText: t("onboarding.actions.next"),
+      prevBtnText: t("onboarding.actions.back"),
+      doneBtnText: t("onboarding.actions.done"),
+      progressText: t("onboarding.progress", { current: "{{current}}", total: "{{total}}" }),
+      onPrevClick: (_element, _step, opts) => {
+        opts.driver.movePrevious();
+      },
+      onNextClick: (_element, _step, opts) => {
+        if (opts.driver.isLastStep()) {
+          void (async () => {
+            await setOnboardingProgressAsync(resolveSettingsProgressOnDone());
+            opts.driver.destroy();
+          })();
+          return;
+        }
+        opts.driver.moveNext();
+      },
+      onCloseClick: (_element, _step, opts) => {
+        void setOnboardingProgressAsync(resolveProgressOnTourClose());
+        opts.driver.destroy();
+      },
+    });
+
+    settingsOnboardingRef.current = onboarding;
+    const timer = window.setTimeout(() => onboarding.drive(), 120);
+
+    return () => {
+      window.clearTimeout(timer);
+      if (settingsOnboardingRef.current?.isActive()) {
+        settingsOnboardingRef.current.destroy();
+      }
+      settingsOnboardingRef.current = null;
+    };
+  }, [setOnboardingProgressAsync, settings.onboardingProgress, t]);
+
   const getPermissionStatusBadge = (
     status: PermissionStatus | null,
     type: "screenRecording" | "accessibility"
@@ -240,7 +308,10 @@ export default function SettingsPage() {
 
       <div className="space-y-6">
         {/* Language Selector */}
-        <div className="flex items-center justify-between p-4 rounded-lg border">
+        <div
+          className="flex items-center justify-between p-4 rounded-lg border"
+          data-tour-id="settings-language"
+        >
           <div className="space-y-0.5">
             <Label htmlFor="language" className="flex items-center gap-2">
               <Languages className="h-4 w-4" />
@@ -267,7 +338,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Permissions Section */}
-        <div className="rounded-lg border divide-y">
+        <div className="rounded-lg border divide-y" data-tour-id="settings-permissions">
           {/* Screen Recording Permission */}
           <div className="p-4 space-y-3">
             <div className="flex items-center justify-between">
@@ -342,6 +413,7 @@ export default function SettingsPage() {
         <button
           onClick={() => navigate("/settings/llm-config", { type: "slide-left", duration: 300 })}
           className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+          data-tour-id="settings-llm-config"
         >
           <div className="space-y-0.5">
             <Label className="flex items-center gap-2 cursor-pointer">
@@ -416,6 +488,7 @@ export default function SettingsPage() {
             navigate("/settings/capture-sources", { type: "slide-left", duration: 300 })
           }
           className="w-full flex items-center justify-between p-4 rounded-lg border hover:bg-accent transition-colors text-left"
+          data-tour-id="settings-capture-sources"
         >
           <div className="space-y-0.5">
             <Label className="flex items-center gap-2 cursor-pointer">
@@ -477,7 +550,10 @@ export default function SettingsPage() {
           />
         </div> */}
 
-        <div className="flex items-center justify-between p-4 rounded-lg border">
+        <div
+          className="flex items-center justify-between p-4 rounded-lg border"
+          data-tour-id="settings-theme"
+        >
           <div className="space-y-0.5">
             <Label htmlFor="theme">{t("settings.appearance.label")}</Label>
             <p className="text-sm text-muted-foreground">{t("settings.appearance.description")}</p>
@@ -492,6 +568,27 @@ export default function SettingsPage() {
               <SelectItem value="dark">{t("settings.appearance.options.dark")}</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+
+        <div
+          className="flex items-center justify-between p-4 rounded-lg border"
+          data-tour-id="settings-replay-onboarding"
+        >
+          <div className="space-y-0.5">
+            <Label className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4" />
+              {t("onboarding.replay.label")}
+            </Label>
+            <p className="text-sm text-muted-foreground">{t("onboarding.replay.description")}</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleReplayOnboarding()}
+            disabled={isUpdatingOnboarding}
+          >
+            {t("onboarding.replay.action")}
+          </Button>
         </div>
       </div>
     </div>

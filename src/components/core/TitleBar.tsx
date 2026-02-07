@@ -127,6 +127,7 @@ export const TitleBar: React.FC = () => {
                 variant="outline"
                 onClick={handleToggleCapture}
                 disabled={isTogglingCapture}
+                data-tour-id="home-capture-toggle"
                 className={cn(
                   "h-7 px-3 rounded-full text-xs",
                   isRecording

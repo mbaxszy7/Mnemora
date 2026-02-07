@@ -6,6 +6,7 @@ import { QueryProvider } from "./providers/query-provider.tsx";
 import { I18nProvider } from "./providers/i18n-provider.tsx";
 import { ThemeProvider } from "./providers/theme-provider";
 import "./index.css";
+import "driver.js/dist/driver.css";
 
 // Session storage key for tracking if this is a fresh app launch
 const SESSION_KEY = "mnemora_session_active";

@@ -7,6 +7,8 @@ import {
   CONTEXT_RULES_MAX_CHARS,
   type CaptureAllowedWindow,
   type CaptureManualOverride,
+  isOnboardingProgress,
+  type OnboardingProgress,
   type UserSettings,
 } from "@shared/user-settings-types";
 import type {
@@ -25,6 +27,9 @@ const logger = getLogger("user-setting-service");
 
 function recordToSettings(record: UserSettingRecord): UserSettings {
   const windows = parseAllowedWindowsJson(record.captureAllowedWindowsJson);
+  const onboardingProgress = isOnboardingProgress(record.onboardingProgress)
+    ? record.onboardingProgress
+    : "pending_home";
   const settings: UserSettings = {
     capturePrimaryScreenOnly: record.capturePrimaryScreenOnly,
     captureScheduleEnabled: record.captureScheduleEnabled,
@@ -36,6 +41,8 @@ function recordToSettings(record: UserSettingRecord): UserSettings {
     contextRulesEnabled: record.contextRulesEnabled,
     contextRulesMarkdown: record.contextRulesMarkdown,
     contextRulesUpdatedAt: record.contextRulesUpdatedAt ?? null,
+    onboardingProgress,
+    onboardingUpdatedAt: record.onboardingUpdatedAt ?? null,
   };
 
   contextRulesStore.updateFromUserSettings(settings);
@@ -89,6 +96,8 @@ export class UserSettingService {
         contextRulesEnabled: false,
         contextRulesMarkdown: "",
         contextRulesUpdatedAt: null,
+        onboardingProgress: "pending_home",
+        onboardingUpdatedAt: null,
 
         createdAt: now,
         updatedAt: now,
@@ -175,6 +184,28 @@ export class UserSettingService {
       .set({
         captureManualOverride: mode,
         captureManualOverrideUpdatedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(userSetting.id, existing.id))
+      .run();
+
+    const updated = db.select().from(userSetting).where(eq(userSetting.id, existing.id)).get();
+    if (!updated) {
+      throw new Error("Failed to load updated user_setting");
+    }
+
+    return recordToSettings(updated);
+  }
+
+  async setOnboardingProgress(progress: OnboardingProgress): Promise<UserSettings> {
+    const db = getDb();
+    const existing = this.ensureSingletonRecord();
+    const now = Date.now();
+
+    db.update(userSetting)
+      .set({
+        onboardingProgress: progress,
+        onboardingUpdatedAt: now,
         updatedAt: now,
       })
       .where(eq(userSetting.id, existing.id))

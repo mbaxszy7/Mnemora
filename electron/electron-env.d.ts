@@ -177,6 +177,13 @@ interface Window {
         import("../shared/user-settings-types").UserSettingsResponse
       >
     >;
+    setOnboardingProgress(
+      progress: import("../shared/user-settings-types").OnboardingProgress
+    ): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/user-settings-types").UserSettingsResponse
+      >
+    >;
   };
   notificationApi: {
     show(

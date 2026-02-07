@@ -15,6 +15,8 @@ import type {
 import type { PermissionCheckResult } from "@shared/ipc-types";
 import type {
   CaptureManualOverride,
+  OnboardingProgress,
+  SetOnboardingProgressRequest,
   UpdateUserSettingsRequest,
   UserSettingsResponse,
 } from "@shared/user-settings-types";
@@ -247,6 +249,7 @@ export interface UserSettingsApi {
   get(): Promise<IPCResult<UserSettingsResponse>>;
   update(settings: UpdateUserSettingsRequest["settings"]): Promise<IPCResult<UserSettingsResponse>>;
   setCaptureOverride(mode: CaptureManualOverride): Promise<IPCResult<UserSettingsResponse>>;
+  setOnboardingProgress(progress: OnboardingProgress): Promise<IPCResult<UserSettingsResponse>>;
 }
 
 const userSettingsApi: UserSettingsApi = {
@@ -262,6 +265,14 @@ const userSettingsApi: UserSettingsApi = {
 
   async setCaptureOverride(mode: CaptureManualOverride): Promise<IPCResult<UserSettingsResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.USER_SETTINGS_SET_CAPTURE_OVERRIDE, { mode });
+  },
+
+  async setOnboardingProgress(
+    progress: OnboardingProgress
+  ): Promise<IPCResult<UserSettingsResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.USER_SETTINGS_SET_ONBOARDING_PROGRESS, {
+      progress,
+    } satisfies SetOnboardingProgressRequest);
   },
 };
 

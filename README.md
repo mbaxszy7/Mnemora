@@ -643,26 +643,10 @@ pnpm db:studio
 - **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
 - **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
 
-### Stable Downloads (Current: v0.0.1)
+### Downloads
 
-| Platform      | Download |
-| ------------- | -------- |
-| macOS (Apple Silicon) | [Mnemora-0.0.1-arm64.dmg](https://github.com/mbaxszy7/Mnemora/releases/download/v0.0.1/Mnemora-0.0.1-arm64.dmg) |
-| Windows x64   | [Mnemora-0.0.1.Setup.exe](https://github.com/mbaxszy7/Mnemora/releases/download/v0.0.1/Mnemora-0.0.1.Setup.exe) |
-| Windows ARM64 | [Not published yet](https://github.com/mbaxszy7/Mnemora/releases/tag/v0.0.1) |
-
-Stable release page: [v0.0.1](https://github.com/mbaxszy7/Mnemora/releases/tag/v0.0.1)  
-Latest stable page: [releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
-
-### Nightly Downloads (Rolling)
-
-| Platform      | Download |
-| ------------- | -------- |
-| macOS (Apple Silicon) | [nightly-darwin-arm64-Mnemora-0.0.1-arm64.dmg](https://github.com/mbaxszy7/Mnemora/releases/download/nightly/nightly-darwin-arm64-Mnemora-0.0.1-arm64.dmg) |
-| Windows x64   | [nightly-win32-x64-Mnemora-0.0.1.Setup.exe](https://github.com/mbaxszy7/Mnemora/releases/download/nightly/nightly-win32-x64-Mnemora-0.0.1.Setup.exe) |
-| Windows ARM64 | [nightly-win32-arm64-Mnemora-0.0.1.Setup.exe](https://github.com/mbaxszy7/Mnemora/releases/download/nightly/nightly-win32-arm64-Mnemora-0.0.1.Setup.exe) |
-
-Nightly release page: [nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
+- Stable (latest): [https://github.com/mbaxszy7/Mnemora/releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
+- Nightly (rolling): [https://github.com/mbaxszy7/Mnemora/releases/tag/nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
 
 ### How Stable Releases Are Created
 

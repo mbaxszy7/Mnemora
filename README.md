@@ -6,20 +6,25 @@
 
 <p align="center">
   <strong>Let your screen become your second brain</strong><br>
-  <strong>让你的屏幕成为第二大脑</strong>
+  <strong>让你的屏幕成为第二大脑</strong><br>
+  <sub>Desktop Screenshot Intelligence · Multi-layer Structured Context (VLM · LLM · OCR · Vector Retrieval)</sub><br>
+  <sub>桌面截图智能感知 · 多层结构化处理（VLM · LLM · OCR · 向量检索）</sub>
 </p>
 
 <p align="center">
   <a href="https://github.com/mbaxszy7/Mnemora/actions/workflows/build.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/mbaxszy7/Mnemora/build.yml?branch=master&style=flat-square" alt="Build Status">
+    <img src="https://img.shields.io/github/actions/workflow/status/mbaxszy7/Mnemora/build.yml?branch=master&style=flat-square" alt="Build">
   </a>
-  <a href="https://github.com/mbaxszy7/Mnemora/releases">
-    <img src="https://img.shields.io/github/v/release/mbaxszy7/Mnemora?style=flat-square" alt="Version">
+  <a href="https://github.com/mbaxszy7/Mnemora/tags">
+    <img src="https://img.shields.io/github/v/tag/mbaxszy7/Mnemora?sort=semver&style=flat-square" alt="Latest Tag">
+  </a>
+  <a href="https://github.com/mbaxszy7/Mnemora/stargazers">
+    <img src="https://img.shields.io/github/stars/mbaxszy7/Mnemora?style=flat-square" alt="Stars">
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
+    <img src="https://img.shields.io/github/license/mbaxszy7/Mnemora?style=flat-square" alt="License">
   </a>
-  <img src="https://img.shields.io/badge/platform-macOS%20|%20Windows%20|%20Linux-lightgrey?style=flat-square" alt="Platform">
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-6b7280?style=flat-square" alt="Platform">
 </p>
 
 <p align="center">

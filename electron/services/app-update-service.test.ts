@@ -12,6 +12,7 @@ const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
   debug: vi.fn(),
 }));
+const mockShowNotification = vi.hoisted(() => vi.fn(async () => {}));
 
 vi.mock("electron", () => ({
   app: {
@@ -40,6 +41,12 @@ vi.mock("update-electron-app", () => ({
 
 vi.mock("./logger", () => ({
   getLogger: vi.fn(() => mockLogger),
+}));
+
+vi.mock("./notification/notification-service", () => ({
+  notificationService: {
+    show: mockShowNotification,
+  },
 }));
 
 import { AppUpdateService } from "./app-update-service";

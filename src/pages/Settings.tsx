@@ -66,6 +66,7 @@ export default function SettingsPage() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
   const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
   const [isOpeningUpdateDownload, setIsOpeningUpdateDownload] = useState(false);
+  const showUpdateCard = true;
 
   const screenRecordingStatusRef = useRef<PermissionStatus | null>(null);
   const accessibilityStatusRef = useRef<PermissionStatus | null>(null);
@@ -594,15 +595,17 @@ export default function SettingsPage() {
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
 
-        <AppUpdateCard
-          status={updateStatus}
-          isChecking={isCheckingUpdate}
-          isInstalling={isInstallingUpdate}
-          isOpeningDownload={isOpeningUpdateDownload}
-          onCheckNow={() => void handleCheckUpdate()}
-          onRestartAndInstall={() => void handleRestartAndInstall()}
-          onOpenDownload={() => void handleOpenUpdateDownload()}
-        />
+        {showUpdateCard && (
+          <AppUpdateCard
+            status={updateStatus}
+            isChecking={isCheckingUpdate}
+            isInstalling={isInstallingUpdate}
+            isOpeningDownload={isOpeningUpdateDownload}
+            onCheckNow={() => void handleCheckUpdate()}
+            onRestartAndInstall={() => void handleRestartAndInstall()}
+            onOpenDownload={() => void handleOpenUpdateDownload()}
+          />
+        )}
 
         {/* <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">

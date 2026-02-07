@@ -108,18 +108,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p release-upload
+          echo "Discovered source artifacts:"
+          find release-assets -type f | sort
           find release-assets -type f -print0 | while IFS= read -r -d '' file; do
             rel="${file#release-assets/}"
             base="$(basename "$file")"
+            lower_base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
             lower_rel="$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')"
-            case "$base" in
+            case "$lower_base" in
               *.dmg)
-                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-arm64.dmg"
+                fi
                 ;;
               *.zip)
-                cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-Nightly-arm64.zip"
+                fi
                 ;;
-              *.Setup.exe)
+              *setup.exe)
                 if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/Mnemora-Nightly-arm64-Setup.exe"
                 elif [[ "$lower_rel" == *"win32-x64"* ]]; then
@@ -133,7 +140,7 @@ jobs:
                   cp -f "$file" "release-upload/mnemora-nightly-x64-full.nupkg"
                 fi
                 ;;
-              RELEASES)
+              releases)
                 if [[ "$lower_rel" == *"win32-arm64"* ]]; then
                   cp -f "$file" "release-upload/RELEASES-arm64"
                 elif [[ "$lower_rel" == *"win32-x64"* ]]; then
@@ -143,6 +150,24 @@ jobs:
             esac
           done
           ls -la release-upload
+          missing=0
+          for required in \
+            Mnemora-Nightly-arm64.dmg \
+            Mnemora-Nightly-arm64.zip \
+            Mnemora-Nightly-arm64-Setup.exe \
+            Mnemora-Nightly-x64-Setup.exe \
+            mnemora-nightly-arm64-full.nupkg \
+            mnemora-nightly-x64-full.nupkg \
+            RELEASES-arm64 \
+            RELEASES-x64; do
+            if [[ ! -f "release-upload/$required" ]]; then
+              echo "::error::Missing expected release asset: $required"
+              missing=1
+            fi
+          done
+          if [[ $missing -ne 0 ]]; then
+            exit 1
+          fi
       - name: Remove existing nightly assets
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

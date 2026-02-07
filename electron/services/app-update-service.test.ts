@@ -421,6 +421,29 @@ describe("AppUpdateService", () => {
     expect(service.getStatus().phase).toBe("available");
   });
 
+  it("detects nightly channel from local build metadata", () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ channel: "nightly", buildSha: "abc123" }));
+
+    const service = AppUpdateService.getInstance();
+    const status = service.getStatus();
+
+    expect(status.channel).toBe("nightly");
+    expect(status.currentVersion).toBe("nightly");
+  });
+
+  it("prefers env channel over local build metadata", () => {
+    process.env.MNEMORA_UPDATE_CHANNEL = "stable";
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(JSON.stringify({ channel: "nightly", buildSha: "abc123" }));
+
+    const service = AppUpdateService.getInstance();
+    const status = service.getStatus();
+
+    expect(status.channel).toBe("stable");
+    expect(status.currentVersion).toBe("0.0.1");
+  });
+
   it("handles non-Error updater error payload on windows", () => {
     Object.defineProperty(process, "platform", { value: "win32" });
     const service = AppUpdateService.getInstance();

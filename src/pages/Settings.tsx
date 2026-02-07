@@ -39,6 +39,8 @@ import {
   resolveProgressOnTourClose,
   resolveSettingsProgressOnDone,
 } from "@/features/onboarding";
+import type { AppUpdateStatus } from "@shared/app-update-types";
+import { AppUpdateCard } from "@/pages/settings/AppUpdateCard";
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -60,6 +62,10 @@ export default function SettingsPage() {
   const [isRequestingScreenRecording, setIsRequestingScreenRecording] = useState(false);
   const [isRequestingAccessibility, setIsRequestingAccessibility] = useState(false);
   const [isOpeningMonitoring, setIsOpeningMonitoring] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<AppUpdateStatus | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState(false);
+  const [isInstallingUpdate, setIsInstallingUpdate] = useState(false);
+  const [isOpeningUpdateDownload, setIsOpeningUpdateDownload] = useState(false);
 
   const screenRecordingStatusRef = useRef<PermissionStatus | null>(null);
   const accessibilityStatusRef = useRef<PermissionStatus | null>(null);
@@ -202,6 +208,70 @@ export default function SettingsPage() {
   const handleLanguageChange = (value: string) => {
     changeLanguage(value as SupportedLanguage);
   };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadStatus = async () => {
+      const result = await window.appUpdateApi.getStatus();
+      if (mounted && result.success && result.data) {
+        setUpdateStatus(result.data);
+      }
+    };
+
+    void loadStatus();
+    const unsubscribe = window.appUpdateApi.onStatusChanged((payload) => setUpdateStatus(payload));
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const handleCheckUpdate = useCallback(async () => {
+    setIsCheckingUpdate(true);
+    try {
+      const result = await window.appUpdateApi.checkNow();
+      if (!result.success) {
+        toast.error(t("settings.updates.errors.checkFailed"));
+      }
+    } catch (error) {
+      console.error("Failed to check updates:", error);
+      toast.error(t("settings.updates.errors.checkFailed"));
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  }, [t]);
+
+  const handleRestartAndInstall = useCallback(async () => {
+    setIsInstallingUpdate(true);
+    try {
+      const result = await window.appUpdateApi.restartAndInstall();
+      if (!result.success) {
+        toast.error(t("settings.updates.errors.installFailed"));
+      }
+    } catch (error) {
+      console.error("Failed to restart and install update:", error);
+      toast.error(t("settings.updates.errors.installFailed"));
+    } finally {
+      setIsInstallingUpdate(false);
+    }
+  }, [t]);
+
+  const handleOpenUpdateDownload = useCallback(async () => {
+    setIsOpeningUpdateDownload(true);
+    try {
+      const result = await window.appUpdateApi.openDownloadPage();
+      if (!result.success) {
+        toast.error(t("settings.updates.errors.openDownloadFailed"));
+      }
+    } catch (error) {
+      console.error("Failed to open update download page:", error);
+      toast.error(t("settings.updates.errors.openDownloadFailed"));
+    } finally {
+      setIsOpeningUpdateDownload(false);
+    }
+  }, [t]);
 
   const handleReplayOnboarding = useCallback(async () => {
     await setOnboardingProgressAsync("pending_home");
@@ -523,6 +593,16 @@ export default function SettingsPage() {
           </div>
           <ChevronRight className="h-5 w-5 text-muted-foreground" />
         </button>
+
+        <AppUpdateCard
+          status={updateStatus}
+          isChecking={isCheckingUpdate}
+          isInstalling={isInstallingUpdate}
+          isOpeningDownload={isOpeningUpdateDownload}
+          onCheckNow={() => void handleCheckUpdate()}
+          onRestartAndInstall={() => void handleRestartAndInstall()}
+          onOpenDownload={() => void handleOpenUpdateDownload()}
+        />
 
         {/* <div className="flex items-center justify-between p-4 rounded-lg border">
           <div className="space-y-0.5">

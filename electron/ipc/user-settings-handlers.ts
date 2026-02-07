@@ -1,6 +1,7 @@
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type {
   SetCaptureManualOverrideRequest,
+  SetOnboardingProgressRequest,
   UpdateUserSettingsRequest,
   UserSettingsResponse,
 } from "@shared/user-settings-types";
@@ -57,6 +58,22 @@ export function registerUserSettingsHandlers(): void {
         return { success: true, data: { settings } };
       } catch (error) {
         logger.error({ error }, "IPC: Failed to set capture manual override");
+        return { success: false, error: toIPCError(error) };
+      }
+    }
+  );
+
+  registry.registerHandler(
+    IPC_CHANNELS.USER_SETTINGS_SET_ONBOARDING_PROGRESS,
+    async (
+      _event,
+      request: SetOnboardingProgressRequest
+    ): Promise<IPCResult<UserSettingsResponse>> => {
+      try {
+        const settings = await userSettingService.setOnboardingProgress(request.progress);
+        return { success: true, data: { settings } };
+      } catch (error) {
+        logger.error({ error }, "IPC: Failed to set onboarding progress");
         return { success: false, error: toIPCError(error) };
       }
     }

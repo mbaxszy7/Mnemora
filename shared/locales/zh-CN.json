@@ -535,6 +535,72 @@
       "to": "结束"
     }
   },
+  "onboarding": {
+    "actions": {
+      "next": "下一步",
+      "back": "上一步",
+      "done": "完成",
+      "continue": "继续"
+    },
+    "progress": "{{current}} / {{total}}",
+    "home": {
+      "search": {
+        "title": "上下文搜索",
+        "description": "用自然语言提问，Mnemora 会在近期工作记录中检索相关上下文。"
+      },
+      "settingsButton": {
+        "title": "打开设置",
+        "description": "在设置中配置权限、模型和采集行为。"
+      },
+      "captureToggle": {
+        "title": "快速采集控制",
+        "description": "在顶部栏直接开始、暂停或恢复采集。在 macOS 上需先开启屏幕录制和辅助功能权限，否则无法进行屏幕感知。"
+      },
+      "emptyActions": {
+        "title": "首次使用操作区",
+        "description": "当还没有活动数据时，可以在这里完成授权并启动采集。"
+      },
+      "timeline": {
+        "title": "时间线",
+        "description": "浏览采集时间窗口，并选择你要查看的时间段。"
+      },
+      "summary": {
+        "title": "摘要面板",
+        "description": "查看所选时间段的摘要、关键点和相关事件。"
+      }
+    },
+    "settings": {
+      "language": {
+        "title": "语言设置",
+        "description": "你可以随时切换应用语言。"
+      },
+      "permissions": {
+        "title": "权限配置",
+        "description": "在 macOS 上，必须同时开启“屏幕录制”和“辅助功能”权限，否则 Mnemora 无法实现屏幕感知。"
+      },
+      "llmConfig": {
+        "title": "LLM 配置",
+        "description": "配置用于分析的模型端点和 API Key。"
+      },
+      "captureSources": {
+        "title": "采集源设置",
+        "description": "选择允许采集的屏幕和窗口。"
+      },
+      "theme": {
+        "title": "外观主题",
+        "description": "可选择亮色、暗色或跟随系统。"
+      },
+      "replay": {
+        "title": "重看引导",
+        "description": "需要时可随时重新开始这套引导流程。"
+      }
+    },
+    "replay": {
+      "label": "新手引导",
+      "description": "重新开始首页 + 设置页的完整引导。",
+      "action": "重新开始"
+    }
+  },
   "notFound": {
     "pageNotFound": "页面未找到",
     "backToHome": "返回首页"

@@ -58,6 +58,7 @@ export const IPC_CHANNELS = {
   USER_SETTINGS_GET: "user-settings:get",
   USER_SETTINGS_UPDATE: "user-settings:update",
   USER_SETTINGS_SET_CAPTURE_OVERRIDE: "user-settings:set-capture-override",
+  USER_SETTINGS_SET_ONBOARDING_PROGRESS: "user-settings:set-onboarding-progress",
   // Threads / Active Thread Lens channels
   THREADS_GET_ACTIVE_STATE: "threads:get-active-state",
   THREADS_GET_ACTIVE_CANDIDATES: "threads:get-active-candidates",

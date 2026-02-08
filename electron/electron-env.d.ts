@@ -332,4 +332,18 @@ interface Window {
       >
     >;
   };
+  bootApi: {
+    getStatus(): Promise<
+      import("../shared/ipc-types").IPCResult<import("../shared/ipc-types").BootStatus>
+    >;
+    onStatusChanged(
+      callback: (status: import("../shared/ipc-types").BootStatus) => void
+    ): () => void;
+    onFtsHealthChanged(
+      callback: (health: import("../shared/ipc-types").FtsHealthDetails) => void
+    ): () => void;
+    retryFtsRepair(): Promise<
+      import("../shared/ipc-types").IPCResult<{ success: boolean; error?: string }>
+    >;
+  };
 }

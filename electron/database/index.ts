@@ -18,7 +18,6 @@ class DatabaseService {
   private readonly logger = getLogger("database");
   private db: DrizzleDB | null = null;
   private sqlite: Database.Database | null = null;
-  private recoveringFromCorruption = false;
 
   private constructor() {
     // Private constructor to enforce singleton pattern
@@ -43,8 +42,19 @@ class DatabaseService {
   }
 
   /**
+   * Get the raw SQLite instance
+   * Used by FTS health service for direct SQLite operations
+   */
+  getSqlite(): Database.Database | null {
+    return this.sqlite;
+  }
+
+  /**
    * Initialize the database connection
    * Creates the database file if it doesn't exist and runs migrations
+   *
+   * Note: FTS5 health checks are handled separately in the boot process
+   * to allow for non-blocking recovery and graceful degradation.
    */
   initialize(): DrizzleDB {
     if (this.db) {
@@ -60,54 +70,7 @@ class DatabaseService {
       fs.mkdirSync(dbDir, { recursive: true });
     }
 
-    try {
-      this.openAndInitialize(dbPath);
-    } catch (error) {
-      if (!this.isSqliteCorruptionError(error)) {
-        throw error;
-      }
-
-      this.logger.error({ error, dbPath }, "SQLite corruption detected during initialization");
-      const recovered = this.recoverFromCorruption(error, "database.initialize");
-      if (!recovered) {
-        throw error;
-      }
-
-      this.openAndInitialize(dbPath);
-    }
-
-    this.logger.info("Database initialized successfully");
-    return this.db!;
-  }
-
-  recoverFromCorruption(error: unknown, source: string): boolean {
-    if (this.recoveringFromCorruption) {
-      this.logger.warn({ source }, "Database corruption recovery already in progress");
-      return false;
-    }
-
-    this.recoveringFromCorruption = true;
-    const dbPath = this.getPath();
-    try {
-      this.close();
-      const backupDir = this.rotateCorruptedDatabaseFiles(dbPath);
-      this.logger.error(
-        { source, dbPath, backupDir, error },
-        "Recovered from SQLite corruption by rotating corrupted database files"
-      );
-      return true;
-    } catch (recoveryError) {
-      this.logger.error(
-        { source, dbPath, error, recoveryError },
-        "Failed to recover from SQLite corruption"
-      );
-      return false;
-    } finally {
-      this.recoveringFromCorruption = false;
-    }
-  }
-
-  private openAndInitialize(dbPath: string): void {
+    // Open database connection
     this.sqlite = new Database(dbPath);
 
     // Enable WAL mode for better performance
@@ -116,61 +79,14 @@ class DatabaseService {
     // Enable foreign keys
     this.sqlite.pragma("foreign_keys = ON");
 
-    this.assertDatabaseIntegrity(this.sqlite);
-
     // Create Drizzle instance with schema
     this.db = drizzle(this.sqlite, { schema });
 
     // Run migrations
     this.runMigrations();
-  }
 
-  private assertDatabaseIntegrity(sqlite: Database.Database): void {
-    const quickCheck = sqlite.prepare("PRAGMA quick_check(1);").pluck().get();
-    if (quickCheck !== "ok") {
-      throw new Error(`SQLite quick_check failed: ${String(quickCheck)}`);
-    }
-  }
-
-  private rotateCorruptedDatabaseFiles(dbPath: string): string {
-    const dbDir = path.dirname(dbPath);
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-    const backupDir = path.join(dbDir, "corrupted-db", `mnemora-${timestamp}`);
-    fs.mkdirSync(backupDir, { recursive: true });
-
-    const files = [dbPath, `${dbPath}-wal`, `${dbPath}-shm`];
-    for (const sourcePath of files) {
-      if (!fs.existsSync(sourcePath)) continue;
-      const targetPath = path.join(backupDir, path.basename(sourcePath));
-      try {
-        fs.renameSync(sourcePath, targetPath);
-      } catch {
-        fs.copyFileSync(sourcePath, targetPath);
-        fs.unlinkSync(sourcePath);
-      }
-    }
-
-    return backupDir;
-  }
-
-  private isSqliteCorruptionError(error: unknown): boolean {
-    const code = (error as { code?: unknown } | null)?.code;
-    if (
-      typeof code === "string" &&
-      (code.startsWith("SQLITE_CORRUPT") || code === "SQLITE_NOTADB")
-    ) {
-      return true;
-    }
-
-    const message =
-      error instanceof Error
-        ? error.message
-        : typeof error === "string"
-          ? error
-          : JSON.stringify(error);
-    return /disk image is malformed|SQLITE_CORRUPT|SQLITE_NOTADB|file is not a database/i.test(
-      message
-    );
+    this.logger.info("Database initialized successfully");
+    return this.db;
   }
 
   /**

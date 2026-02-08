@@ -657,5 +657,31 @@
       "memoryAmplified": "记忆，放大。",
       "rememberEverything": "记住一切。"
     }
+  },
+  "boot": {
+    "phase": {
+      "initializing": "正在启动...",
+      "dbInit": "正在准备存储空间...",
+      "ftsCheck": "正在检查搜索功能...",
+      "ftsRebuild": "正在修复搜索功能...",
+      "appInit": "正在加载应用...",
+      "ready": "准备就绪",
+      "degraded": "应用已启动（搜索功能受限）",
+      "failed": "启动失败，请重启"
+    },
+    "warning": {
+      "degraded": "搜索功能受限，OCR 可能不可用。"
+    },
+    "error": {
+      "failed": "初始化失败，请重启应用。"
+    },
+    "settings": {
+      "ftsDegraded": "全文搜索索引已损坏",
+      "ftsDegradedDescription": "OCR 和搜索功能暂时不可用。您可以尝试修复索引。",
+      "repairFts": "修复搜索索引",
+      "repairing": "正在修复...",
+      "repairSuccess": "搜索索引修复成功",
+      "repairFailed": "搜索索引修复失败"
+    }
   }
 }

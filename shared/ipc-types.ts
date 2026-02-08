@@ -108,6 +108,11 @@ export const IPC_CHANNELS = {
   // Screen Capture Real-time events
   SCREEN_CAPTURE_CAPTURING_STARTED: "screen-capture:capturing-started",
   SCREEN_CAPTURE_CAPTURING_FINISHED: "screen-capture:capturing-finished",
+  // Boot status channels
+  BOOT_GET_STATUS: "boot:get-status",
+  BOOT_STATUS_CHANGED: "boot:status-changed",
+  BOOT_RETRY_FTS_REPAIR: "boot:retry-fts-repair",
+  BOOT_FTS_HEALTH_CHANGED: "boot:fts-health-changed",
 } as const;
 
 /**
@@ -197,6 +202,54 @@ export interface AppUpdateTitleBarPayload {
 }
 
 export type IPCChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
+
+/**
+ * Boot Status Types
+ */
+export type BootPhase =
+  | "db-init"
+  | "fts-check"
+  | "fts-rebuild"
+  | "app-init"
+  | "ready"
+  | "degraded"
+  | "failed";
+
+export interface BootStatus {
+  phase: BootPhase;
+  progress: number;
+  messageKey: string;
+  errorCode?: string;
+  errorMessage?: string;
+  timestamp: number;
+}
+
+export type FtsHealthStatus = "healthy" | "rebuilding" | "degraded" | "unknown";
+
+export interface FtsStartupResult {
+  status: FtsHealthStatus;
+  durationMs: number;
+  checkAttempts: number;
+  rebuildPerformed: boolean;
+  error?: string;
+  errorCode?: string;
+}
+
+export interface FtsHealthDetails {
+  status: FtsHealthStatus;
+  lastCheckAt: number | null;
+  lastRebuildAt: number | null;
+  rebuildAttempts: number;
+  isUsable: boolean;
+}
+
+/**
+ * Boot Status IPC Types
+ */
+export type BootGetStatusResult = IPCResult<BootStatus>;
+export type BootStatusChangedPayload = BootStatus;
+export type BootRetryFtsRepairResult = IPCResult<{ success: boolean; error?: string }>;
+export type BootFtsHealthChangedPayload = FtsHealthDetails;
 
 /**
  * Convert Error to IPCError

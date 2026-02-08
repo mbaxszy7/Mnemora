@@ -389,4 +389,116 @@ describe("FtsHealthService", () => {
       );
     });
   });
+
+  describe("trigger normalization failure", () => {
+    it("logs warning when trigger normalization fails but continues check", async () => {
+      // Mock hasFtsTable returning true (table exists)
+      // But trigger creation fails
+      let callCount = 0;
+      const mockPrepare = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes("sqlite_master")) {
+          return { get: vi.fn().mockReturnValue({ present: 1 }) };
+        }
+        if (sql.includes("DROP TRIGGER") || sql.includes("CREATE TRIGGER")) {
+          throw new Error("Permission denied: cannot create trigger");
+        }
+        if (sql.includes("COUNT(*)")) {
+          return { get: vi.fn().mockReturnValue({ count: 1 }) };
+        }
+        if (sql.includes("COALESCE(ocr_text")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
+        // integrity-check and rebuild
+        return {
+          run: vi.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) {
+              throw new Error("FTS5 integrity check failed");
+            }
+            return {};
+          }),
+        };
+      });
+      (mockSqlite.prepare as ReturnType<typeof vi.fn>) = mockPrepare;
+
+      const result = await ftsHealthService.runStartupCheckAndHeal(mockSqlite);
+
+      // Should log warning about trigger normalization failure
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.stringContaining("Permission denied") }),
+        "Failed to normalize FTS triggers before health check"
+      );
+      // Should still attempt the full check flow
+      expect(result.checkAttempts).toBeGreaterThan(0);
+    });
+  });
+
+  describe("unexpected error handling", () => {
+    it("returns degraded when unexpected error occurs during check", async () => {
+      // Mock prepare to throw an error that bypasses inner error handling
+      // This happens when prepare itself throws (not run/get)
+      const mockPrepare = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes("sqlite_master")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
+        if (sql.includes("COUNT(*)")) {
+          return { get: vi.fn().mockReturnValue({ count: 1 }) };
+        }
+        if (sql.includes("integrity-check") || sql.includes("rebuild")) {
+          // Return an object with run that throws
+          return {
+            run: vi.fn().mockImplementation(() => {
+              throw new Error("Unexpected system error");
+            }),
+          };
+        }
+        throw new Error("Unexpected prepare error");
+      });
+      (mockSqlite.prepare as ReturnType<typeof vi.fn>) = mockPrepare;
+
+      const result = await ftsHealthService.runStartupCheckAndHeal(mockSqlite);
+
+      expect(result.status).toBe("degraded");
+      // Inner error handling returns FTS_REBUILD_FAILED for integrity check errors
+      expect(result.errorCode).toBe("FTS_REBUILD_FAILED");
+      expect(result.error).toContain("Unexpected system error");
+    });
+
+    it("returns degraded with rebuildPerformed true when error occurs after rebuild", async () => {
+      let callCount = 0;
+      const mockPrepare = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes("sqlite_master")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
+        if (sql.includes("COUNT(*)")) {
+          return { get: vi.fn().mockReturnValue({ count: 1 }) };
+        }
+        if (sql.includes("COALESCE(ocr_text")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
+        return {
+          run: vi.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) {
+              throw new Error("First check failed");
+            }
+            if (callCount === 2) {
+              // Rebuild succeeds
+              return {};
+            }
+            // Second check throws unexpected error
+            throw new Error("Unexpected error during recheck");
+          }),
+        };
+      });
+      (mockSqlite.prepare as ReturnType<typeof vi.fn>) = mockPrepare;
+
+      const result = await ftsHealthService.runStartupCheckAndHeal(mockSqlite);
+
+      expect(result.status).toBe("degraded");
+      expect(result.rebuildPerformed).toBe(true);
+      // When rebuild succeeds but recheck fails, errorCode is FTS_CHECK_FAILED_AFTER_REBUILD
+      expect(result.errorCode).toBe("FTS_CHECK_FAILED_AFTER_REBUILD");
+    });
+  });
 });

@@ -214,6 +214,71 @@ describe("OcrService", () => {
       expect(mockCreateWorker).toHaveBeenCalledTimes(1);
     });
 
+    it("creates new worker when max not reached and all busy", async () => {
+      // Set concurrency to 2 so we can create 2 workers
+      // First warmup creates 1 worker
+      await service.warmup();
+      expect(mockCreateWorker).toHaveBeenCalledTimes(1);
+
+      // Start first recognize call (uses existing worker)
+      const firstPromise = service.recognize({ filePath: "/tmp/test1.png" });
+
+      // Start second recognize call - should create second worker since max not reached
+      // and first worker is busy
+      const secondPromise = service.recognize({ filePath: "/tmp/test2.png" });
+
+      await Promise.all([firstPromise, secondPromise]);
+
+      // Should have created second worker
+      expect(mockCreateWorker).toHaveBeenCalledTimes(2);
+    });
+
+    it("handles zero dimensions in text region", async () => {
+      mockSharp.mockReturnValueOnce({
+        metadata: vi.fn().mockResolvedValue({ width: 1920, height: 1080 }),
+        extract: vi.fn().mockReturnThis(),
+        greyscale: vi.fn().mockReturnThis(),
+        normalize: vi.fn().mockReturnThis(),
+        sharpen: vi.fn().mockReturnThis(),
+        linear: vi.fn().mockReturnThis(),
+        toBuffer: vi.fn().mockResolvedValue(Buffer.from("processed")),
+      });
+
+      const textRegion: NonNullable<KnowledgePayload["textRegion"]> = {
+        box: { top: 0, left: 0, width: 0, height: 0 }, // Zero dimensions
+      };
+
+      const result = await service.recognize({
+        filePath: "/tmp/test.png",
+        textRegion,
+      });
+
+      expect(result.text).toBe("Extracted text content");
+    });
+
+    it("handles negative dimensions from clamping", async () => {
+      mockSharp.mockReturnValueOnce({
+        metadata: vi.fn().mockResolvedValue({ width: 100, height: 100 }),
+        extract: vi.fn().mockReturnThis(),
+        greyscale: vi.fn().mockReturnThis(),
+        normalize: vi.fn().mockReturnThis(),
+        sharpen: vi.fn().mockReturnThis(),
+        linear: vi.fn().mockReturnThis(),
+        toBuffer: vi.fn().mockResolvedValue(Buffer.from("processed")),
+      });
+
+      const textRegion: NonNullable<KnowledgePayload["textRegion"]> = {
+        box: { top: 50, left: 50, width: 200, height: 200 }, // Exceeds image size
+      };
+
+      const result = await service.recognize({
+        filePath: "/tmp/test.png",
+        textRegion,
+      });
+
+      expect(result.text).toBe("Extracted text content");
+    });
+
     it("handles recognize errors", async () => {
       mockWorker.recognize.mockRejectedValueOnce(new Error("Recognition failed"));
 

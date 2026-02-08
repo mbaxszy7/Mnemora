@@ -8,6 +8,12 @@ export {
   IPC_CHANNELS,
   type IPCChannel,
   toIPCError,
+  // Boot status types
+  type BootPhase,
+  type BootStatus,
+  type FtsHealthStatus,
+  type FtsStartupResult,
+  type FtsHealthDetails,
 } from "./ipc-types";
 
 // LLM Configuration Types

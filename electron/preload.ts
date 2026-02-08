@@ -1,5 +1,11 @@
 import { ipcRenderer, contextBridge } from "electron";
-import { IPC_CHANNELS, IPCResult, type MonitoringOpenDashboardResult } from "@shared/ipc-types";
+import {
+  IPC_CHANNELS,
+  IPCResult,
+  type MonitoringOpenDashboardResult,
+  type BootStatus,
+  type FtsHealthDetails,
+} from "@shared/ipc-types";
 import type { SupportedLanguage } from "@shared/i18n-types";
 import type {
   LLMConfig,
@@ -593,3 +599,41 @@ const monitoringApi: MonitoringApi = {
 };
 
 contextBridge.exposeInMainWorld("monitoringApi", monitoringApi);
+
+// --------- Expose Boot Status API ---------
+export interface BootApi {
+  getStatus(): Promise<IPCResult<BootStatus>>;
+  onStatusChanged(callback: (status: BootStatus) => void): () => void;
+  onFtsHealthChanged(callback: (health: FtsHealthDetails) => void): () => void;
+  retryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>>;
+}
+
+const bootApi: BootApi = {
+  async getStatus(): Promise<IPCResult<BootStatus>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.BOOT_GET_STATUS);
+  },
+
+  onStatusChanged(callback: (status: BootStatus) => void) {
+    const subscription = (_event: unknown, status: BootStatus) => callback(status);
+    ipcRenderer.on(IPC_CHANNELS.BOOT_STATUS_CHANGED, subscription);
+
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.BOOT_STATUS_CHANGED, subscription);
+    };
+  },
+
+  onFtsHealthChanged(callback: (health: FtsHealthDetails) => void) {
+    const subscription = (_event: unknown, health: FtsHealthDetails) => callback(health);
+    ipcRenderer.on(IPC_CHANNELS.BOOT_FTS_HEALTH_CHANGED, subscription);
+
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.BOOT_FTS_HEALTH_CHANGED, subscription);
+    };
+  },
+
+  async retryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.BOOT_RETRY_FTS_REPAIR);
+  },
+};
+
+contextBridge.exposeInMainWorld("bootApi", bootApi);

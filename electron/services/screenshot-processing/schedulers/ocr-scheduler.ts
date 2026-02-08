@@ -6,6 +6,7 @@ import { BaseScheduler } from "./base-scheduler";
 import { processingConfig } from "../config";
 import { safeDeleteCaptureFile } from "../../screen-capture/capture-storage";
 import { ocrService } from "../ocr-service";
+import { ftsHealthService } from "../../fts-health-service";
 import type { KnowledgePayload } from "../types";
 
 const logger = getLogger("ocr-scheduler");
@@ -21,10 +22,29 @@ export class OcrScheduler extends BaseScheduler {
 
   start(): void {
     if (this.isRunning) return;
+
+    // Check if FTS is usable before starting
+    if (!ftsHealthService.isFtsUsable()) {
+      logger.warn("OCR scheduler not starting - FTS is not usable (degraded mode)");
+      this.emit("scheduler:degraded", {
+        scheduler: this.name,
+        timestamp: Date.now(),
+        reason: "FTS5 unavailable",
+      });
+      return;
+    }
+
     this.isRunning = true;
     logger.info("OCR scheduler started");
     this.emit("scheduler:started", { scheduler: this.name, timestamp: Date.now() });
     this.scheduleSoon();
+  }
+
+  /**
+   * Check if scheduler can start (FTS is healthy)
+   */
+  canStart(): boolean {
+    return ftsHealthService.isFtsUsable();
   }
 
   stop(): void {
@@ -84,11 +104,7 @@ export class OcrScheduler extends BaseScheduler {
       return row.nextRunAt ?? now;
     } catch (error) {
       if (isSqliteCorruptionError(error)) {
-        logger.error(
-          { error, scheduler: this.name },
-          "SQLite corruption detected while computing next OCR run; stopping OCR scheduler"
-        );
-        this.stop();
+        this.handleSqliteCorruption(error, "computing next OCR run");
         return null;
       }
       throw error;
@@ -130,11 +146,7 @@ export class OcrScheduler extends BaseScheduler {
       cycleError = error instanceof Error ? error.message : String(error);
       logger.error({ error }, "Error in OCR scheduler cycle");
       if (isSqliteCorruptionError(error)) {
-        logger.error(
-          { error, scheduler: this.name },
-          "SQLite corruption detected during OCR cycle; stopping OCR scheduler"
-        );
-        this.stop();
+        this.handleSqliteCorruption(error, "OCR cycle");
       }
     } finally {
       this.emit("scheduler:cycle:end", {
@@ -209,11 +221,7 @@ export class OcrScheduler extends BaseScheduler {
     } catch (error) {
       logger.error({ error }, "Failed to recover stale OCR screenshots");
       if (isSqliteCorruptionError(error)) {
-        logger.error(
-          { error, scheduler: this.name },
-          "SQLite corruption detected while recovering stale OCR screenshots; stopping OCR scheduler"
-        );
-        this.stop();
+        this.handleSqliteCorruption(error, "recovering stale OCR screenshots");
       }
     }
   }
@@ -385,11 +393,7 @@ export class OcrScheduler extends BaseScheduler {
         logger.error(payload, "OCR processing failed");
 
         if (isSqliteCorruptionError(error)) {
-          logger.error(
-            { error, scheduler: this.name, screenshotId: record.id },
-            "SQLite corruption detected; stopping OCR scheduler"
-          );
-          this.stop();
+          this.handleSqliteCorruption(error, "processing OCR result", record.id, attempts);
           return;
         }
 
@@ -397,11 +401,7 @@ export class OcrScheduler extends BaseScheduler {
       }
     } catch (error) {
       if (isSqliteCorruptionError(error)) {
-        logger.error(
-          { error, scheduler: this.name, screenshotId: record.id },
-          "SQLite corruption detected; stopping OCR scheduler"
-        );
-        this.stop();
+        this.handleSqliteCorruption(error, "claiming OCR screenshot", record.id, attempts);
         return;
       }
       throw error;
@@ -426,11 +426,7 @@ export class OcrScheduler extends BaseScheduler {
         .run();
     } catch (error) {
       if (isSqliteCorruptionError(error)) {
-        logger.error(
-          { error, scheduler: this.name, screenshotId: id },
-          "SQLite corruption detected while updating OCR status; stopping OCR scheduler"
-        );
-        this.stop();
+        this.handleSqliteCorruption(error, "updating OCR failure status", id, attempts);
         return;
       }
       throw error;
@@ -475,6 +471,55 @@ export class OcrScheduler extends BaseScheduler {
       return null;
     }
   }
+
+  private handleSqliteCorruption(
+    error: unknown,
+    context: string,
+    screenshotId?: number,
+    attempts?: number
+  ): void {
+    if (screenshotId != null) {
+      this.requeueScreenshotAfterCorruption(screenshotId, attempts);
+    }
+
+    logger.error(
+      { error, scheduler: this.name, context, screenshotId },
+      "SQLite corruption detected in OCR scheduler"
+    );
+
+    // Stop the scheduler - FTS5 health is handled by the main process
+    // User can retry repair from settings if needed
+    this.stop();
+    this.emit("scheduler:degraded", {
+      scheduler: this.name,
+      timestamp: Date.now(),
+      reason: `FTS5 corruption in ${context}`,
+    });
+  }
+
+  private requeueScreenshotAfterCorruption(screenshotId: number, attempts?: number): void {
+    const db = getDb();
+    const now = Date.now();
+    const nextRunAt = now + processingConfig.retry.delayMs;
+    const normalizedAttempts = Math.max(1, attempts ?? 1);
+
+    try {
+      db.update(screenshots)
+        .set({
+          ocrStatus: "failed",
+          ocrAttempts: normalizedAttempts,
+          ocrNextRunAt: nextRunAt,
+          updatedAt: now,
+        })
+        .where(and(eq(screenshots.id, screenshotId), eq(screenshots.ocrStatus, "running")))
+        .run();
+    } catch (requeueError) {
+      logger.warn(
+        { requeueError, screenshotId, scheduler: this.name },
+        "Failed to requeue OCR screenshot after corruption"
+      );
+    }
+  }
 }
 
 function isSqliteCorruptionError(error: unknown): boolean {
@@ -486,11 +531,13 @@ function isSqliteCorruptionError(error: unknown): boolean {
         : JSON.stringify(error);
   const code = (error as { code?: unknown } | null)?.code;
 
-  if (code === "SQLITE_CORRUPT") {
+  if (typeof code === "string" && (code.startsWith("SQLITE_CORRUPT") || code === "SQLITE_NOTADB")) {
     return true;
   }
 
-  return /disk image is malformed|SQLITE_CORRUPT|file is not a database/i.test(message);
+  return /disk image is malformed|SQLITE_CORRUPT|SQLITE_NOTADB|file is not a database/i.test(
+    message
+  );
 }
 
 export const ocrScheduler = new OcrScheduler();

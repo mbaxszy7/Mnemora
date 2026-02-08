@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, nativeImage, screen } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, screen, ipcMain } from "electron";
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
@@ -30,6 +30,8 @@ import { monitoringServer } from "./services/monitoring";
 import { userSettingService } from "./services/user-setting-service";
 import { notificationService } from "./services/notification/notification-service";
 import { appUpdateService } from "./services/app-update-service";
+import { ftsHealthService } from "./services/fts-health-service";
+import type { BootMessageKey, BootPhase, BootStatus, IPCResult } from "../shared/ipc-types";
 
 // ============================================================================
 // Environment Setup
@@ -39,9 +41,6 @@ process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
 
 if (process.platform === "win32") {
-  // Windows toast header (and icon association) is based on AppUserModelID.
-  // In dev, if no Start Menu shortcut exists, Windows may display the raw AUMID string.
-  // Use a friendly ID in dev so it shows "Mnemora" instead of "com.mnemora.app".
   app.setAppUserModelId(app.isPackaged ? "com.mnemora.app" : "Mnemora");
 }
 
@@ -49,11 +48,9 @@ if (process.platform === "win32") {
 // Single Instance Lock (production only)
 // ============================================================================
 
-// Skip single instance lock in dev mode to allow HMR to restart Electron
 const gotTheLock = isDev ? true : app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
-  // Another instance is already running, quit this one
   app.quit();
 }
 
@@ -68,6 +65,7 @@ class AppLifecycleController {
   private isQuitting = false;
   private started = false;
   private disposed = false;
+  private latestBootStatus: BootStatus | null = null;
 
   focusMainWindow(): void {
     const win = this.mainWindow;
@@ -78,14 +76,8 @@ class AppLifecycleController {
   }
 
   async start(): Promise<void> {
-    if (this.started) {
-      return;
-    }
+    if (this.started) return;
     this.started = true;
-
-    // app.on("window-all-closed", () => {
-    //   // Keep app running in tray; do not quit on window closed
-    // });
 
     app.on("before-quit", () => {
       this.isQuitting = true;
@@ -93,11 +85,10 @@ class AppLifecycleController {
     });
 
     app.on("activate", () => {
-      // macOS: Show existing window or create new one when dock icon is clicked
       if (this.mainWindow) {
         this.mainWindow.show();
       } else if (BrowserWindow.getAllWindows().length === 0) {
-        this.mainWindow = this.createMainWindow();
+        void this.createAndBoot();
       }
     });
 
@@ -106,13 +97,18 @@ class AppLifecycleController {
 
     initializeLogger();
     this.logger = getLogger("main");
-    this.logger.info("App is ready, initializing...");
+    this.logger.info("App is ready, starting boot sequence...");
 
     appUpdateService.initialize();
-    await this.initializeApp();
+    await this.createAndBoot();
+  }
 
+  /**
+   * Create window and start boot sequence
+   */
+  private async createAndBoot(): Promise<void> {
+    // 1. Create main window immediately (showing splash)
     this.mainWindow = this.createMainWindow();
-    this.warmupOcrOnSplash();
     this.trayService = TrayService.getInstance();
     this.trayService
       .configure({
@@ -127,98 +123,204 @@ class AppLifecycleController {
         },
       })
       .init();
-    this.logger.info("Main window created");
+
+    // 2. Register boot-related IPC handlers
+    this.registerBootHandlers();
+
+    // 3. Run boot sequence in background
+    void this.runBootSequence();
   }
 
-  private warmupOcrOnSplash(): void {
-    setTimeout(() => {
-      void this.tryWarmupOcrService();
-    }, 0);
+  /**
+   * Register IPC handlers for boot status
+   */
+  private registerBootHandlers(): void {
+    ipcMain.handle("boot:get-status", () => this.getCurrentBootStatus());
+    ipcMain.handle("boot:retry-fts-repair", () => this.handleRetryFtsRepair());
+  }
+
+  /**
+   * Get current boot status
+   */
+  private getCurrentBootStatus(): IPCResult<BootStatus> {
+    const status: BootStatus = this.latestBootStatus ?? {
+      phase: "db-init",
+      progress: 0,
+      messageKey: "boot.phase.dbInit",
+      timestamp: Date.now(),
+    };
+    return { success: true, data: status };
+  }
+
+  /**
+   * Emit boot status to all listeners
+   */
+  private emitBootStatus(phase: BootPhase, error?: { code: string; message: string }): void {
+    const progress = this.getPhaseProgress(phase);
+    const status: BootStatus = {
+      phase,
+      progress,
+      messageKey: this.getPhaseI18nKey(phase),
+      timestamp: Date.now(),
+      ...(error && { errorCode: error.code, errorMessage: error.message }),
+    };
+
+    this.latestBootStatus = status;
+    this.logger.debug({ phase, progress }, "Boot status changed");
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send("boot:status-changed", status);
+    }
+  }
+
+  /**
+   * Emit FTS health to renderer
+   */
+  private emitFtsHealth(): void {
+    const health = ftsHealthService.getDetails();
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send("boot:fts-health-changed", health);
+    }
+  }
+
+  /**
+   * Get progress for a boot phase
+   */
+  private getPhaseProgress(phase: BootPhase): number {
+    const progressMap: Record<BootPhase, number> = {
+      "db-init": 15,
+      "fts-check": 35,
+      "fts-rebuild": 70,
+      "app-init": 90,
+      ready: 100,
+      degraded: 100,
+      failed: 100,
+    };
+    return progressMap[phase];
+  }
+
+  /**
+   * Get i18n key for a boot phase
+   */
+  private getPhaseI18nKey(phase: BootPhase): BootMessageKey {
+    const keyMap: Record<BootPhase, BootMessageKey> = {
+      "db-init": "boot.phase.dbInit",
+      "fts-check": "boot.phase.ftsCheck",
+      "fts-rebuild": "boot.phase.ftsRebuild",
+      "app-init": "boot.phase.appInit",
+      ready: "boot.phase.ready",
+      degraded: "boot.phase.degraded",
+      failed: "boot.phase.failed",
+    };
+    return keyMap[phase];
+  }
+
+  /**
+   * Run the boot sequence
+   */
+  private async runBootSequence(): Promise<void> {
+    try {
+      // Phase 1: Database initialization
+      this.emitBootStatus("db-init");
+      this.registerIPCHandlers();
+      this.initDatabaseService();
+
+      // Phase 2: FTS5 health check
+      this.emitBootStatus("fts-check");
+      const sqlite = databaseService.getSqlite();
+      if (sqlite) {
+        const ftsResult = await ftsHealthService.runStartupCheckAndHeal(sqlite, () => {
+          this.emitBootStatus("fts-rebuild");
+        });
+        this.emitFtsHealth();
+
+        // Phase 3: App services initialization
+        this.emitBootStatus("app-init");
+        await this.initializeAppServices();
+
+        // Final phase: ready or degraded
+        if (ftsResult.status === "healthy") {
+          this.emitBootStatus("ready");
+        } else {
+          this.emitBootStatus("degraded", {
+            code: ftsResult.errorCode || "FTS_UNHEALTHY",
+            message: ftsResult.error || "FTS5 is unavailable",
+          });
+        }
+      } else {
+        throw new Error("Database not initialized");
+      }
+    } catch (error) {
+      this.logger.error({ error }, "Boot sequence failed");
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.emitBootStatus("failed", {
+        code: "BOOT_FAILED",
+        message: errorMessage,
+      });
+    }
+  }
+
+  /**
+   * Handle manual FTS repair retry
+   */
+  private async handleRetryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>> {
+    try {
+      const sqlite = databaseService.getSqlite();
+      if (!sqlite) {
+        return { success: true, data: { success: false, error: "Database not available" } };
+      }
+
+      const result = await ftsHealthService.retryRepair(sqlite, () => {
+        this.emitBootStatus("fts-rebuild");
+      });
+      this.emitFtsHealth();
+
+      if (result.status === "healthy") {
+        this.emitBootStatus("ready");
+        return { success: true, data: { success: true } };
+      } else {
+        this.emitBootStatus("degraded", {
+          code: result.errorCode || "FTS_RETRY_FAILED",
+          message: result.error || "FTS5 repair failed",
+        });
+        return { success: true, data: { success: false, error: result.error } };
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { success: true, data: { success: false, error: errorMessage } };
+    }
+  }
+
+  /**
+   * Initialize app services (non-critical)
+   */
+  private async initializeAppServices(): Promise<void> {
+    await userSettingService.getSettings();
+    captureScheduleController.initialize({ screenCapture: screenCaptureModule });
+    captureScheduleController.start();
+    await this.initI18nService();
+    notificationService.registerEventBusSubscriptions();
+    await this.initAIService();
+    this.initPowerMonitor();
+    await this.initMonitoringServer();
+
+    // OCR warmup (non-blocking)
+    void this.tryWarmupOcrService();
   }
 
   private async tryWarmupOcrService(): Promise<void> {
+    // Only warm up if FTS is healthy
+    if (!ftsHealthService.isFtsUsable()) {
+      this.logger.info("Skipping OCR warmup - FTS is not usable");
+      return;
+    }
+
     try {
       await screenshotProcessingModule.ocrWarmup();
     } catch (error) {
       this.logger.warn({ error }, "Failed to warm up OCR service");
     }
-  }
-
-  private createMainWindow(): BrowserWindow {
-    const iconBase = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
-    const iconCandidates =
-      process.platform === "win32"
-        ? [path.join(iconBase, "logo.ico"), path.join(iconBase, "logo.png")]
-        : [path.join(iconBase, "logo.png")];
-    const appIconPath = iconCandidates.find((p) => existsSync(p)) ?? iconCandidates[0];
-    const appIcon = nativeImage.createFromPath(appIconPath);
-
-    // Calculate 80% of primary screen size
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-    const windowWidth = Math.round(screenWidth * 0.8);
-    const windowHeight = Math.round(screenHeight * 0.8);
-
-    const win = new BrowserWindow({
-      width: windowWidth,
-      height: windowHeight,
-      show: true,
-      title: app.getName(),
-      icon: process.platform === "win32" ? appIconPath : appIcon,
-      webPreferences: {
-        preload: path.join(MAIN_DIST, "preload.mjs"),
-      },
-      autoHideMenuBar: true,
-      titleBarStyle: process.platform === "darwin" ? "hidden" : "hidden",
-      ...(process.platform === "darwin"
-        ? {
-            trafficLightPosition: {
-              x: 12,
-              y: 10,
-            },
-          }
-        : {}),
-      titleBarOverlay:
-        process.platform === "win32"
-          ? {
-              color: "#00000000",
-              symbolColor: "#999999",
-              height: 36,
-            }
-          : false,
-    });
-
-    // Set dock icon on macOS in development (packaged apps use the bundle icon).
-    if (process.platform === "darwin" && app.dock && !app.isPackaged) {
-      app.dock.setIcon(appIcon);
-    }
-
-    // All platforms: hide window instead of closing when user clicks close button
-    win.on("close", (event) => {
-      if (!this.isQuitting) {
-        event.preventDefault();
-        win.hide();
-      }
-    });
-
-    win.on("closed", () => {
-      if (this.mainWindow === win) {
-        this.mainWindow = null;
-      }
-    });
-
-    win.webContents.on("did-finish-load", () => {
-      win.setTitle(app.getName());
-      win.webContents.send("main-process-message", new Date().toLocaleString());
-    });
-
-    if (VITE_DEV_SERVER_URL) {
-      win.loadURL(VITE_DEV_SERVER_URL);
-    } else {
-      win.loadFile(path.join(RENDERER_DIST, "index.html"));
-    }
-
-    return win;
   }
 
   private async initI18nService(): Promise<void> {
@@ -260,12 +362,11 @@ class AppLifecycleController {
       this.logger.info("Database service initialized");
     } catch (error) {
       this.logger.error({ error }, "Failed to initialize database service");
-      throw error; // Database is critical, rethrow to prevent app start
+      throw error;
     }
   }
 
   private registerIPCHandlers(): void {
-    // Clean up existing handlers for hot reload (dev mode only)
     if (isDev) {
       IPCHandlerRegistry.getInstance().unregisterAll();
       this.logger.debug("Cleaned up existing IPC handlers for hot reload");
@@ -287,6 +388,7 @@ class AppLifecycleController {
     registerNotificationHandlers();
     this.logger.info("IPC handlers registered");
   }
+
   private initPowerMonitor(): void {
     try {
       powerMonitorService.initialize();
@@ -310,29 +412,83 @@ class AppLifecycleController {
     }
   }
 
-  private async initializeApp(): Promise<void> {
-    // 1. Register IPC handlers first (before any async operations)
-    this.registerIPCHandlers();
-    // 2. Initialize database (critical, must succeed)
-    this.initDatabaseService();
-    await userSettingService.getSettings();
-    captureScheduleController.initialize({ screenCapture: screenCaptureModule });
-    captureScheduleController.start();
-    // 3. Initialize i18n (required before UI)
-    await this.initI18nService();
-    notificationService.registerEventBusSubscriptions();
-    // 4. Initialize AI service from database (non-critical, can fail gracefully)
-    await this.initAIService();
-    // 5. Initialize power monitor (non-critical)
-    this.initPowerMonitor();
-    // 6. Initialize monitoring server (dev only)
-    await this.initMonitoringServer();
+  private createMainWindow(): BrowserWindow {
+    const iconBase = app.isPackaged ? RENDERER_DIST : path.join(APP_ROOT, "public");
+    const iconCandidates =
+      process.platform === "win32"
+        ? [path.join(iconBase, "logo.ico"), path.join(iconBase, "logo.png")]
+        : [path.join(iconBase, "logo.png")];
+    const appIconPath = iconCandidates.find((p) => existsSync(p)) ?? iconCandidates[0];
+    const appIcon = nativeImage.createFromPath(appIconPath);
+
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    const windowWidth = Math.round(screenWidth * 0.8);
+    const windowHeight = Math.round(screenHeight * 0.8);
+
+    const win = new BrowserWindow({
+      width: windowWidth,
+      height: windowHeight,
+      show: true,
+      title: app.getName(),
+      icon: process.platform === "win32" ? appIconPath : appIcon,
+      webPreferences: {
+        preload: path.join(MAIN_DIST, "preload.mjs"),
+      },
+      autoHideMenuBar: true,
+      titleBarStyle: process.platform === "darwin" ? "hidden" : "hidden",
+      ...(process.platform === "darwin"
+        ? {
+            trafficLightPosition: {
+              x: 12,
+              y: 10,
+            },
+          }
+        : {}),
+      titleBarOverlay:
+        process.platform === "win32"
+          ? {
+              color: "#00000000",
+              symbolColor: "#999999",
+              height: 36,
+            }
+          : false,
+    });
+
+    if (process.platform === "darwin" && app.dock && !app.isPackaged) {
+      app.dock.setIcon(appIcon);
+    }
+
+    win.on("close", (event) => {
+      if (!this.isQuitting) {
+        event.preventDefault();
+        win.hide();
+      }
+    });
+
+    win.on("closed", () => {
+      if (this.mainWindow === win) {
+        this.mainWindow = null;
+      }
+    });
+
+    win.webContents.on("did-finish-load", () => {
+      win.setTitle(app.getName());
+      win.webContents.send("main-process-message", new Date().toLocaleString());
+    });
+
+    // Load splash page initially
+    const startUrl = VITE_DEV_SERVER_URL
+      ? `${VITE_DEV_SERVER_URL}/splash`
+      : `file://${path.join(RENDERER_DIST, "index.html")}#/splash`;
+
+    void win.loadURL(startUrl);
+
+    return win;
   }
 
   private dispose(): void {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
     this.disposed = true;
 
     TrayService.resetInstance();
@@ -354,7 +510,6 @@ class AppLifecycleController {
 if (gotTheLock) {
   const controller = new AppLifecycleController();
   if (!isDev) {
-    // Handle second instance launch - focus existing window (production only)
     app.on("second-instance", () => {
       controller.focusMainWindow();
     });

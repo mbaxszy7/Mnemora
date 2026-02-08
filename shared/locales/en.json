@@ -653,6 +653,32 @@
       "rememberEverything": "Remember everything."
     }
   },
+  "boot": {
+    "phase": {
+      "initializing": "Starting...",
+      "dbInit": "Preparing storage...",
+      "ftsCheck": "Checking search...",
+      "ftsRebuild": "Repairing search...",
+      "appInit": "Loading app...",
+      "ready": "Ready",
+      "degraded": "App ready (search limited)",
+      "failed": "Failed to start, please restart"
+    },
+    "warning": {
+      "degraded": "Search features limited. OCR may be unavailable."
+    },
+    "error": {
+      "failed": "Failed to initialize. Please restart the app."
+    },
+    "settings": {
+      "ftsDegraded": "Full-text search index is damaged",
+      "ftsDegradedDescription": "OCR and search features are temporarily unavailable. You can try to repair the index.",
+      "repairFts": "Repair Search Index",
+      "repairing": "Repairing...",
+      "repairSuccess": "Search index repaired successfully",
+      "repairFailed": "Failed to repair search index"
+    }
+  },
   "notFound": {
     "pageNotFound": "Page Not Found",
     "backToHome": "Back to Home"

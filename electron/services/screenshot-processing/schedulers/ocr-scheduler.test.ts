@@ -7,6 +7,7 @@ const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
   debug: vi.fn(),
 }));
+const mockRecoverFromCorruption = vi.hoisted(() => vi.fn(() => true));
 
 type DbState = {
   earliestRow: { nextRunAt: number | null } | undefined;
@@ -60,6 +61,9 @@ const mockGetDb = vi.hoisted(() => vi.fn(() => createDb()));
 
 vi.mock("../../../database", () => ({
   getDb: mockGetDb,
+  databaseService: {
+    recoverFromCorruption: mockRecoverFromCorruption,
+  },
 }));
 
 vi.mock("../../../database/schema", () => ({
@@ -149,6 +153,43 @@ describe("OcrScheduler", () => {
       updates: [],
     };
     scheduler = new OcrScheduler();
+  });
+
+  it("recovers database corruption and restarts scheduler", () => {
+    mockRecoverFromCorruption.mockReturnValue(true);
+    scheduler.start();
+
+    (
+      scheduler as unknown as {
+        handleSqliteCorruption: (error: unknown, context: string, screenshotId?: number) => void;
+      }
+    ).handleSqliteCorruption({ code: "SQLITE_CORRUPT_VTAB" }, "unit-test", 1);
+
+    expect(mockRecoverFromCorruption).toHaveBeenCalledWith(
+      { code: "SQLITE_CORRUPT_VTAB" },
+      "ocr-scheduler:unit-test"
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith("OCR scheduler stopped");
+
+    vi.advanceTimersByTime(1500);
+    expect(mockLogger.info).toHaveBeenCalledWith("OCR scheduler started");
+  });
+
+  it("stops scheduler when corruption recovery fails", () => {
+    mockRecoverFromCorruption.mockReturnValue(false);
+    scheduler.start();
+
+    (
+      scheduler as unknown as {
+        handleSqliteCorruption: (error: unknown, context: string, screenshotId?: number) => void;
+      }
+    ).handleSqliteCorruption({ code: "SQLITE_CORRUPT_VTAB" }, "unit-test", 1);
+
+    vi.advanceTimersByTime(1600);
+    const startCallCount = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === "OCR scheduler started"
+    ).length;
+    expect(startCallCount).toBe(1); // only initial start, no restart
   });
 
   it("starts, wakes and stops", () => {

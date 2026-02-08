@@ -1,11 +1,12 @@
 import { eq, and, lt, isNotNull, or, isNull, lte, asc, desc, ne, gte } from "drizzle-orm";
-import { databaseService, getDb } from "../../../database";
+import { getDb } from "../../../database";
 import { contextNodes, contextScreenshotLinks, screenshots } from "../../../database/schema";
 import { getLogger } from "../../logger";
 import { BaseScheduler } from "./base-scheduler";
 import { processingConfig } from "../config";
 import { safeDeleteCaptureFile } from "../../screen-capture/capture-storage";
 import { ocrService } from "../ocr-service";
+import { ftsHealthService } from "../../fts-health-service";
 import type { KnowledgePayload } from "../types";
 
 const logger = getLogger("ocr-scheduler");
@@ -14,7 +15,6 @@ export class OcrScheduler extends BaseScheduler {
   protected name = "OcrScheduler";
   private minDelayMs = 2000;
   private defaultIntervalMs = processingConfig.scheduler.scanIntervalMs;
-  private corruptionRecoveryTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -22,20 +22,35 @@ export class OcrScheduler extends BaseScheduler {
 
   start(): void {
     if (this.isRunning) return;
+
+    // Check if FTS is usable before starting
+    if (!ftsHealthService.isFtsUsable()) {
+      logger.warn("OCR scheduler not starting - FTS is not usable (degraded mode)");
+      this.emit("scheduler:degraded", {
+        scheduler: this.name,
+        timestamp: Date.now(),
+        reason: "FTS5 unavailable",
+      });
+      return;
+    }
+
     this.isRunning = true;
     logger.info("OCR scheduler started");
     this.emit("scheduler:started", { scheduler: this.name, timestamp: Date.now() });
     this.scheduleSoon();
   }
 
+  /**
+   * Check if scheduler can start (FTS is healthy)
+   */
+  canStart(): boolean {
+    return ftsHealthService.isFtsUsable();
+  }
+
   stop(): void {
     if (!this.isRunning) return;
     this.isRunning = false;
     this.clearTimer();
-    if (this.corruptionRecoveryTimer) {
-      clearTimeout(this.corruptionRecoveryTimer);
-      this.corruptionRecoveryTimer = null;
-    }
     logger.info("OCR scheduler stopped");
     this.emit("scheduler:stopped", { scheduler: this.name, timestamp: Date.now() });
   }
@@ -463,21 +478,14 @@ export class OcrScheduler extends BaseScheduler {
       "SQLite corruption detected in OCR scheduler"
     );
 
-    const recovered = databaseService.recoverFromCorruption(error, `ocr-scheduler:${context}`);
+    // Stop the scheduler - FTS5 health is handled by the main process
+    // User can retry repair from settings if needed
     this.stop();
-
-    if (!recovered) {
-      return;
-    }
-
-    this.corruptionRecoveryTimer = setTimeout(() => {
-      this.corruptionRecoveryTimer = null;
-      this.start();
-      logger.warn(
-        { scheduler: this.name, context, screenshotId },
-        "OCR scheduler restarted after SQLite corruption recovery"
-      );
-    }, 1500);
+    this.emit("scheduler:degraded", {
+      scheduler: this.name,
+      timestamp: Date.now(),
+      reason: `FTS5 corruption in ${context}`,
+    });
   }
 }
 

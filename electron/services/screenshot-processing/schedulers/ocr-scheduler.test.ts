@@ -7,7 +7,7 @@ const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
   debug: vi.fn(),
 }));
-const mockRecoverFromCorruption = vi.hoisted(() => vi.fn(() => true));
+const mockIsFtsUsable = vi.hoisted(() => vi.fn(() => true));
 
 type DbState = {
   earliestRow: { nextRunAt: number | null } | undefined;
@@ -61,8 +61,11 @@ const mockGetDb = vi.hoisted(() => vi.fn(() => createDb()));
 
 vi.mock("../../../database", () => ({
   getDb: mockGetDb,
-  databaseService: {
-    recoverFromCorruption: mockRecoverFromCorruption,
+}));
+
+vi.mock("../../fts-health-service", () => ({
+  ftsHealthService: {
+    isFtsUsable: mockIsFtsUsable,
   },
 }));
 
@@ -155,9 +158,15 @@ describe("OcrScheduler", () => {
     scheduler = new OcrScheduler();
   });
 
-  it("recovers database corruption and restarts scheduler", () => {
-    mockRecoverFromCorruption.mockReturnValue(true);
+  it("emits degraded event on database corruption", () => {
+    // Clear mocks to get clean state
+    mockEmit.mockClear();
+    mockLogger.info.mockClear();
+
     scheduler.start();
+
+    // Clear the "started" log from initial start
+    mockLogger.info.mockClear();
 
     (
       scheduler as unknown as {
@@ -165,34 +174,43 @@ describe("OcrScheduler", () => {
       }
     ).handleSqliteCorruption({ code: "SQLITE_CORRUPT_VTAB" }, "unit-test", 1);
 
-    expect(mockRecoverFromCorruption).toHaveBeenCalledWith(
-      { code: "SQLITE_CORRUPT_VTAB" },
-      "ocr-scheduler:unit-test"
+    // Should emit degraded event
+    expect(mockEmit).toHaveBeenCalledWith(
+      "scheduler:degraded",
+      expect.objectContaining({
+        scheduler: "OcrScheduler",
+        reason: expect.stringContaining("FTS5 corruption"),
+      })
     );
     expect(mockLogger.info).toHaveBeenCalledWith("OCR scheduler stopped");
-
-    vi.advanceTimersByTime(1500);
-    expect(mockLogger.info).toHaveBeenCalledWith("OCR scheduler started");
-  });
-
-  it("stops scheduler when corruption recovery fails", () => {
-    mockRecoverFromCorruption.mockReturnValue(false);
-    scheduler.start();
-
-    (
-      scheduler as unknown as {
-        handleSqliteCorruption: (error: unknown, context: string, screenshotId?: number) => void;
-      }
-    ).handleSqliteCorruption({ code: "SQLITE_CORRUPT_VTAB" }, "unit-test", 1);
-
-    vi.advanceTimersByTime(1600);
+    // Should NOT auto-restart anymore (no additional "started" call after stop)
     const startCallCount = mockLogger.info.mock.calls.filter(
       ([msg]) => msg === "OCR scheduler started"
     ).length;
-    expect(startCallCount).toBe(1); // only initial start, no restart
+    expect(startCallCount).toBe(0);
   });
 
-  it("starts, wakes and stops", () => {
+  it("does not start when FTS is not usable", () => {
+    mockIsFtsUsable.mockReturnValue(false);
+    scheduler.start();
+
+    // Should emit degraded event instead of starting
+    expect(mockEmit).toHaveBeenCalledWith(
+      "scheduler:degraded",
+      expect.objectContaining({
+        scheduler: "OcrScheduler",
+        reason: "FTS5 unavailable",
+      })
+    );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "OCR scheduler not starting - FTS is not usable (degraded mode)"
+    );
+    // Should NOT log "started"
+    expect(mockLogger.info).not.toHaveBeenCalledWith("OCR scheduler started");
+  });
+
+  it("starts, wakes and stops when FTS is usable", () => {
+    mockIsFtsUsable.mockReturnValue(true);
     scheduler.start();
     scheduler.wake("manual");
     scheduler.stop();

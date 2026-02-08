@@ -99,6 +99,13 @@
       "when": 1770435400517,
       "tag": "0013_milky_mad_thinker",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1770557935354,
+      "tag": "0014_fix_fts_trigger_delete_command",
+      "breakpoints": true
     }
   ]
 }

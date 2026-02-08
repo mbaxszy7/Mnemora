@@ -31,7 +31,7 @@ import { userSettingService } from "./services/user-setting-service";
 import { notificationService } from "./services/notification/notification-service";
 import { appUpdateService } from "./services/app-update-service";
 import { ftsHealthService } from "./services/fts-health-service";
-import type { BootPhase, BootStatus, IPCResult } from "../shared/ipc-types";
+import type { BootMessageKey, BootPhase, BootStatus, IPCResult } from "../shared/ipc-types";
 
 // ============================================================================
 // Environment Setup
@@ -203,8 +203,8 @@ class AppLifecycleController {
   /**
    * Get i18n key for a boot phase
    */
-  private getPhaseI18nKey(phase: BootPhase): string {
-    const keyMap: Record<BootPhase, string> = {
+  private getPhaseI18nKey(phase: BootPhase): BootMessageKey {
+    const keyMap: Record<BootPhase, BootMessageKey> = {
       "db-init": "boot.phase.dbInit",
       "fts-check": "boot.phase.ftsCheck",
       "fts-rebuild": "boot.phase.ftsRebuild",

@@ -34,6 +34,8 @@ export default function SplashScreen() {
   // Boot status state
   const [bootStatus, setBootStatus] = useState<BootStatus | null>(null);
   const [hasNavigated, setHasNavigated] = useState(false);
+  const mountedAtRef = useRef(Date.now());
+  const minDisplayMs = 6000;
 
   // LLM configuration check state
   const [configCheckResult, setConfigCheckResult] = useState<{
@@ -120,12 +122,18 @@ export default function SplashScreen() {
     if (!configCheckResult.checked) return;
 
     const shouldNavigate = bootStatus.phase === "ready" || bootStatus.phase === "degraded";
+    if (!shouldNavigate) return;
 
-    if (shouldNavigate) {
+    const elapsed = Date.now() - mountedAtRef.current;
+    const remaining = Math.max(0, minDisplayMs - elapsed);
+
+    const timer = setTimeout(() => {
       setHasNavigated(true);
       const target = getNavigationTarget(configCheckResult.configured);
       navigate(target, { type: "splash-fade", duration: 900 });
-    }
+    }, remaining);
+
+    return () => clearTimeout(timer);
   }, [bootStatus, configCheckResult, navigate, hasNavigated]);
 
   // Calculate progress
@@ -136,20 +144,19 @@ export default function SplashScreen() {
 
   // Get status message
   const getStatusMessage = () => {
-    if (!bootStatus) return t("boot.phase.initializing" as "common.messages.loading");
+    if (!bootStatus) return t("boot.phase.initializing");
     if (bootStatus.messageKey) {
-      // Use the messageKey directly - type cast for new translation keys
-      return t(bootStatus.messageKey as "common.messages.loading");
+      return t(bootStatus.messageKey);
     }
     // Map phase to message key with fallback
     const phaseMessages: Record<BootPhase, string> = {
-      "db-init": t("boot.phase.dbInit" as "common.messages.loading"),
-      "fts-check": t("boot.phase.ftsCheck" as "common.messages.loading"),
-      "fts-rebuild": t("boot.phase.ftsRebuild" as "common.messages.loading"),
-      "app-init": t("boot.phase.appInit" as "common.messages.loading"),
-      ready: t("boot.phase.ready" as "common.messages.loading"),
-      degraded: t("boot.phase.degraded" as "common.messages.loading"),
-      failed: t("boot.phase.failed" as "common.messages.loading"),
+      "db-init": t("boot.phase.dbInit"),
+      "fts-check": t("boot.phase.ftsCheck"),
+      "fts-rebuild": t("boot.phase.ftsRebuild"),
+      "app-init": t("boot.phase.appInit"),
+      ready: t("boot.phase.ready"),
+      degraded: t("boot.phase.degraded"),
+      failed: t("boot.phase.failed"),
     };
     return phaseMessages[bootStatus.phase];
   };
@@ -240,15 +247,9 @@ export default function SplashScreen() {
 
             {/* Error indicators */}
             {isDegraded && (
-              <span className="text-xs text-amber-500">
-                {t("boot.warning.degraded" as "common.messages.loading")}
-              </span>
+              <span className="text-xs text-amber-500">{t("boot.warning.degraded")}</span>
             )}
-            {isFailed && (
-              <span className="text-xs text-destructive">
-                {t("boot.error.failed" as "common.messages.loading")}
-              </span>
-            )}
+            {isFailed && <span className="text-xs text-destructive">{t("boot.error.failed")}</span>}
           </div>
         </motion.div>
       )}

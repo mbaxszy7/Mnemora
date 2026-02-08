@@ -151,6 +151,9 @@ describe("FtsHealthService", () => {
         if (sql.includes("COUNT(*)")) {
           return { get: vi.fn().mockReturnValue({ count: 1 }) };
         }
+        if (sql.includes("COALESCE(ocr_text")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
         return { run: vi.fn().mockReturnValue({}) };
       });
       (mockSqlite.prepare as ReturnType<typeof vi.fn>) = mockPrepare;
@@ -169,8 +172,14 @@ describe("FtsHealthService", () => {
     it("rebuilds and returns healthy when rebuild succeeds", async () => {
       let callCount = 0;
       const mockPrepare = vi.fn().mockImplementation((sql: string) => {
+        if (sql.includes("sqlite_master")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
+        }
         if (sql.includes("COUNT(*)")) {
           return { get: vi.fn().mockReturnValue({ count: 1 }) }; // non-empty table
+        }
+        if (sql.includes("COALESCE(ocr_text")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
         }
         // For integrity-check and rebuild commands
         const mockRun = vi.fn().mockImplementation(() => {
@@ -191,7 +200,7 @@ describe("FtsHealthService", () => {
       expect(result.rebuildPerformed).toBe(true);
       expect(mockLogger.warn).toHaveBeenCalledWith(
         expect.objectContaining({ error: expect.any(String) }),
-        "FTS5 integrity check failed, attempting rebuild"
+        "FTS5 startup validation failed, attempting rebuild"
       );
     });
 
@@ -308,6 +317,9 @@ describe("FtsHealthService", () => {
       const mockPrepare = vi.fn().mockImplementation((sql: string) => {
         if (sql.includes("COUNT(*)")) {
           return { get: vi.fn().mockReturnValue({ count: 1 }) }; // non-empty table
+        }
+        if (sql.includes("COALESCE(ocr_text")) {
+          return { get: vi.fn().mockReturnValue(undefined) };
         }
         return { run: vi.fn().mockReturnValue({}) };
       });

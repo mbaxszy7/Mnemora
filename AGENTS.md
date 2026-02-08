@@ -22,6 +22,7 @@
   - **Important:** Any changes involving migration SQL must run `pnpm db:generate` to regenerate migration files.
 - `pnpm test`: run the test suite using Vitest config in `vitest.config.ts`.
 - `pnpm test:coverage`: run tests with coverage report (outputs to `./coverage/`).
+- `pnpm typecheck`: run TypeScript type checking (uses `tsconfig.typecheck.json`).
 
 ## Coding Style & Naming Conventions
 

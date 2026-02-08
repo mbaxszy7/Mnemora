@@ -42,8 +42,19 @@ class DatabaseService {
   }
 
   /**
+   * Get the raw SQLite instance
+   * Used by FTS health service for direct SQLite operations
+   */
+  getSqlite(): Database.Database | null {
+    return this.sqlite;
+  }
+
+  /**
    * Initialize the database connection
    * Creates the database file if it doesn't exist and runs migrations
+   *
+   * Note: FTS5 health checks are handled separately in the boot process
+   * to allow for non-blocking recovery and graceful degradation.
    */
   initialize(): DrizzleDB {
     if (this.db) {
@@ -59,7 +70,7 @@ class DatabaseService {
       fs.mkdirSync(dbDir, { recursive: true });
     }
 
-    // Create SQLite connection
+    // Open database connection
     this.sqlite = new Database(dbPath);
 
     // Enable WAL mode for better performance

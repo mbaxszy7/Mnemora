@@ -7,6 +7,7 @@ const mockLogger = vi.hoisted(() => ({
   error: vi.fn(),
   debug: vi.fn(),
 }));
+const mockIsFtsUsable = vi.hoisted(() => vi.fn(() => true));
 
 type DbState = {
   earliestRow: { nextRunAt: number | null } | undefined;
@@ -60,6 +61,12 @@ const mockGetDb = vi.hoisted(() => vi.fn(() => createDb()));
 
 vi.mock("../../../database", () => ({
   getDb: mockGetDb,
+}));
+
+vi.mock("../../fts-health-service", () => ({
+  ftsHealthService: {
+    isFtsUsable: mockIsFtsUsable,
+  },
 }));
 
 vi.mock("../../../database/schema", () => ({
@@ -151,7 +158,59 @@ describe("OcrScheduler", () => {
     scheduler = new OcrScheduler();
   });
 
-  it("starts, wakes and stops", () => {
+  it("emits degraded event on database corruption", () => {
+    // Clear mocks to get clean state
+    mockEmit.mockClear();
+    mockLogger.info.mockClear();
+
+    scheduler.start();
+
+    // Clear the "started" log from initial start
+    mockLogger.info.mockClear();
+
+    (
+      scheduler as unknown as {
+        handleSqliteCorruption: (error: unknown, context: string, screenshotId?: number) => void;
+      }
+    ).handleSqliteCorruption({ code: "SQLITE_CORRUPT_VTAB" }, "unit-test", 1);
+
+    // Should emit degraded event
+    expect(mockEmit).toHaveBeenCalledWith(
+      "scheduler:degraded",
+      expect.objectContaining({
+        scheduler: "OcrScheduler",
+        reason: expect.stringContaining("FTS5 corruption"),
+      })
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith("OCR scheduler stopped");
+    // Should NOT auto-restart anymore (no additional "started" call after stop)
+    const startCallCount = mockLogger.info.mock.calls.filter(
+      ([msg]) => msg === "OCR scheduler started"
+    ).length;
+    expect(startCallCount).toBe(0);
+  });
+
+  it("does not start when FTS is not usable", () => {
+    mockIsFtsUsable.mockReturnValue(false);
+    scheduler.start();
+
+    // Should emit degraded event instead of starting
+    expect(mockEmit).toHaveBeenCalledWith(
+      "scheduler:degraded",
+      expect.objectContaining({
+        scheduler: "OcrScheduler",
+        reason: "FTS5 unavailable",
+      })
+    );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "OCR scheduler not starting - FTS is not usable (degraded mode)"
+    );
+    // Should NOT log "started"
+    expect(mockLogger.info).not.toHaveBeenCalledWith("OCR scheduler started");
+  });
+
+  it("starts, wakes and stops when FTS is usable", () => {
+    mockIsFtsUsable.mockReturnValue(true);
     scheduler.start();
     scheduler.wake("manual");
     scheduler.stop();
@@ -195,5 +254,124 @@ describe("OcrScheduler", () => {
 
     expect(region).toBeNull();
     expect(mockLogger.warn).toHaveBeenCalled();
+  });
+
+  describe("corruption error handling in runCycle", () => {
+    it("handles SQLite corruption in handleSqliteCorruption method", () => {
+      mockIsFtsUsable.mockReturnValue(true);
+      scheduler.start();
+
+      // Clear mocks from start
+      mockEmit.mockClear();
+      mockLogger.error.mockClear();
+
+      // Directly call handleSqliteCorruption to test the error handling
+      (
+        scheduler as unknown as {
+          handleSqliteCorruption: (error: unknown, context: string, screenshotId?: number) => void;
+        }
+      ).handleSqliteCorruption(
+        Object.assign(new Error("database disk image is malformed"), {
+          code: "SQLITE_CORRUPT_VTAB",
+        }),
+        "test-context",
+        123
+      );
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: "SQLITE_CORRUPT_VTAB" }),
+          context: "test-context",
+          screenshotId: 123,
+        }),
+        "SQLite corruption detected in OCR scheduler"
+      );
+      expect(mockEmit).toHaveBeenCalledWith(
+        "scheduler:degraded",
+        expect.objectContaining({
+          scheduler: "OcrScheduler",
+          reason: expect.stringContaining("FTS5 corruption in test-context"),
+        })
+      );
+    });
+
+    it("rethrows non-corruption errors from computeEarliestNextRun", () => {
+      mockIsFtsUsable.mockReturnValue(true);
+      scheduler.start();
+
+      // Make select throw a non-corruption error
+      const errorGetDb = vi.fn(() => ({
+        select: vi.fn(() => {
+          throw new Error("Some other database error");
+        }),
+      }));
+      mockGetDb.mockImplementation(errorGetDb);
+
+      // Should throw the error (not handle as corruption)
+      expect(() => {
+        (
+          scheduler as unknown as { computeEarliestNextRun: () => number | null }
+        ).computeEarliestNextRun();
+      }).toThrow("Some other database error");
+    });
+
+    it("logs error when failScreenshot encounters corruption", async () => {
+      mockIsFtsUsable.mockReturnValue(true);
+      scheduler.start();
+
+      // Make update throw corruption error
+      const corruptGetDb = vi.fn(() => ({
+        update: vi.fn(() => {
+          throw Object.assign(new Error("file is not a database"), {
+            code: "SQLITE_NOTADB",
+          });
+        }),
+      }));
+      mockGetDb.mockImplementation(corruptGetDb);
+
+      await (
+        scheduler as unknown as {
+          failScreenshot: (id: number, attempts: number, message: string) => Promise<void>;
+        }
+      ).failScreenshot(1, 1, "test error");
+
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.objectContaining({ code: "SQLITE_NOTADB" }),
+        }),
+        "SQLite corruption detected in OCR scheduler"
+      );
+    });
+
+    it("handles requeueScreenshotAfterCorruption failure gracefully", async () => {
+      mockIsFtsUsable.mockReturnValue(true);
+      scheduler.start();
+
+      // Make update throw error in requeueScreenshotAfterCorruption
+      const failingGetDb = vi.fn(() => ({
+        update: vi.fn(() => ({
+          set: vi.fn(() => ({
+            where: vi.fn(() => ({
+              run: vi.fn(() => {
+                throw new Error("Requeue failed");
+              }),
+            })),
+          })),
+        })),
+      }));
+      mockGetDb.mockImplementation(failingGetDb);
+
+      // Should not throw
+      (
+        scheduler as unknown as {
+          requeueScreenshotAfterCorruption: (id: number, attempts?: number) => void;
+        }
+      ).requeueScreenshotAfterCorruption(1, 1);
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ requeueError: expect.any(Error) }),
+        "Failed to requeue OCR screenshot after corruption"
+      );
+    });
   });
 });

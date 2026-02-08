@@ -92,6 +92,7 @@ export interface ScreenshotProcessingEventMap {
   // Scheduler Lifecycle
   "scheduler:started": SchedulerLifecycleEvent;
   "scheduler:stopped": SchedulerLifecycleEvent;
+  "scheduler:degraded": SchedulerLifecycleEvent;
   "scheduler:waked": SchedulerLifecycleEvent;
   "scheduler:cycle:start": SchedulerEvent;
   "scheduler:cycle:end": SchedulerCycleEndEvent;

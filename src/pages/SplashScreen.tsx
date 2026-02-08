@@ -1,23 +1,41 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { useState, useEffect, useRef } from "react";
 import { useViewTransition } from "@/components/core/view-transition";
+import { useTranslation } from "react-i18next";
+import type { BootStatus, BootPhase } from "@shared/ipc-types";
 
 const SLOGANS = ["Pixels to memory.", "Memory, amplified.", "Remember everything."] as const;
 
-// const isDev = process.env.NODE_ENV === "development";
+/**
+ * Boot phase progress mapping
+ */
+const BOOT_PHASE_PROGRESS: Record<BootPhase, number> = {
+  "db-init": 15,
+  "fts-check": 35,
+  "fts-rebuild": 70,
+  "app-init": 90,
+  ready: 100,
+  degraded: 100,
+  failed: 100,
+};
 
 /**
  * Determines the navigation target based on LLM configuration check result
- * @param configured - Whether LLM is configured
- * @returns Navigation path: '/llm-config' if not configured, '/' if configured
  */
 export function getNavigationTarget(configured: boolean): string {
   return configured ? "/" : "/llm-config";
 }
 
 export default function SplashScreen() {
+  const { t } = useTranslation();
   const [currentSloganIndex, setCurrentSloganIndex] = useState(0);
   const { navigate } = useViewTransition();
+
+  // Boot status state
+  const [bootStatus, setBootStatus] = useState<BootStatus | null>(null);
+  const [hasNavigated, setHasNavigated] = useState(false);
+  const mountedAtRef = useRef(Date.now());
+  const minDisplayMs = 6000;
 
   // LLM configuration check state
   const [configCheckResult, setConfigCheckResult] = useState<{
@@ -41,9 +59,25 @@ export default function SplashScreen() {
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
+  // Subscribe to boot status changes
+  useEffect(() => {
+    // Get initial status
+    void window.bootApi.getStatus().then((result) => {
+      if (result.success && result.data) {
+        setBootStatus(result.data);
+      }
+    });
+
+    // Subscribe to updates
+    const unsubscribe = window.bootApi.onStatusChanged((status) => {
+      setBootStatus(status);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Check LLM configuration on mount
   useEffect(() => {
-    // Prevent duplicate checks in strict mode
     if (configCheckRef.current) return;
     configCheckRef.current = true;
 
@@ -52,7 +86,6 @@ export default function SplashScreen() {
         const result = await window.llmConfigApi.check();
         setConfigCheckResult({ checked: true, configured: result.configured });
       } catch (error) {
-        // On error, navigate to config page (treat as not configured)
         console.error("Failed to check LLM configuration:", error);
         setConfigCheckResult({ checked: true, configured: false });
       }
@@ -62,14 +95,13 @@ export default function SplashScreen() {
     const preloadTimeline = async () => {
       try {
         const now = Date.now();
-        const fromTs = now - 24 * 60 * 60 * 1000; // 24 hours
+        const fromTs = now - 24 * 60 * 60 * 1000;
         await window.activityMonitorApi.getTimeline({ fromTs, toTs: now });
       } catch (error) {
         console.error("Failed to preload timeline:", error);
       }
     };
 
-    // Run both in parallel
     checkConfig();
     preloadTimeline();
   }, []);
@@ -83,23 +115,52 @@ export default function SplashScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  // Auto-navigation after 9 seconds with fade transition
-  // Navigate to appropriate page based on LLM configuration status
+  // Navigate when boot is ready/degraded AND config check is complete
   useEffect(() => {
+    if (hasNavigated) return;
+    if (!bootStatus) return;
+    if (!configCheckResult.checked) return;
+
+    const shouldNavigate = bootStatus.phase === "ready" || bootStatus.phase === "degraded";
+    if (!shouldNavigate) return;
+
+    const elapsed = Date.now() - mountedAtRef.current;
+    const remaining = Math.max(0, minDisplayMs - elapsed);
+
     const timer = setTimeout(() => {
-      // Navigate unconditionally after timeout
-      // If config check completed, use the result; otherwise default to config page
-      // if (isDev) {
-      //   return navigate("/", { type: "splash-fade", duration: 900 });
-      // }
-      const target = configCheckResult.checked
-        ? getNavigationTarget(configCheckResult.configured)
-        : "/llm-config";
+      setHasNavigated(true);
+      const target = getNavigationTarget(configCheckResult.configured);
       navigate(target, { type: "splash-fade", duration: 900 });
-    }, 9000);
+    }, remaining);
 
     return () => clearTimeout(timer);
-  }, [navigate, configCheckResult]);
+  }, [bootStatus, configCheckResult, navigate, hasNavigated]);
+
+  // Calculate progress
+  const progress = bootStatus ? BOOT_PHASE_PROGRESS[bootStatus.phase] : 0;
+  const isDegraded = bootStatus?.phase === "degraded";
+  const isFailed = bootStatus?.phase === "failed";
+  const showProgress = bootStatus && bootStatus.phase !== "ready";
+
+  // Get status message
+  const getStatusMessage = () => {
+    if (!bootStatus) return t("boot.phase.initializing");
+    if (bootStatus.messageKey) {
+      return t(bootStatus.messageKey);
+    }
+    // Map phase to message key with fallback
+    const phaseMessages: Record<BootPhase, string> = {
+      "db-init": t("boot.phase.dbInit"),
+      "fts-check": t("boot.phase.ftsCheck"),
+      "fts-rebuild": t("boot.phase.ftsRebuild"),
+      "app-init": t("boot.phase.appInit"),
+      ready: t("boot.phase.ready"),
+      degraded: t("boot.phase.degraded"),
+      failed: t("boot.phase.failed"),
+    };
+    return phaseMessages[bootStatus.phase];
+  };
+
   return (
     <motion.div
       initial={{ opacity: 1 }}
@@ -155,12 +216,43 @@ export default function SplashScreen() {
             animate={{ opacity: 1, y: 0 }}
             exit={prefersReducedMotion ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
             transition={{ duration: prefersReducedMotion ? 0 : 0.6 }}
-            className="absolute text-muted-foreground text-base  text-center whitespace-nowrap"
+            className="absolute text-muted-foreground text-base text-center whitespace-nowrap"
           >
             {SLOGANS[currentSloganIndex]}
           </motion.p>
         </AnimatePresence>
       </div>
+
+      {/* Boot Progress Section */}
+      {showProgress && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.5 }}
+          className="mt-12 w-80 flex flex-col items-center gap-3"
+        >
+          {/* Progress Bar */}
+          <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
+            <motion.div
+              className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-cyan-500"
+              initial={{ width: 0 }}
+              animate={{ width: `${progress}%` }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+            />
+          </div>
+
+          {/* Status Text */}
+          <div className="flex flex-col items-center gap-1">
+            <span className="text-sm text-muted-foreground">{getStatusMessage()}</span>
+
+            {/* Error indicators */}
+            {isDegraded && (
+              <span className="text-xs text-amber-500">{t("boot.warning.degraded")}</span>
+            )}
+            {isFailed && <span className="text-xs text-destructive">{t("boot.error.failed")}</span>}
+          </div>
+        </motion.div>
+      )}
     </motion.div>
   );
 }

@@ -19,6 +19,7 @@
 - `pnpm format` / `pnpm format:check`: Prettier write/check for `src/` and `electron/`.
 - `pnpm preview`: preview the Vite production build.
 - `pnpm db:generate`, `pnpm db:studio`, `pnpm db:push`: Drizzle workflows (migrations run at app startup).
+  - **Important:** Any changes involving migration SQL must run `pnpm db:generate` to regenerate migration files.
 - `pnpm test`: run the test suite using Vitest config in `vitest.config.ts`.
 - `pnpm test:coverage`: run tests with coverage report (outputs to `./coverage/`).
 
@@ -33,6 +34,7 @@
 - Framework: Vitest (node environment), with Testing Library available for UI tests.
 - Tests are colocated near source (for example `shared/*.test.ts`).
 - Run a focused test: `pnpm vitest shared/ipc-types.test.ts`.
+- **Coverage Requirement:** Unit test coverage must be at least **80%**.
 
 ## Commit & Pull Request Guidelines
 

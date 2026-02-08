@@ -48,27 +48,62 @@ export class OcrService {
     textRegion?: TextRegion | null;
   }): Promise<OcrResult> {
     const startTime = Date.now();
+    this.logger.debug(
+      { filePath: options.filePath, hasTextRegion: !!options.textRegion },
+      "OCR recognize started"
+    );
     const slot = await this.acquireWorker();
 
     try {
       const preprocessStart = Date.now();
       const processedBuffer = await this.preprocessImage(options.filePath, options.textRegion);
       const preprocessMs = Date.now() - preprocessStart;
+      this.logger.debug(
+        { filePath: options.filePath, bufferSize: processedBuffer.length, preprocessMs },
+        "OCR preprocess complete"
+      );
 
       const recognizeStart = Date.now();
       const { data } = await slot.worker.recognize(processedBuffer);
       const recognizeMs = Date.now() - recognizeStart;
 
+      const rawTextLen = data.text?.length ?? 0;
+      const rawConfidence = data.confidence ?? 0;
       const text = (data.text ?? "").trim();
       const truncated = text.slice(0, processingConfig.ocr.maxChars).trim();
 
-      return {
+      const result: OcrResult = {
         text: truncated,
-        confidence: data.confidence ?? 0,
+        confidence: rawConfidence,
         durationMs: Date.now() - startTime,
         preprocessMs,
         recognizeMs,
       };
+
+      if (truncated.length === 0) {
+        this.logger.warn(
+          {
+            filePath: options.filePath,
+            rawTextLen,
+            rawConfidence,
+            recognizeMs,
+            bufferSize: processedBuffer.length,
+          },
+          "OCR returned empty text"
+        );
+      } else {
+        this.logger.debug(
+          {
+            filePath: options.filePath,
+            textLen: truncated.length,
+            confidence: rawConfidence,
+            durationMs: result.durationMs,
+          },
+          "OCR recognize succeeded"
+        );
+      }
+
+      return result;
     } finally {
       this.releaseWorker(slot);
     }
@@ -137,6 +172,7 @@ export class OcrService {
     let pipeline = sharp(filePath);
 
     if (cropBox) {
+      this.logger.debug({ filePath, cropBox, textRegionBox: textRegion?.box }, "OCR applying crop");
       pipeline = pipeline.extract(cropBox);
     }
 
@@ -156,8 +192,14 @@ export class OcrService {
     const imageHeight = metadata.height ?? 0;
 
     if (imageWidth <= 0 || imageHeight <= 0) {
+      this.logger.warn({ filePath, imageWidth, imageHeight }, "OCR image has invalid dimensions");
       return null;
     }
+
+    this.logger.debug(
+      { filePath, imageWidth, imageHeight, inputBox: textRegion.box },
+      "OCR computing crop box"
+    );
 
     const clamp = (value: number, min: number, max: number) =>
       Math.min(Math.max(Math.floor(value), min), max);

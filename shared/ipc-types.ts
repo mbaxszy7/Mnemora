@@ -215,10 +215,19 @@ export type BootPhase =
   | "degraded"
   | "failed";
 
+export type BootMessageKey =
+  | "boot.phase.dbInit"
+  | "boot.phase.ftsCheck"
+  | "boot.phase.ftsRebuild"
+  | "boot.phase.appInit"
+  | "boot.phase.ready"
+  | "boot.phase.degraded"
+  | "boot.phase.failed";
+
 export interface BootStatus {
   phase: BootPhase;
   progress: number;
-  messageKey: string;
+  messageKey: BootMessageKey;
   errorCode?: string;
   errorMessage?: string;
   timestamp: number;

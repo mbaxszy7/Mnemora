@@ -85,6 +85,135 @@ class FtsHealthService {
   }
 
   /**
+   * Check if screenshots_fts table exists.
+   */
+  private hasFtsTable(sqlite: Database.Database): boolean {
+    try {
+      const row = sqlite
+        .prepare(
+          `
+            SELECT 1 AS present
+            FROM sqlite_master
+            WHERE type = 'table' AND name = 'screenshots_fts'
+            LIMIT 1
+          `
+        )
+        .get() as { present: number } | undefined;
+      return row?.present === 1;
+    } catch (error) {
+      logger.warn({ error }, "Failed to check screenshots_fts existence");
+      return false;
+    }
+  }
+
+  /**
+   * Ensure FTS triggers use FTS5 delete command syntax.
+   *
+   * This prevents update/delete paths from becoming inconsistent and
+   * failing later even when integrity-check passes.
+   */
+  private ensureFtsTriggers(
+    sqlite: Database.Database
+  ): { ok: true } | { ok: false; error: string } {
+    try {
+      sqlite.prepare("DROP TRIGGER IF EXISTS screenshots_fts_insert").run();
+      sqlite.prepare("DROP TRIGGER IF EXISTS screenshots_fts_update").run();
+      sqlite.prepare("DROP TRIGGER IF EXISTS screenshots_fts_delete").run();
+
+      sqlite
+        .prepare(
+          `
+            CREATE TRIGGER IF NOT EXISTS screenshots_fts_insert AFTER INSERT ON screenshots
+            WHEN NEW.ocr_text IS NOT NULL
+            BEGIN
+              INSERT INTO screenshots_fts(rowid, ocr_text) VALUES (NEW.id, NEW.ocr_text);
+            END
+          `
+        )
+        .run();
+
+      sqlite
+        .prepare(
+          `
+            CREATE TRIGGER IF NOT EXISTS screenshots_fts_update AFTER UPDATE OF ocr_text ON screenshots
+            BEGIN
+              INSERT INTO screenshots_fts(screenshots_fts, rowid, ocr_text)
+              SELECT 'delete', OLD.id, OLD.ocr_text WHERE OLD.ocr_text IS NOT NULL;
+              INSERT INTO screenshots_fts(rowid, ocr_text)
+              SELECT NEW.id, NEW.ocr_text WHERE NEW.ocr_text IS NOT NULL;
+            END
+          `
+        )
+        .run();
+
+      sqlite
+        .prepare(
+          `
+            CREATE TRIGGER IF NOT EXISTS screenshots_fts_delete AFTER DELETE ON screenshots
+            BEGIN
+              INSERT INTO screenshots_fts(screenshots_fts, rowid, ocr_text)
+              SELECT 'delete', OLD.id, OLD.ocr_text WHERE OLD.ocr_text IS NOT NULL;
+            END
+          `
+        )
+        .run();
+
+      return { ok: true };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
+   * Probe the real OCR write path inside a savepoint.
+   * This catches trigger/index issues that integrity-check may miss.
+   */
+  private runWritePathProbe(
+    sqlite: Database.Database
+  ): { ok: true } | { ok: false; error: string } {
+    const savepoint = "fts_write_probe";
+
+    try {
+      sqlite.prepare(`SAVEPOINT ${savepoint}`).run();
+
+      const row = sqlite
+        .prepare(
+          `
+            SELECT id, COALESCE(ocr_text, '') AS ocrText
+            FROM screenshots
+            ORDER BY id DESC
+            LIMIT 1
+          `
+        )
+        .get() as { id: number; ocrText: string } | undefined;
+
+      if (row) {
+        sqlite.prepare("UPDATE screenshots SET ocr_text = ? WHERE id = ?").run(row.ocrText, row.id);
+      }
+
+      sqlite.prepare(`ROLLBACK TO ${savepoint}`).run();
+      sqlite.prepare(`RELEASE ${savepoint}`).run();
+
+      return { ok: true };
+    } catch (error) {
+      try {
+        sqlite.prepare(`ROLLBACK TO ${savepoint}`).run();
+      } catch {
+        // ignore rollback failure
+      }
+      try {
+        sqlite.prepare(`RELEASE ${savepoint}`).run();
+      } catch {
+        // ignore release failure
+      }
+
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return { ok: false, error: errorMessage };
+    }
+  }
+
+  /**
    * Run startup check and heal process
    *
    * Flow:
@@ -106,6 +235,16 @@ class FtsHealthService {
     let rebuildPerformed = false;
 
     try {
+      if (this.hasFtsTable(sqlite)) {
+        const triggerResult = this.ensureFtsTriggers(sqlite);
+        if (!triggerResult.ok) {
+          logger.warn(
+            { error: triggerResult.error },
+            "Failed to normalize FTS triggers before health check"
+          );
+        }
+      }
+
       // Optimization: Empty table is always healthy (new user scenario)
       if (this.isEmptyTable(sqlite)) {
         this.status = "healthy";
@@ -123,8 +262,9 @@ class FtsHealthService {
       // First integrity check
       checkAttempts++;
       const firstCheck = this.runIntegrityCheck(sqlite);
+      const firstProbe = firstCheck.ok ? this.runWritePathProbe(sqlite) : null;
 
-      if (firstCheck.ok) {
+      if (firstCheck.ok && firstProbe?.ok) {
         this.status = "healthy";
         this.isUsable = true;
         this.lastCheckAt = Date.now();
@@ -141,7 +281,14 @@ class FtsHealthService {
       }
 
       // First check failed, try rebuild
-      logger.warn({ error: firstCheck.error }, "FTS5 integrity check failed, attempting rebuild");
+      const firstProbeError =
+        firstCheck.ok && firstProbe && !firstProbe.ok ? firstProbe.error : null;
+      const firstFailureReason =
+        firstProbeError ?? (firstCheck.ok ? "FTS write-path probe failed" : firstCheck.error);
+      logger.warn(
+        { error: firstFailureReason },
+        "FTS5 startup validation failed, attempting rebuild"
+      );
 
       this.status = "rebuilding";
       onRebuildStart?.();
@@ -172,8 +319,9 @@ class FtsHealthService {
       // Re-check after rebuild
       checkAttempts++;
       const secondCheck = this.runIntegrityCheck(sqlite);
+      const secondProbe = secondCheck.ok ? this.runWritePathProbe(sqlite) : null;
 
-      if (secondCheck.ok) {
+      if (secondCheck.ok && secondProbe?.ok) {
         this.status = "healthy";
         this.isUsable = true;
         this.lastCheckAt = Date.now();
@@ -193,16 +341,25 @@ class FtsHealthService {
       this.status = "degraded";
       this.isUsable = false;
       const durationMs = Date.now() - startTime;
+      const secondProbeError =
+        secondCheck.ok && secondProbe && !secondProbe.ok ? secondProbe.error : null;
+      const secondFailureReason =
+        secondProbeError ??
+        (secondCheck.ok ? "FTS write-path probe failed after rebuild" : secondCheck.error);
+      const secondFailureCode =
+        secondCheck.ok && secondProbe && !secondProbe.ok
+          ? "FTS_WRITE_PROBE_FAILED_AFTER_REBUILD"
+          : "FTS_CHECK_FAILED_AFTER_REBUILD";
 
-      logger.error({ error: secondCheck.error }, "FTS5 integrity check failed after rebuild");
+      logger.error({ error: secondFailureReason }, "FTS5 validation failed after rebuild");
 
       return {
         status: "degraded",
         durationMs,
         checkAttempts,
         rebuildPerformed: true,
-        error: secondCheck.error,
-        errorCode: "FTS_CHECK_FAILED_AFTER_REBUILD",
+        error: secondFailureReason,
+        errorCode: secondFailureCode,
       };
     } catch (error) {
       // Unexpected error during check/heal
@@ -322,7 +479,8 @@ class FtsHealthService {
           `
         CREATE TRIGGER IF NOT EXISTS screenshots_fts_update AFTER UPDATE OF ocr_text ON screenshots
         BEGIN
-          DELETE FROM screenshots_fts WHERE rowid = OLD.id;
+          INSERT INTO screenshots_fts(screenshots_fts, rowid, ocr_text)
+          SELECT 'delete', OLD.id, OLD.ocr_text WHERE OLD.ocr_text IS NOT NULL;
           INSERT INTO screenshots_fts(rowid, ocr_text) 
           SELECT NEW.id, NEW.ocr_text WHERE NEW.ocr_text IS NOT NULL;
         END
@@ -335,7 +493,8 @@ class FtsHealthService {
           `
         CREATE TRIGGER IF NOT EXISTS screenshots_fts_delete AFTER DELETE ON screenshots
         BEGIN
-          DELETE FROM screenshots_fts WHERE rowid = OLD.id;
+          INSERT INTO screenshots_fts(screenshots_fts, rowid, ocr_text)
+          SELECT 'delete', OLD.id, OLD.ocr_text WHERE OLD.ocr_text IS NOT NULL;
         END
       `
         )

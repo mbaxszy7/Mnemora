@@ -1,7 +1,7 @@
 import type { CaptureCompleteEvent, PreferencesChangedEvent } from "../screen-capture/types";
 
 import { and, eq, inArray, isNotNull, isNull, lt, or } from "drizzle-orm";
-import { getDb } from "../../database";
+import { databaseService, getDb } from "../../database";
 import { batches, screenshots } from "../../database/schema";
 import { getLogger } from "../logger";
 import { safeDeleteCaptureFile } from "../screen-capture/capture-storage";
@@ -22,6 +22,8 @@ import { activityTimelineScheduler } from "./schedulers/activity-timeline-schedu
 import { vectorDocumentScheduler } from "./schedulers/vector-document-scheduler";
 import { ocrService } from "./ocr-service";
 import { threadRuntimeService } from "./thread-runtime-service";
+import { ftsHealthService } from "../fts-health-service";
+import type { SchedulerLifecycleEvent } from "./events";
 
 type InitializeArgs = {
   screenCapture: ScreenCaptureModuleType;
@@ -32,6 +34,7 @@ export class ScreenshotProcessingModule {
   private initialized = false;
   private fallbackCleanupTimer: NodeJS.Timeout | null = null;
   private fallbackCleanupInProgress = false;
+  private autoRepairInFlight = false;
 
   initialize(options: InitializeArgs): void {
     if (this.initialized) {
@@ -55,6 +58,7 @@ export class ScreenshotProcessingModule {
     screenCaptureEventBus.on("capture:complete", this.onCaptureComplete);
     screenshotProcessingEventBus.on("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.on("batch:persisted", this.onBatchPersisted);
+    screenshotProcessingEventBus.on("scheduler:degraded", this.onSchedulerDegraded);
 
     threadRuntimeService.start();
     batchVlmScheduler.start();
@@ -75,6 +79,7 @@ export class ScreenshotProcessingModule {
     screenCaptureEventBus.off("capture:complete", this.onCaptureComplete);
     screenshotProcessingEventBus.off("batch:ready", this.onBatchReady);
     screenshotProcessingEventBus.off("batch:persisted", this.onBatchPersisted);
+    screenshotProcessingEventBus.off("scheduler:degraded", this.onSchedulerDegraded);
 
     sourceBufferRegistry.dispose();
 
@@ -291,6 +296,49 @@ export class ScreenshotProcessingModule {
       batchVlmScheduler.wake();
     } catch (error) {
       this.logger.error({ error }, "Failed to wake batch VLM scheduler on batch:persisted");
+    }
+  };
+
+  private readonly onSchedulerDegraded = async (event: SchedulerLifecycleEvent) => {
+    if (event.scheduler !== "OcrScheduler") {
+      return;
+    }
+
+    if (!event.reason?.includes("FTS5 corruption")) {
+      return;
+    }
+
+    if (this.autoRepairInFlight) {
+      this.logger.warn("FTS auto-repair already in progress, skipping duplicate request");
+      return;
+    }
+
+    const sqlite = databaseService.getSqlite();
+    if (!sqlite) {
+      this.logger.error("Cannot run FTS auto-repair: sqlite connection unavailable");
+      return;
+    }
+
+    this.autoRepairInFlight = true;
+    try {
+      this.logger.warn(
+        { reason: event.reason },
+        "Attempting automatic FTS repair after OCR degradation"
+      );
+      const result = await ftsHealthService.retryRepair(sqlite);
+
+      if (result.status !== "healthy") {
+        this.logger.error({ result }, "Automatic FTS repair failed");
+        return;
+      }
+
+      this.logger.info("Automatic FTS repair succeeded, restarting OCR scheduler");
+      ocrScheduler.start();
+      ocrScheduler.wake("fts:auto-repaired");
+    } catch (error) {
+      this.logger.error({ error }, "Automatic FTS repair crashed");
+    } finally {
+      this.autoRepairInFlight = false;
     }
   };
 }

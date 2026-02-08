@@ -393,7 +393,7 @@ export class OcrScheduler extends BaseScheduler {
         logger.error(payload, "OCR processing failed");
 
         if (isSqliteCorruptionError(error)) {
-          this.handleSqliteCorruption(error, "processing OCR result", record.id);
+          this.handleSqliteCorruption(error, "processing OCR result", record.id, attempts);
           return;
         }
 
@@ -401,7 +401,7 @@ export class OcrScheduler extends BaseScheduler {
       }
     } catch (error) {
       if (isSqliteCorruptionError(error)) {
-        this.handleSqliteCorruption(error, "claiming OCR screenshot", record.id);
+        this.handleSqliteCorruption(error, "claiming OCR screenshot", record.id, attempts);
         return;
       }
       throw error;
@@ -426,7 +426,7 @@ export class OcrScheduler extends BaseScheduler {
         .run();
     } catch (error) {
       if (isSqliteCorruptionError(error)) {
-        this.handleSqliteCorruption(error, "updating OCR failure status", id);
+        this.handleSqliteCorruption(error, "updating OCR failure status", id, attempts);
         return;
       }
       throw error;
@@ -472,7 +472,16 @@ export class OcrScheduler extends BaseScheduler {
     }
   }
 
-  private handleSqliteCorruption(error: unknown, context: string, screenshotId?: number): void {
+  private handleSqliteCorruption(
+    error: unknown,
+    context: string,
+    screenshotId?: number,
+    attempts?: number
+  ): void {
+    if (screenshotId != null) {
+      this.requeueScreenshotAfterCorruption(screenshotId, attempts);
+    }
+
     logger.error(
       { error, scheduler: this.name, context, screenshotId },
       "SQLite corruption detected in OCR scheduler"
@@ -486,6 +495,30 @@ export class OcrScheduler extends BaseScheduler {
       timestamp: Date.now(),
       reason: `FTS5 corruption in ${context}`,
     });
+  }
+
+  private requeueScreenshotAfterCorruption(screenshotId: number, attempts?: number): void {
+    const db = getDb();
+    const now = Date.now();
+    const nextRunAt = now + processingConfig.retry.delayMs;
+    const normalizedAttempts = Math.max(1, attempts ?? 1);
+
+    try {
+      db.update(screenshots)
+        .set({
+          ocrStatus: "failed",
+          ocrAttempts: normalizedAttempts,
+          ocrNextRunAt: nextRunAt,
+          updatedAt: now,
+        })
+        .where(and(eq(screenshots.id, screenshotId), eq(screenshots.ocrStatus, "running")))
+        .run();
+    } catch (requeueError) {
+      logger.warn(
+        { requeueError, screenshotId, scheduler: this.name },
+        "Failed to requeue OCR screenshot after corruption"
+      );
+    }
   }
 }
 

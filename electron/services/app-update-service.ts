@@ -85,7 +85,7 @@ function createInitialStatus(localMetadata: LocalBuildMetadata): AppUpdateStatus
 }
 
 function normalizeVersion(raw: string): string {
-  return raw.replace(/^v/, "");
+  return raw.replace(/^(.*-)?v/, "");
 }
 
 function compareVersions(a: string, b: string): number {

@@ -4,17 +4,23 @@ on:
   push:
     tags:
       - "v*"
+      - "mnemora-v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to publish to (e.g. mnemora-v0.1.0 or v0.2.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: stable-${{ github.ref }}
+  group: stable-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  make:
     strategy:
       fail-fast: false
       matrix:
@@ -31,6 +37,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -44,7 +52,95 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
-      - env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: pnpm forge:publish --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Build platform packages
+        env:
+          MNEMORA_BUILD_SHA: ${{ github.sha }}
+        run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
+      - name: Verify mac app bundle signature integrity
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP_PATH=$(find out -type d -name "*.app" | grep -E '/Mnemora\.app$' | head -n 1 || true)
+          if [[ -z "$APP_PATH" ]]; then
+            APP_PATH=$(find out -type d -name "*.app" | head -n 1 || true)
+          fi
+          if [[ -z "$APP_PATH" ]]; then
+            echo "No macOS app bundle found after build"
+            exit 1
+          fi
+          echo "Verifying app bundle: $APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+      - name: Upload make artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stable-${{ matrix.platform }}-${{ matrix.arch }}
+          path: out/make/**/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: make
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+      - name: Normalize release asset names
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-upload
+          echo "Discovered source artifacts:"
+          find release-assets -type f | sort
+          find release-assets -type f -print0 | while IFS= read -r -d '' file; do
+            rel="${file#release-assets/}"
+            base="$(basename "$file")"
+            lower_base="$(printf '%s' "$base" | tr '[:upper:]' '[:lower:]')"
+            lower_rel="$(printf '%s' "$rel" | tr '[:upper:]' '[:lower:]')"
+            case "$lower_base" in
+              *.dmg)
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-arm64.dmg"
+                fi
+                ;;
+              *.zip)
+                if [[ "$lower_rel" == *"darwin-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-arm64.zip"
+                fi
+                ;;
+              *setup.exe)
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-arm64-Setup.exe"
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
+                  cp -f "$file" "release-upload/Mnemora-x64-Setup.exe"
+                fi
+                ;;
+              *full.nupkg)
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
+                  cp -f "$file" "release-upload/mnemora-arm64-full.nupkg"
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
+                  cp -f "$file" "release-upload/mnemora-x64-full.nupkg"
+                fi
+                ;;
+              releases)
+                if [[ "$lower_rel" == *"win32-arm64"* ]]; then
+                  cp -f "$file" "release-upload/RELEASES-arm64"
+                elif [[ "$lower_rel" == *"win32-x64"* ]]; then
+                  cp -f "$file" "release-upload/RELEASES-x64"
+                fi
+                ;;
+            esac
+          done
+          echo "Final release assets:"
+          ls -la release-upload
+      - name: Publish to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          draft: false
+          prerelease: false
+          make_latest: true
+          files: release-upload/*

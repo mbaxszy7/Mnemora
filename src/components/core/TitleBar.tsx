@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Camera, Loader2, PauseCircle, PlayCircle } from "lucide-react";
+import type { AppUpdateStatus } from "@shared/app-update-types";
 
 export const TitleBar: React.FC = () => {
   const { effectiveTheme } = useTheme();
@@ -16,6 +17,29 @@ export const TitleBar: React.FC = () => {
     "idle" | "running" | "paused" | "stopped" | null
   >(null);
   const [isTogglingCapture, setIsTogglingCapture] = useState(false);
+  const [appTitle, setAppTitle] = useState("Mnemora");
+
+  useEffect(() => {
+    const resolveTitle = (status: AppUpdateStatus | null) =>
+      status?.channel === "nightly" ? "Mnemora - Nightly" : "Mnemora";
+
+    window.appUpdateApi
+      .getStatus()
+      .then((result) => {
+        if (result.success && result.data) {
+          setAppTitle(resolveTitle(result.data));
+        }
+      })
+      .catch(() => {});
+
+    const unsubscribe = window.appUpdateApi.onStatusChanged((status) => {
+      setAppTitle(resolveTitle(status));
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
 
   useEffect(() => {
     // Update native title bar overlay on Windows
@@ -96,8 +120,8 @@ export const TitleBar: React.FC = () => {
       }
     >
       <div className="flex items-center gap-2">
-        <img src="logo.png" alt="Mnemora" className="w-4 h-4" />
-        <span className="text-xs font-medium text-muted-foreground opacity-80">Mnemora</span>
+        <img src="logo.png" alt={appTitle} className="w-4 h-4" />
+        <span className="text-xs font-medium text-muted-foreground opacity-80">{appTitle}</span>
         {isRecording && (
           <div className="flex items-center gap-1.5 ml-2">
             <div

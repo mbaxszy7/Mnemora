@@ -6,6 +6,12 @@ const { execSync } = require("node:child_process");
 const electronCacheRoot = path.resolve(__dirname, ".electron-cache");
 const fallbackElectronMirror = "https://npmmirror.com/mirrors/electron/";
 const appDisplayName = process.env.MNEMORA_APP_NAME ?? "Mnemora";
+const updateChannel =
+  String(process.env.MNEMORA_UPDATE_CHANNEL ?? "stable").toLowerCase() === "nightly"
+    ? "nightly"
+    : "stable";
+const stableBundleId = "com.mnemora.app";
+const appBundleId = updateChannel === "nightly" ? `${stableBundleId}.nightly` : stableBundleId;
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const electronChecksums = require("electron/checksums.json");
 
@@ -360,8 +366,13 @@ async function ensureElectronDownloaded({ platform, arch }) {
 module.exports = {
   packagerConfig: {
     name: appDisplayName,
-    appBundleId: "com.mnemora.app",
+    appBundleId,
+    helperBundleId: `${appBundleId}.helper`,
     icon: "public/logo",
+    extendInfo: {
+      CFBundleName: appDisplayName,
+      CFBundleDisplayName: appDisplayName,
+    },
     asar: {
       // Sharp (libvips) ships `.dylib` dependencies that must live on disk, not inside `app.asar`.
       // `plugin-auto-unpack-natives` adds `**/*.node`; we also unpack `.dylib` for macOS runtime.

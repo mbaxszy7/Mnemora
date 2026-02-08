@@ -163,6 +163,7 @@ class AppLifecycleController {
       width: windowWidth,
       height: windowHeight,
       show: true,
+      title: app.getName(),
       icon: process.platform === "win32" ? appIconPath : appIcon,
       webPreferences: {
         preload: path.join(MAIN_DIST, "preload.mjs"),
@@ -207,6 +208,7 @@ class AppLifecycleController {
     });
 
     win.webContents.on("did-finish-load", () => {
+      win.setTitle(app.getName());
       win.webContents.send("main-process-message", new Date().toLocaleString());
     });
 

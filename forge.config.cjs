@@ -419,6 +419,8 @@ module.exports = {
         // Custom installer icon (replaces the default green Squirrel icon)
         setupIcon: "public/logo.ico",
         iconUrl: "https://raw.githubusercontent.com/mbaxszy7/Mnemora/master/public/logo.ico",
+        // Custom loading splash shown during installation (replaces default green Squirrel screen)
+        loadingGif: "public/installer-loading.gif",
       },
     },
     {

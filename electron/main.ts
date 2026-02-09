@@ -72,7 +72,7 @@ process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
 process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
 
 if (process.platform === "win32") {
-  app.setAppUserModelId(app.isPackaged ? "com.mnemora.app" : "Mnemora");
+  app.setAppUserModelId(app.getName());
 }
 
 // ============================================================================

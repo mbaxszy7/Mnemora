@@ -347,7 +347,9 @@ async function ensureElectronDownloaded({ platform, arch }) {
     const message = error instanceof Error ? error.message : String(error);
     const shouldFallback =
       message.includes("github.com") &&
-      (message.includes("ENOTFOUND") || message.includes("EAI_AGAIN") || message.includes("ECONNRESET"));
+      (message.includes("ENOTFOUND") ||
+        message.includes("EAI_AGAIN") ||
+        message.includes("ECONNRESET"));
 
     if (!shouldFallback) {
       throw error;
@@ -374,9 +376,13 @@ module.exports = {
       CFBundleDisplayName: appDisplayName,
     },
     asar: {
-      // Sharp (libvips) ships `.dylib` dependencies that must live on disk, not inside `app.asar`.
-      // `plugin-auto-unpack-natives` adds `**/*.node`; we also unpack `.dylib` for macOS runtime.
-      unpack: "**/*.{dylib,node}",
+      // Native addons (.node) and their shared-library dependencies must live on disk,
+      // not inside app.asar, so the OS dynamic linker can load them.
+      //   - .dylib: macOS (sharp/libvips)
+      //   - .dll:   Windows (sharp/libvips)
+      //   - .node:  all platforms (native addons)
+      // `plugin-auto-unpack-natives` also adds **/*.node; we list it explicitly for clarity.
+      unpack: "**/*.{dylib,dll,node}",
     },
     // Ensure Electron downloads are cached in-repo. This also makes it possible to
     // pre-download the Electron ZIP in `prePackage` and avoid flaky network/DNS.
@@ -410,6 +416,9 @@ module.exports = {
         name: "mnemora",
         authors: "Mnemora",
         description: "Mnemora - Your Second Brain",
+        // Custom installer icon (replaces the default green Squirrel icon)
+        setupIcon: "public/logo.ico",
+        iconUrl: "https://raw.githubusercontent.com/mbaxszy7/Mnemora/master/public/logo.ico",
       },
     },
     {

@@ -146,6 +146,12 @@ export class TrayService {
     this.logger.info({ icon: this.getIconPath() }, "Tray initialized");
   }
 
+  /** Re-build menu and tooltip (e.g. after i18n becomes ready). */
+  refresh(): void {
+    this.refreshMenu();
+    this.refreshTooltip();
+  }
+
   dispose(): void {
     if (!this.tray) return;
     this.unsubscribeScheduler();

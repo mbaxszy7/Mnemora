@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, nativeImage, screen, ipcMain } from "electron";
 import path from "node:path";
 import { existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
 import { AISDKService } from "./services/ai-sdk-service";
 import { LLMConfigService } from "./services/llm-config-service";
@@ -32,6 +33,36 @@ import { notificationService } from "./services/notification/notification-servic
 import { appUpdateService } from "./services/app-update-service";
 import { ftsHealthService } from "./services/fts-health-service";
 import type { BootMessageKey, BootPhase, BootStatus, IPCResult } from "../shared/ipc-types";
+
+// ============================================================================
+// Squirrel.Windows Startup Events (required for ARM64 install)
+// ============================================================================
+// Squirrel launches the app with --squirrel-* args during install/update/uninstall.
+// The app must handle them (create/remove shortcuts) and exit immediately.
+// Without this, the app fails to install properly on Windows ARM64.
+
+if (process.platform === "win32") {
+  const squirrelCommand = process.argv[1];
+  if (
+    squirrelCommand === "--squirrel-install" ||
+    squirrelCommand === "--squirrel-updated" ||
+    squirrelCommand === "--squirrel-uninstall" ||
+    squirrelCommand === "--squirrel-obsolete"
+  ) {
+    const appFolder = path.dirname(process.execPath);
+    const updateExe = path.resolve(appFolder, "..", "Update.exe");
+    const exeName = path.basename(process.execPath);
+
+    if (squirrelCommand === "--squirrel-install" || squirrelCommand === "--squirrel-updated") {
+      spawn(updateExe, ["--createShortcut", exeName], { detached: true });
+    } else if (squirrelCommand === "--squirrel-uninstall") {
+      spawn(updateExe, ["--removeShortcut", exeName], { detached: true });
+    }
+
+    app.quit();
+    process.exit(0);
+  }
+}
 
 // ============================================================================
 // Environment Setup

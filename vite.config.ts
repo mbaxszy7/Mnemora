@@ -69,6 +69,7 @@ export default defineConfig({
                 "sharp",
                 "hnswlib-node",
                 "tesseract.js",
+                "update-electron-app",
               ],
             },
           },

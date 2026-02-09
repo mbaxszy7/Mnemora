@@ -330,7 +330,43 @@ pnpm db:studio
 
 [MIT License](LICENSE)
 
+## Release Channels
+
+- **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
+- **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
+
+### Downloads
+
+- Stable (latest): [https://github.com/mbaxszy7/Mnemora/releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
+- Nightly (rolling): [https://github.com/mbaxszy7/Mnemora/releases/tag/nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
+
+### macOS Install Note
+
+- If you see `Apple cannot verify "Mnemora..."` when opening the `.dmg` app, it means Gatekeeper blocked an unsigned/unnotarized build.
+- Open once via Finder: right-click `Mnemora.app` or `Mnemora - Nightly.app` → `Open`.
+- Or allow from `System Settings` → `Privacy & Security` → `Open Anyway`.
+- For local testing only, you can remove quarantine attributes:
+
+```bash
+sudo xattr -dr com.apple.quarantine "/Applications/Mnemora.app"
+sudo xattr -dr com.apple.quarantine "/Applications/Mnemora - Nightly.app"
+```
+
+### Windows Install Note
+
+- You may see a **"Windows protected your PC"** (SmartScreen) or **"Unknown Publisher"** warning when running the installer. This is because the `.exe` is not code-signed.
+- Click **"More info"** → **"Run anyway"** to proceed. The warning does **not** affect application functionality.
+
+Both warnings are **one-time install/launch friction only** — they do not affect runtime behavior or app functionality.
+
+### How Stable Releases Are Created
+
+1. Merge regular feature/fix PRs into `master` (Conventional Commits).
+2. Release Please automatically maintains a release PR with changelog and version bump.
+3. Merge that release PR to publish a new stable release and assets.
+
 ---
+
 <h2 id="中文">📖 中文介绍</h2>
 
 ### 🎯 项目概述
@@ -638,35 +674,8 @@ pnpm db:studio
 
 [MIT License](LICENSE)
 
-## Release Channels
-
-- **Stable**: published from Release Please generated release PRs (`vX.Y.Z`). Users should install and update from this channel.
-- **Nightly**: auto-published from `master` for internal validation (`nightly` prerelease tag, rolling assets).
-
-### Downloads
-
-- Stable (latest): [https://github.com/mbaxszy7/Mnemora/releases/latest](https://github.com/mbaxszy7/Mnemora/releases/latest)
-- Nightly (rolling): [https://github.com/mbaxszy7/Mnemora/releases/tag/nightly](https://github.com/mbaxszy7/Mnemora/releases/tag/nightly)
-
-### macOS Install Note (applies to Stable and Nightly)
-
-- If you see `Apple cannot verify "Mnemora..."` when opening the `.dmg` app, it means Gatekeeper blocked an unsigned/unnotarized build.
-- Open once via Finder: right click `Mnemora.app` or `Mnemora - Nightly.app` -> `Open`.
-- Or allow from `System Settings -> Privacy & Security -> Open Anyway`.
-- For local testing only, you can remove quarantine attributes:
-
-```bash
-sudo xattr -dr com.apple.quarantine "/Applications/Mnemora.app"
-sudo xattr -dr com.apple.quarantine "/Applications/Mnemora - Nightly.app"
-```
-
-### How Stable Releases Are Created
-
-1. Merge regular feature/fix PRs into `master` (Conventional Commits).
-2. Release Please automatically maintains a release PR with changelog and version bump.
-3. Merge that release PR to publish a new stable release and assets.
-
 ---
+
 <p align="center">
   Made with ❤️ by <a href="https://github.com/mbaxszy7">Frank Yan</a>
 </p>

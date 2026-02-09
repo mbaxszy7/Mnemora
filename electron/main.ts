@@ -331,6 +331,8 @@ class AppLifecycleController {
     captureScheduleController.initialize({ screenCapture: screenCaptureModule });
     captureScheduleController.start();
     await this.initI18nService();
+    // Refresh tray menu now that i18n is ready (initial build used raw keys)
+    this.trayService?.refresh();
     notificationService.registerEventBusSubscriptions();
     await this.initAIService();
     this.initPowerMonitor();

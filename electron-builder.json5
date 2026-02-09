@@ -3,28 +3,63 @@
   $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   appId: "com.mnemora.app",
   asar: true,
-  // Use asarUnpack for native modules to work correctly
+  // Unpack ALL native addons (.node) and shared libraries (.dll/.dylib) from asar
+  // so they can be loaded at runtime via dlopen.
   asarUnpack: [
-    "node_modules/better-sqlite3/**/*",
-    "node_modules/bindings/**/*",
-    "node_modules/file-uri-to-path/**/*",
+    "**/*.node",
+    "**/*.dll",
+    "**/*.dylib",
+    "node_modules/@img/**/*",
+    "node_modules/sharp/**/*",
   ],
   productName: "Mnemora",
   directories: {
     output: "release/${version}",
   },
+  // Starting the first pattern with "!" activates the default file set
+  // (all production node_modules are included automatically).
+  // We then exclude source / dev artefacts that must NOT ship.
   files: [
-    "dist",
-    "dist-electron",
-    // Include native module and its dependencies
-    "node_modules/better-sqlite3/**/*",
-    "node_modules/bindings/**/*",
-    "node_modules/file-uri-to-path/**/*",
-    "node_modules/drizzle-orm/**/*",
+    "!src",
+    "!electron",
+    "!externals",
+    "!scripts",
+    "!docs",
+    "!coverage",
+    "!release",
+    "!public",
+    "!.husky",
+    "!.github",
+    "!.windsurf",
+    "!.vscode",
+    "!**/*.{ts,tsx,map}",
+    "!**/tsconfig*.json",
+    "!**/*.config.{js,cjs,mjs,ts}",
+    "!electron-builder.json5",
+    "!forge.config.*",
+    "!pnpm-lock.yaml",
+    "!AGENTS.md",
+    "!README.md",
+    "!LICENSE",
+    "!.gitignore",
+    "!.npmrc",
+    "!.editorconfig",
+    "!.prettierrc*",
+    "!.eslintrc*",
+  ],
+  // Copy locale files and build metadata into resources/ (mirrors forge's packageAfterCopy hook).
+  // The main-process i18n service loads translations from process.resourcesPath + "shared/locales".
+  extraResources: [
+    {
+      from: "shared/locales",
+      to: "shared/locales",
+    },
   ],
   // Rebuild native modules for target platform
   nodeGypRebuild: false,
-  npmRebuild: true,
+  // Native modules are rebuilt by `pnpm run rebuild:sqlite` before electron-builder runs.
+  // electron-builder's own npmRebuild conflicts with pnpm's symlink-based node_modules layout.
+  npmRebuild: false,
   mac: {
     target: ["dmg"],
     artifactName: "${productName}-Mac-${version}-Installer.${ext}",
@@ -43,14 +78,31 @@
         arch: ["x64"],
       },
     ],
-    artifactName: "${productName}-Windows-${version}-Setup.${ext}",
+    artifactName: "${productName}-${arch}-Setup.${ext}",
     icon: "public/logo.ico",
+    // Code signing (set CSC_LINK & CSC_KEY_PASSWORD env vars, or use
+    // Azure Trusted Signing via the @electron-forge/publisher-azure plugin).
+    // Without a valid certificate the installer will show a "Unknown Publisher"
+    // SmartScreen warning on end-user machines.
+    // Uncomment when a certificate is available:
+    // signingHashAlgorithms: ["sha256"],
+    // signDlls: true,
   },
   nsis: {
     oneClick: false,
     perMachine: false,
     allowToChangeInstallationDirectory: true,
     deleteAppDataOnUninstall: false,
+    // Proper installer icons & UX
+    installerIcon: "public/logo.ico",
+    uninstallerIcon: "public/logo.ico",
+    installerHeaderIcon: "public/logo.ico",
+    unicode: true,
+    // Show "Run app after install" checkbox
+    runAfterFinish: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true,
+    shortcutName: "Mnemora",
   },
   linux: {
     target: ["AppImage"],

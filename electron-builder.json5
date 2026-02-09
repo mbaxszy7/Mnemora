@@ -78,7 +78,7 @@
         arch: ["x64"],
       },
     ],
-    artifactName: "${productName}-${arch}-Setup.${ext}",
+    artifactName: "${productName}-Windows-${arch}-${version}-Setup.${ext}",
     icon: "public/logo.ico",
     // Code signing (set CSC_LINK & CSC_KEY_PASSWORD env vars, or use
     // Azure Trusted Signing via the @electron-forge/publisher-azure plugin).

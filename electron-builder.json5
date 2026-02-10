@@ -54,6 +54,10 @@
       from: "shared/locales",
       to: "shared/locales",
     },
+    {
+      from: "externals/tesseract-data",
+      to: "tesseract-data",
+    },
   ],
   // Rebuild native modules for target platform
   nodeGypRebuild: false,

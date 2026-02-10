@@ -65,6 +65,31 @@ if (process.platform === "win32") {
 }
 
 // ============================================================================
+// Global Error Handlers (must be registered before anything else)
+// ============================================================================
+
+process.on("uncaughtException", (error) => {
+  // In production the logger may not be ready yet, so fall back to stderr.
+  // This prevents Electron from showing a crash dialog for non-fatal errors
+  // such as tesseract.js Worker fetch failures on offline machines.
+  try {
+    const logger = getLogger("uncaught");
+    logger.error({ error }, "Uncaught exception in main process");
+  } catch {
+    console.error("[uncaughtException]", error);
+  }
+});
+
+process.on("unhandledRejection", (reason) => {
+  try {
+    const logger = getLogger("uncaught");
+    logger.error({ reason }, "Unhandled promise rejection in main process");
+  } catch {
+    console.error("[unhandledRejection]", reason);
+  }
+});
+
+// ============================================================================
 // Environment Setup
 // ============================================================================
 

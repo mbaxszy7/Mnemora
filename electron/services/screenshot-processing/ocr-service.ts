@@ -1,5 +1,8 @@
 import type { Worker } from "tesseract.js";
 import sharp from "sharp";
+import path from "node:path";
+import { existsSync } from "node:fs";
+import { app } from "electron";
 
 import { getLogger } from "../logger";
 import { processingConfig } from "./config";
@@ -160,10 +163,51 @@ export class OcrService {
     slot.busy = false;
   }
 
+  /**
+   * Resolve the directory containing bundled .traineddata files.
+   *
+   * In production the files live under process.resourcesPath/tesseract-data
+   * (copied there by electron-builder extraResources).
+   * In development they live under externals/tesseract-data (downloaded by
+   * scripts/download-tesseract-data.js).
+   *
+   * Returns the path if it exists, otherwise undefined (falls back to CDN).
+   */
+  private resolveLangPath(): string | undefined {
+    const candidates: string[] = [];
+
+    if (app.isPackaged) {
+      candidates.push(path.join(process.resourcesPath, "tesseract-data"));
+    } else {
+      candidates.push(path.join(app.getAppPath(), "externals", "tesseract-data"));
+    }
+
+    for (const candidate of candidates) {
+      if (existsSync(candidate)) {
+        this.logger.debug({ langPath: candidate }, "Using local tesseract traineddata");
+        return candidate;
+      }
+    }
+
+    this.logger.warn("No local tesseract-data found, will fall back to CDN download");
+    return undefined;
+  }
+
   private async createWorkerInstance(): Promise<Worker> {
     this.logger.debug({ languages: processingConfig.ocr.languages }, "Creating OCR worker");
     const { createWorker } = await import("tesseract.js");
-    const worker = await createWorker(processingConfig.ocr.languages, 1);
+
+    const langPath = this.resolveLangPath();
+
+    const worker = await createWorker(processingConfig.ocr.languages, 1, {
+      // Point to local traineddata files so OCR works offline
+      ...(langPath ? { langPath, gzip: false } : {}),
+      // Prevent tesseract.js from throwing uncaught exceptions on error
+      // (without this, Worker reject messages cause `throw Error(data)` in onMessage)
+      errorHandler: (err) => {
+        this.logger.error({ error: err }, "Tesseract worker error");
+      },
+    });
     return worker;
   }
 

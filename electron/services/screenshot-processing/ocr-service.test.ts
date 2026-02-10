@@ -47,6 +47,21 @@ vi.mock("./config", () => ({
   },
 }));
 
+vi.mock("electron", () => ({
+  app: {
+    isPackaged: false,
+    getAppPath: () => "/mock-app",
+  },
+}));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    existsSync: vi.fn(() => false),
+  };
+});
+
 import { OcrService } from "./ocr-service";
 import type { KnowledgePayload } from "./types";
 
@@ -79,8 +94,17 @@ describe("OcrService", () => {
     it("creates a worker and releases it", async () => {
       await service.warmup();
 
-      expect(mockCreateWorker).toHaveBeenCalledWith("eng+chi_sim", 1);
-      expect(mockLogger.warn).not.toHaveBeenCalled();
+      expect(mockCreateWorker).toHaveBeenCalledWith(
+        "eng+chi_sim",
+        1,
+        expect.objectContaining({
+          errorHandler: expect.any(Function),
+        })
+      );
+      expect(mockLogger.warn).not.toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.anything() }),
+        "Failed to warm up OCR worker"
+      );
     });
 
     it("handles warmup failure gracefully", async () => {

@@ -237,6 +237,23 @@ function copyLocalesIntoResources({ buildPath }) {
   fs.cpSync(localesSrc, localesDest, { recursive: true });
 }
 
+function copyTesseractDataIntoResources({ buildPath }) {
+  const resourcesDir = resolvePackagedResourcesDir(buildPath);
+  const tesseractSrc = path.resolve(__dirname, "externals", "tesseract-data");
+  const tesseractDest = path.join(resourcesDir, "tesseract-data");
+
+  if (!fileExists(tesseractSrc)) {
+    console.warn(
+      `[forge] Tesseract data not found at ${tesseractSrc}. OCR will fall back to CDN download.`
+    );
+    return;
+  }
+
+  fs.rmSync(tesseractDest, { recursive: true, force: true });
+  fs.mkdirSync(tesseractDest, { recursive: true });
+  fs.cpSync(tesseractSrc, tesseractDest, { recursive: true });
+}
+
 function writeBuildMetadataIntoResources({ buildPath }) {
   const resourcesDir = resolvePackagedResourcesDir(buildPath);
   const metadataDest = path.join(resourcesDir, "shared", "build-metadata.json");
@@ -481,6 +498,7 @@ module.exports = {
     packageAfterCopy: async (_forgeConfig, buildPath) => {
       copyWindowInspectorIntoResources({ buildPath });
       copyLocalesIntoResources({ buildPath });
+      copyTesseractDataIntoResources({ buildPath });
       writeBuildMetadataIntoResources({ buildPath });
     },
     postPackage: async (_forgeConfig, results) => {

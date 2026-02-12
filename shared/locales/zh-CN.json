@@ -665,6 +665,7 @@
       "ftsCheck": "正在检查搜索功能...",
       "ftsRebuild": "正在修复搜索功能...",
       "appInit": "正在加载应用...",
+      "backgroundInit": "正在启动后台服务...",
       "ready": "准备就绪",
       "degraded": "应用已启动（搜索功能受限）",
       "failed": "启动失败，请重启"

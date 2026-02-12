@@ -118,20 +118,19 @@ class LoggerService {
       },
     });
 
+    const logLevel = this.resolveLogLevel(process.env.MNEMORA_LOG_LEVEL, isProd);
+
     // Create multiple streams for file and console output with per-env levels
-    const streams = isProd
-      ? [
-          { level: "error", stream: filePrettyStream },
-          { level: "error", stream: prettyStream },
-        ]
-      : [
-          { level: "debug", stream: filePrettyStream },
-          { level: "debug", stream: prettyStream },
-        ];
+    // File: logLevel (info in prod, debug in dev) - ensures startup logs are captured
+    // Console: error in prod (avoid spam), logLevel in dev
+    const streams = [
+      { level: logLevel as pino.Level, stream: filePrettyStream },
+      { level: isProd ? "error" : (logLevel as pino.Level), stream: prettyStream },
+    ];
 
     return pino(
       {
-        level: isProd ? "error" : "debug",
+        level: logLevel,
         base: {
           pid: process.pid,
           app: "mnemora",
@@ -144,6 +143,29 @@ class LoggerService {
 
   private shouldIgnoreLogCleanupError(code?: string): boolean {
     return code === "ENOENT" || code === "EPERM" || code === "EACCES" || code === "EBUSY";
+  }
+
+  /**
+   * Resolves and validates the log level from environment variable.
+   * Falls back to default if invalid or not set.
+   */
+  private resolveLogLevel(envLevel: string | undefined, isProd: boolean): pino.Level {
+    const validLevels: pino.Level[] = ["trace", "debug", "info", "warn", "error", "fatal"];
+    const defaultLevel: pino.Level = isProd ? "info" : "debug";
+
+    if (!envLevel) {
+      return defaultLevel;
+    }
+
+    const normalizedLevel = envLevel.toLowerCase() as pino.Level;
+    if (validLevels.includes(normalizedLevel)) {
+      return normalizedLevel;
+    }
+
+    console.warn(
+      `[Logger] Invalid MNEMORA_LOG_LEVEL "${envLevel}", falling back to "${defaultLevel}"`
+    );
+    return defaultLevel;
   }
 
   getLogger(name?: string): pino.Logger {

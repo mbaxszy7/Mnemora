@@ -88,6 +88,7 @@ export const IPC_CHANNELS = {
   ACTIVITY_GET_SUMMARY: "activity:get-summary",
   ACTIVITY_GET_EVENT_DETAILS: "activity:get-event-details",
   ACTIVITY_REGENERATE_SUMMARY: "activity:regenerate-summary",
+  ACTIVITY_GET_LATEST_TIMESTAMP: "activity:get-latest-timestamp",
   ACTIVITY_TIMELINE_CHANGED: "activity:timeline-changed",
   // AI Failure Circuit Breaker
   AI_FAILURE_FUSE_TRIPPED: "ai:fuse-tripped",

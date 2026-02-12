@@ -19,6 +19,7 @@ import type {
   EventDetailsResponse,
   RegenerateSummaryRequest,
   RegenerateSummaryResponse,
+  LatestActivityTimestampResponse,
 } from "@shared/activity-types";
 import { getLogger } from "../services/logger";
 
@@ -97,6 +98,24 @@ async function handleGetEventDetails(
 }
 
 /**
+ * Handle request for latest activity timestamp
+ * Returns the most recent activity timestamp to use as baseline for timeline
+ */
+async function handleGetLatestActivityTimestamp(): Promise<
+  IPCResult<LatestActivityTimestampResponse>
+> {
+  try {
+    const { activityMonitorService } =
+      await import("../services/screenshot-processing/activity-monitor-service");
+    const result = await activityMonitorService.getLatestActivityTimestamp();
+    return { success: true, data: result };
+  } catch (error) {
+    logger.error({ error }, "IPC handleGetLatestActivityTimestamp failed");
+    return { success: false, error: toIPCError(error) };
+  }
+}
+
+/**
  * Register all Activity Monitor handlers
  */
 export function registerActivityMonitorHandlers(): void {
@@ -105,4 +124,8 @@ export function registerActivityMonitorHandlers(): void {
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_GET_SUMMARY, handleGetSummary);
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_GET_EVENT_DETAILS, handleGetEventDetails);
   registry.registerHandler(IPC_CHANNELS.ACTIVITY_REGENERATE_SUMMARY, handleRegenerateSummary);
+  registry.registerHandler(
+    IPC_CHANNELS.ACTIVITY_GET_LATEST_TIMESTAMP,
+    handleGetLatestActivityTimestamp
+  );
 }

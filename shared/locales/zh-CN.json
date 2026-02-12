@@ -402,7 +402,7 @@
       "loadingTo6h": "正在加载到 6 小时…",
       "loadingTo24h": "正在加载到 24 小时…",
       "loadingGeneric": "正在加载…",
-      "loadedRecent": "已加载最近 {{label}}",
+      "loadedRecent": "已加载最近活动周围的 {{label}}",
       "loadTo6h": "加载到 6 小时",
       "loadTo24h": "加载到 24 小时",
       "today": "今天",

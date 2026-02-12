@@ -401,7 +401,7 @@
       "loadingTo6h": "Loading up to 6 hours…",
       "loadingTo24h": "Loading up to 24 hours…",
       "loadingGeneric": "Loading…",
-      "loadedRecent": "Loaded last {{label}}",
+      "loadedRecent": "Loaded {{label}} around last activity",
       "loadTo6h": "Load Last 6h",
       "loadTo24h": "Load Last 24h",
       "today": "Today",

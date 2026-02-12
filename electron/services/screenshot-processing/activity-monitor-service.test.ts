@@ -123,6 +123,34 @@ describe("ActivityMonitorService", () => {
     expect(timeline.longEvents.length).toBe(1);
   });
 
+  it("getLatestActivityTimestamp prefers activity summary timestamp", async () => {
+    mockDb = createDbMock({
+      selectSteps: [{ get: { windowEnd: 200 } }, { get: { eventTime: 300 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const result = await service.getLatestActivityTimestamp();
+    expect(result).toEqual({ timestamp: 200, source: "activity_summaries" });
+  });
+
+  it("getLatestActivityTimestamp falls back to context node timestamp", async () => {
+    mockDb = createDbMock({
+      selectSteps: [{ get: undefined }, { get: { eventTime: 300 } }],
+    });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const result = await service.getLatestActivityTimestamp();
+    expect(result).toEqual({ timestamp: 300, source: "context_nodes" });
+  });
+
+  it("getLatestActivityTimestamp returns null when no data", async () => {
+    mockDb = createDbMock({ selectSteps: [{ get: undefined }, { get: undefined }] });
+    mockGetDb.mockReturnValue(mockDb);
+
+    const result = await service.getLatestActivityTimestamp();
+    expect(result).toEqual({ timestamp: null, source: null });
+  });
+
   it("returns null summary when not found", async () => {
     mockDb = createDbMock({ selectSteps: [{ all: [] }] });
     mockGetDb.mockReturnValue(mockDb);

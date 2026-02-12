@@ -62,6 +62,7 @@ import type {
   RegenerateSummaryRequest,
   RegenerateSummaryResponse,
   ActivityTimelineChangedPayload,
+  LatestActivityTimestampResponse,
 } from "@shared/activity-types";
 import type {
   NotificationClickPayload,
@@ -554,6 +555,7 @@ export interface ActivityMonitorApi {
   regenerateSummary(
     request: RegenerateSummaryRequest
   ): Promise<IPCResult<RegenerateSummaryResponse>>;
+  getLatestActivityTimestamp(): Promise<IPCResult<LatestActivityTimestampResponse>>;
   onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void): () => void;
 }
 
@@ -574,6 +576,10 @@ const activityMonitorApi: ActivityMonitorApi = {
     request: RegenerateSummaryRequest
   ): Promise<IPCResult<RegenerateSummaryResponse>> {
     return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_REGENERATE_SUMMARY, request);
+  },
+
+  async getLatestActivityTimestamp(): Promise<IPCResult<LatestActivityTimestampResponse>> {
+    return ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_GET_LATEST_TIMESTAMP);
   },
 
   onTimelineChanged(callback: (payload: ActivityTimelineChangedPayload) => void) {

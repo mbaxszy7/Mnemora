@@ -324,6 +324,11 @@ interface Window {
         import("../shared/activity-types").RegenerateSummaryResponse
       >
     >;
+    getLatestActivityTimestamp(): Promise<
+      import("../shared/ipc-types").IPCResult<
+        import("../shared/activity-types").LatestActivityTimestampResponse
+      >
+    >;
   };
   monitoringApi: {
     openDashboard(): Promise<

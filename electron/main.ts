@@ -366,8 +366,10 @@ class AppLifecycleController {
       await userSettingService.getSettings();
     });
 
+    // Initialize i18n first (required by Tray menu)
+    await runTask("i18n", () => this.initI18nService());
+
     await Promise.all([
-      runTask("i18n", () => this.initI18nService()),
       runTask("Tray", () => this.initTrayService()),
       runTask("App update", () => this.initAppUpdateService()),
       runTask("Screen capture", () => this.initScreenCaptureService()),

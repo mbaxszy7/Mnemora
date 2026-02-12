@@ -42,6 +42,7 @@ export function useActivityMonitor() {
   const refreshTimerRef = useRef<number | null>(null);
   const lastRevisionRef = useRef<number>(globalCache.lastRevision);
   const latestLoadedRangeRef = useRef<number>(loadedRangeMs);
+  const latestToTsRef = useRef<number>(Date.now());
 
   useEffect(() => {
     latestLoadedRangeRef.current = loadedRangeMs;
@@ -62,10 +63,14 @@ export function useActivityMonitor() {
   );
 
   const fetchTimeline = useCallback(
-    async (opts?: { rangeMs?: number; merge?: boolean; markLoading?: boolean }) => {
+    async (opts?: { rangeMs?: number; merge?: boolean; markLoading?: boolean; toTs?: number }) => {
       const rangeMs = opts?.rangeMs ?? latestLoadedRangeRef.current;
       const merge = opts?.merge ?? false;
       const markLoading = opts?.markLoading ?? true;
+      const toTs = opts?.toTs ?? Date.now();
+
+      // Track the latest toTs used for fetching to keep filtering consistent
+      latestToTsRef.current = toTs;
 
       if (markLoading) {
         if (merge) setIsLoadingMore(true);
@@ -75,9 +80,8 @@ export function useActivityMonitor() {
       setError(null);
 
       try {
-        const now = Date.now();
-        const fromTs = now - rangeMs;
-        const result = await window.activityMonitorApi.getTimeline({ fromTs, toTs: now });
+        const fromTs = toTs - rangeMs;
+        const result = await window.activityMonitorApi.getTimeline({ fromTs, toTs });
 
         if (result.success && result.data) {
           globalCache.rangeMs = Math.max(globalCache.rangeMs, rangeMs);
@@ -143,18 +147,16 @@ export function useActivityMonitor() {
   );
 
   useEffect(() => {
-    const now = Date.now();
+    const toTs = latestToTsRef.current;
     const effectiveRangeMs = Math.min(loadedRangeMs, cacheRangeMs);
-    const fromTs = now - effectiveRangeMs;
+    const fromTs = toTs - effectiveRangeMs;
 
-    // Filter cache items and sort descending (newest first)
-    // Map.values() preserves insertion order, so we must sort after merging new items.
     const windows = Array.from(globalCache.windows.values())
-      .filter((w) => w.windowEnd > fromTs && w.windowStart < now)
+      .filter((w) => w.windowEnd > fromTs && w.windowStart < toTs)
       .sort((a, b) => b.windowStart - a.windowStart);
 
     const events = Array.from(globalCache.longEvents.values())
-      .filter((e) => e.startTs < now && e.endTs > fromTs)
+      .filter((e) => e.startTs < toTs && e.endTs > fromTs)
       .sort((a, b) => b.startTs - a.startTs);
 
     setTimeline(windows);
@@ -196,13 +198,28 @@ export function useActivityMonitor() {
     }
   }, []);
 
-  // Initial load or refresh if already loaded
+  // Initial load: use latest activity timestamp as baseline if available
   useEffect(() => {
-    void fetchTimeline({
-      rangeMs: globalCache.rangeMs,
-      merge: false,
-      markLoading: !globalCache.hasLoadedOnce,
-    });
+    const doInitialLoad = async () => {
+      // Get the latest activity timestamp from database
+      const timestampResult = await window.activityMonitorApi.getLatestActivityTimestamp();
+
+      let toTs = Date.now();
+      if (timestampResult.success && timestampResult.data?.timestamp) {
+        // Use the latest activity time as the baseline
+        toTs = timestampResult.data.timestamp;
+      }
+
+      // Fetch timeline using the activity timestamp as baseline
+      void fetchTimeline({
+        rangeMs: globalCache.rangeMs,
+        merge: false,
+        markLoading: !globalCache.hasLoadedOnce,
+        toTs,
+      });
+    };
+
+    void doInitialLoad();
   }, [fetchTimeline]);
 
   // Subscribe to main-process timeline change notifications
@@ -212,11 +229,16 @@ export function useActivityMonitor() {
         if (payload.revision <= globalCache.lastRevision) return;
         globalCache.lastRevision = payload.revision;
         lastRevisionRef.current = payload.revision;
-        scheduleRefresh();
+        void fetchTimeline({
+          rangeMs: latestLoadedRangeRef.current,
+          merge: false,
+          markLoading: false,
+          toTs: payload.toTs,
+        });
       }
     );
     return () => unsubscribe();
-  }, [scheduleRefresh]);
+  }, [fetchTimeline]);
 
   useEffect(() => {
     const handleFocus = () => {

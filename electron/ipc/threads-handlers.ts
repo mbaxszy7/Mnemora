@@ -1,7 +1,5 @@
 import type { IpcMainInvokeEvent } from "electron";
 
-import { eq } from "drizzle-orm";
-
 import { IPC_CHANNELS, type IPCResult, toIPCError } from "@shared/ipc-types";
 import type {
   ThreadsGetByIdRequest,
@@ -23,14 +21,20 @@ import type {
 
 import { IPCHandlerRegistry } from "./handler-registry";
 import { getLogger } from "../services/logger";
-import { getDb, threads, userSetting } from "../database";
-import { threadsService } from "../services/screenshot-processing/threads-service";
-import { threadRuntimeService } from "../services/screenshot-processing/thread-runtime-service";
 
 const logger = getLogger("threads-handlers");
 
+async function loadThreadServices() {
+  const [{ threadsService }, { threadRuntimeService }] = await Promise.all([
+    import("../services/screenshot-processing/threads-service"),
+    import("../services/screenshot-processing/thread-runtime-service"),
+  ]);
+  return { threadsService, threadRuntimeService };
+}
+
 async function handleGetActiveState(): Promise<IPCResult<ThreadsGetActiveStateResponse>> {
   try {
+    const { threadsService } = await loadThreadServices();
     const state = await threadsService.getActiveThreadState();
     return { success: true, data: { state } };
   } catch (error) {
@@ -41,6 +45,7 @@ async function handleGetActiveState(): Promise<IPCResult<ThreadsGetActiveStateRe
 
 async function handleGetActiveCandidates(): Promise<IPCResult<ThreadsGetActiveCandidatesResponse>> {
   try {
+    const { threadsService } = await loadThreadServices();
     const threads = await threadsService.getActiveThreadCandidatesWithPinned();
     return { success: true, data: { threads } };
   } catch (error) {
@@ -51,6 +56,7 @@ async function handleGetActiveCandidates(): Promise<IPCResult<ThreadsGetActiveCa
 
 async function handleGetResolvedActive(): Promise<IPCResult<ThreadsGetResolvedActiveResponse>> {
   try {
+    const { threadsService } = await loadThreadServices();
     const thread = await threadsService.getResolvedActiveThread();
     return { success: true, data: { thread } };
   } catch (error) {
@@ -64,6 +70,7 @@ async function handlePin(
   request: ThreadsPinRequest
 ): Promise<IPCResult<ThreadsPinResponse>> {
   try {
+    const { threadsService, threadRuntimeService } = await loadThreadServices();
     const state = await threadsService.pinThread(request.threadId);
     threadRuntimeService.markLensDirty("pin");
     return { success: true, data: { state } };
@@ -75,6 +82,7 @@ async function handlePin(
 
 async function handleUnpin(): Promise<IPCResult<ThreadsUnpinResponse>> {
   try {
+    const { threadsService, threadRuntimeService } = await loadThreadServices();
     const state = await threadsService.unpinThread();
     threadRuntimeService.markLensDirty("unpin");
     return { success: true, data: { state } };
@@ -86,6 +94,7 @@ async function handleUnpin(): Promise<IPCResult<ThreadsUnpinResponse>> {
 
 async function handleGetLensState(): Promise<IPCResult<ThreadsGetLensStateResponse>> {
   try {
+    const { threadRuntimeService } = await loadThreadServices();
     const snapshot = await threadRuntimeService.getLensStateSnapshot();
     return { success: true, data: { snapshot } };
   } catch (error) {
@@ -99,6 +108,7 @@ async function handleGet(
   request: ThreadsGetByIdRequest
 ): Promise<IPCResult<ThreadsGetResponse>> {
   try {
+    const { threadsService } = await loadThreadServices();
     const thread = threadsService.getThreadById(request.threadId);
     return { success: true, data: { thread } };
   } catch (error) {
@@ -112,6 +122,7 @@ async function handleList(
   request: ThreadsListRequest
 ): Promise<IPCResult<ThreadsListResponse>> {
   try {
+    const { threadsService } = await loadThreadServices();
     const threads = threadsService.listThreads(request.limit);
     return { success: true, data: { threads } };
   } catch (error) {
@@ -125,6 +136,7 @@ async function handleGetBrief(
   request: ThreadsGetBriefRequest
 ): Promise<IPCResult<ThreadsGetBriefResponse>> {
   try {
+    const { threadRuntimeService } = await loadThreadServices();
     const brief = await threadRuntimeService.getBrief({
       threadId: request.threadId,
       force: request.force ?? false,
@@ -141,6 +153,11 @@ async function handleMarkInactive(
   request: ThreadsMarkInactiveRequest
 ): Promise<IPCResult<ThreadsMarkInactiveResponse>> {
   try {
+    const [{ eq }, { getDb, threads, userSetting }, { threadsService }] = await Promise.all([
+      import("drizzle-orm"),
+      import("../database"),
+      import("../services/screenshot-processing/threads-service"),
+    ]);
     const id = request.threadId.trim();
     if (!id) {
       const state = await threadsService.getActiveThreadState();
@@ -174,7 +191,9 @@ async function handleMarkInactive(
     }
 
     const state = await threadsService.getActiveThreadState();
-    threadRuntimeService.markLensDirty("mark-inactive");
+    const { threadRuntimeService: runtimeService } =
+      await import("../services/screenshot-processing/thread-runtime-service");
+    runtimeService.markLensDirty("mark-inactive");
     return { success: true, data: { state } };
   } catch (error) {
     logger.error({ error, request }, "IPC handleMarkInactive failed");

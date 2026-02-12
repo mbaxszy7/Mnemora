@@ -433,9 +433,9 @@ module.exports = {
       name: "@electron-forge/maker-squirrel",
       platforms: ["win32"],
       config: {
-        name: "mnemora",
+        name: updateChannel === "nightly" ? "mnemora-nightly" : "mnemora",
         authors: "Mnemora",
-        description: "Mnemora - Your Second Brain",
+        description: `${appDisplayName} - Your Second Brain`,
         // Custom installer icon (replaces the default green Squirrel icon)
         setupIcon: "public/logo.ico",
         iconUrl: "https://raw.githubusercontent.com/mbaxszy7/Mnemora/master/public/logo.ico",

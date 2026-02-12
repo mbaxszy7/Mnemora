@@ -10,8 +10,6 @@
 import { IPC_CHANNELS, IPCResult, toIPCError } from "@shared/ipc-types";
 import type { SchedulerConfigPayload, SchedulerStatePayload } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { captureScheduleController, screenCaptureModule } from "../services/screen-capture";
-import { userSettingService } from "../services/user-setting-service";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("screen-capture-handlers");
@@ -27,6 +25,10 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_START,
     async (): Promise<IPCResult<void>> => {
       try {
+        const [{ captureScheduleController }, { userSettingService }] = await Promise.all([
+          import("../services/screen-capture"),
+          import("../services/user-setting-service"),
+        ]);
         logger.info("IPC: Starting screen capture scheduler");
         await userSettingService.setCaptureManualOverride("force_on");
         await captureScheduleController.evaluateNow();
@@ -41,6 +43,10 @@ export function registerScreenCaptureHandlers(): void {
   // Stop scheduler
   registry.registerHandler(IPC_CHANNELS.SCREEN_CAPTURE_STOP, async (): Promise<IPCResult<void>> => {
     try {
+      const [{ screenCaptureModule }, { userSettingService }] = await Promise.all([
+        import("../services/screen-capture"),
+        import("../services/user-setting-service"),
+      ]);
       logger.info("IPC: Stopping screen capture scheduler");
       const module = screenCaptureModule;
       await userSettingService.setCaptureManualOverride("force_off");
@@ -57,6 +63,10 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_PAUSE,
     async (): Promise<IPCResult<void>> => {
       try {
+        const [{ screenCaptureModule }, { userSettingService }] = await Promise.all([
+          import("../services/screen-capture"),
+          import("../services/user-setting-service"),
+        ]);
         logger.info("IPC: Pausing screen capture scheduler");
         const module = screenCaptureModule;
         await userSettingService.setCaptureManualOverride("force_off");
@@ -74,6 +84,10 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_RESUME,
     async (): Promise<IPCResult<void>> => {
       try {
+        const [{ captureScheduleController }, { userSettingService }] = await Promise.all([
+          import("../services/screen-capture"),
+          import("../services/user-setting-service"),
+        ]);
         logger.info("IPC: Resuming screen capture scheduler");
         await userSettingService.setCaptureManualOverride("force_on");
         await captureScheduleController.evaluateNow();
@@ -90,6 +104,7 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_GET_STATE,
     async (): Promise<IPCResult<SchedulerStatePayload>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         const module = screenCaptureModule;
         const state = module.getState();
         return { success: true, data: state };
@@ -105,6 +120,7 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.SCREEN_CAPTURE_UPDATE_CONFIG,
     async (_event, config: SchedulerConfigPayload): Promise<IPCResult<void>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         logger.info({ config }, "IPC: Updating screen capture scheduler config");
         const module = screenCaptureModule;
         module.updateConfig(config);
@@ -121,6 +137,7 @@ export function registerScreenCaptureHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_INIT_SERVICES,
     async (): Promise<IPCResult<boolean>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         logger.info("Attempting to initialize capture services");
         const initialized = await screenCaptureModule.tryInitialize();
         return { success: true, data: initialized };

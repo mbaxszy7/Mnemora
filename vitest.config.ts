@@ -44,7 +44,6 @@ export default defineConfig({
         "src/**/*.svg",
         // Entry points & config
         "electron/electron-env.d.ts",
-        "electron/main.ts",
         "electron/preload.ts",
         "electron/env.ts",
         "electron/services/**/events.ts",

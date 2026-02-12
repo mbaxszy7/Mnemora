@@ -10,7 +10,6 @@
 import type { IpcMainInvokeEvent } from "electron";
 import { IPC_CHANNELS, type IPCResult, toIPCError } from "@shared/ipc-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { activityMonitorService } from "../services/screenshot-processing/activity-monitor-service";
 import type {
   TimelineRequest,
   TimelineResponse,
@@ -33,6 +32,8 @@ async function handleGetTimeline(
   request: TimelineRequest
 ): Promise<IPCResult<TimelineResponse>> {
   try {
+    const { activityMonitorService } =
+      await import("../services/screenshot-processing/activity-monitor-service");
     const result = await activityMonitorService.getTimeline(request.fromTs, request.toTs);
     return { success: true, data: result };
   } catch (error) {
@@ -46,6 +47,8 @@ async function handleRegenerateSummary(
   request: RegenerateSummaryRequest
 ): Promise<IPCResult<RegenerateSummaryResponse>> {
   try {
+    const { activityMonitorService } =
+      await import("../services/screenshot-processing/activity-monitor-service");
     const result = await activityMonitorService.regenerateSummary(
       request.windowStart,
       request.windowEnd
@@ -65,6 +68,8 @@ async function handleGetSummary(
   request: SummaryRequest
 ): Promise<IPCResult<SummaryResponse | null>> {
   try {
+    const { activityMonitorService } =
+      await import("../services/screenshot-processing/activity-monitor-service");
     const result = await activityMonitorService.getSummary(request.windowStart, request.windowEnd);
     return { success: true, data: result };
   } catch (error) {
@@ -81,6 +86,8 @@ async function handleGetEventDetails(
   request: EventDetailsRequest
 ): Promise<IPCResult<EventDetailsResponse>> {
   try {
+    const { activityMonitorService } =
+      await import("../services/screenshot-processing/activity-monitor-service");
     const result = await activityMonitorService.getEventDetails(request.eventId);
     return { success: true, data: result };
   } catch (error) {

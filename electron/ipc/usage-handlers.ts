@@ -1,9 +1,13 @@
 import { IPC_CHANNELS, type UsageTimeRangePayload } from "../../shared/ipc-types";
-import { llmUsageService } from "../services/llm-usage-service";
 import { getLogger } from "../services/logger";
 import { IPCHandlerRegistry } from "./handler-registry";
 
 const logger = getLogger("usage-handlers");
+
+async function getLlmUsageService() {
+  const { llmUsageService } = await import("../services/llm-usage-service");
+  return llmUsageService;
+}
 
 export function registerUsageHandlers() {
   const registry = IPCHandlerRegistry.getInstance();
@@ -13,6 +17,7 @@ export function registerUsageHandlers() {
     IPC_CHANNELS.USAGE_GET_SUMMARY,
     async (_, payload: UsageTimeRangePayload) => {
       try {
+        const llmUsageService = await getLlmUsageService();
         return {
           success: true,
           data: await llmUsageService.getUsageSummary(
@@ -37,6 +42,7 @@ export function registerUsageHandlers() {
     IPC_CHANNELS.USAGE_GET_DAILY,
     async (_, payload: UsageTimeRangePayload) => {
       try {
+        const llmUsageService = await getLlmUsageService();
         return {
           success: true,
           data: await llmUsageService.getDailyUsage(
@@ -61,6 +67,7 @@ export function registerUsageHandlers() {
     IPC_CHANNELS.USAGE_GET_BREAKDOWN,
     async (_, payload: UsageTimeRangePayload) => {
       try {
+        const llmUsageService = await getLlmUsageService();
         return {
           success: true,
           data: await llmUsageService.getBreakdownByModel(

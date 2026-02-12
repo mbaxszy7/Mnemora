@@ -606,6 +606,7 @@ export interface BootApi {
   onStatusChanged(callback: (status: BootStatus) => void): () => void;
   onFtsHealthChanged(callback: (health: FtsHealthDetails) => void): () => void;
   retryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>>;
+  relaunch(): Promise<void>;
 }
 
 const bootApi: BootApi = {
@@ -633,6 +634,10 @@ const bootApi: BootApi = {
 
   async retryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>> {
     return ipcRenderer.invoke(IPC_CHANNELS.BOOT_RETRY_FTS_REPAIR);
+  },
+
+  async relaunch(): Promise<void> {
+    return ipcRenderer.invoke(IPC_CHANNELS.BOOT_RELAUNCH);
   },
 };
 

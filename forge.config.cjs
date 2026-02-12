@@ -399,7 +399,10 @@ module.exports = {
       //   - .dll:   Windows (sharp/libvips)
       //   - .node:  all platforms (native addons)
       // `plugin-auto-unpack-natives` also adds **/*.node; we list it explicitly for clarity.
-      unpack: "**/*.{dylib,dll,node}",
+      // Additionally unpack migrations and monitoring static files to avoid runtime asar
+      // extraction overhead on Windows (significant with Windows Defender enabled).
+      unpack:
+        "{**/*.{dylib,dll,node},dist-electron/migrations/**,dist-electron/monitoring-static/**}",
     },
     // Ensure Electron downloads are cached in-repo. This also makes it possible to
     // pre-download the Electron ZIP in `prePackage` and avoid flaky network/DNS.
@@ -430,9 +433,9 @@ module.exports = {
       name: "@electron-forge/maker-squirrel",
       platforms: ["win32"],
       config: {
-        name: "mnemora",
+        name: updateChannel === "nightly" ? "mnemora-nightly" : "mnemora",
         authors: "Mnemora",
-        description: "Mnemora - Your Second Brain",
+        description: `${appDisplayName} - Your Second Brain`,
         // Custom installer icon (replaces the default green Squirrel icon)
         setupIcon: "public/logo.ico",
         iconUrl: "https://raw.githubusercontent.com/mbaxszy7/Mnemora/master/public/logo.ico",

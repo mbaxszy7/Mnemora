@@ -1,108 +1,14 @@
 import { app, BrowserWindow, Menu, nativeImage, screen, ipcMain } from "electron";
+import type Database from "better-sqlite3";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { spawn } from "node:child_process";
-import { APP_ROOT, isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, VITE_PUBLIC } from "./env";
-import { AISDKService } from "./services/ai-sdk-service";
-import { LLMConfigService } from "./services/llm-config-service";
-import { registerI18nHandlers } from "./ipc/i18n-handlers";
-import { registerLLMConfigHandlers } from "./ipc/llm-config-handlers";
-import { registerScreenCaptureHandlers } from "./ipc/screen-capture-handlers";
-import { registerPermissionHandlers } from "./ipc/permission-handlers";
-import { registerCaptureSourceSettingsHandlers } from "./ipc/capture-source-settings-handlers";
-import { registerUserSettingsHandlers } from "./ipc/user-settings-handlers";
-import { registerContextGraphHandlers } from "./ipc/context-graph-handlers";
-import { registerThreadsHandlers } from "./ipc/threads-handlers";
-import { registerUsageHandlers } from "./ipc/usage-handlers";
-import { registerActivityMonitorHandlers } from "./ipc/activity-monitor-handlers";
-import { registerMonitoringHandlers } from "./ipc/monitoring-handlers";
-import { registerAppHandlers } from "./ipc/app-handlers";
-import { registerAppUpdateHandlers } from "./ipc/app-update-handlers";
-import { registerNotificationHandlers } from "./ipc/notification-handlers";
+// Startup initialization (Squirrel events, error handlers, env setup)
+// Import must be at the top before any other app logic
+import "./startup";
+import { isDev, MAIN_DIST, RENDERER_DIST, VITE_DEV_SERVER_URL, APP_ROOT } from "./env";
 import { IPCHandlerRegistry } from "./ipc/handler-registry";
 import { initializeLogger, getLogger } from "./services/logger";
-import { mainI18n } from "./services/i18n-service";
-import { databaseService } from "./database";
-import { captureScheduleController, screenCaptureModule } from "./services/screen-capture";
-import { screenshotProcessingModule } from "./services/screenshot-processing/screenshot-processing-module";
-import { powerMonitorService } from "./services/power-monitor";
-import { TrayService } from "./services/tray-service";
-import { monitoringServer } from "./services/monitoring";
-import { userSettingService } from "./services/user-setting-service";
-import { notificationService } from "./services/notification/notification-service";
-import { appUpdateService } from "./services/app-update-service";
-import { ftsHealthService } from "./services/fts-health-service";
 import type { BootMessageKey, BootPhase, BootStatus, IPCResult } from "../shared/ipc-types";
-
-// ============================================================================
-// Squirrel.Windows Startup Events (required for ARM64 install)
-// ============================================================================
-// Squirrel launches the app with --squirrel-* args during install/update/uninstall.
-// The app must handle them (create/remove shortcuts) and exit immediately.
-// Without this, the app fails to install properly on Windows ARM64.
-
-if (process.platform === "win32") {
-  const squirrelCommand = process.argv[1];
-  if (
-    squirrelCommand === "--squirrel-install" ||
-    squirrelCommand === "--squirrel-updated" ||
-    squirrelCommand === "--squirrel-uninstall" ||
-    squirrelCommand === "--squirrel-obsolete"
-  ) {
-    const appFolder = path.dirname(process.execPath);
-    const updateExe = path.resolve(appFolder, "..", "Update.exe");
-    const exeName = path.basename(process.execPath);
-
-    if (squirrelCommand === "--squirrel-install" || squirrelCommand === "--squirrel-updated") {
-      spawn(updateExe, ["--createShortcut", exeName], { detached: true });
-    } else if (squirrelCommand === "--squirrel-uninstall") {
-      spawn(updateExe, ["--removeShortcut", exeName], { detached: true });
-    }
-
-    app.quit();
-    process.exit(0);
-  }
-}
-
-// ============================================================================
-// Global Error Handlers (must be registered before anything else)
-// ============================================================================
-
-process.on("uncaughtException", (error) => {
-  // In production the logger may not be ready yet, so fall back to stderr.
-  // This prevents Electron from showing a crash dialog for non-fatal errors
-  // such as tesseract.js Worker fetch failures on offline machines.
-  try {
-    const logger = getLogger("uncaught");
-    logger.error({ error }, "Uncaught exception in main process");
-  } catch {
-    console.error("[uncaughtException]", error);
-  }
-});
-
-process.on("unhandledRejection", (reason) => {
-  try {
-    const logger = getLogger("uncaught");
-    logger.error({ reason }, "Unhandled promise rejection in main process");
-  } catch {
-    console.error("[unhandledRejection]", reason);
-  }
-});
-
-// ============================================================================
-// Environment Setup
-// ============================================================================
-
-process.env.APP_ROOT = process.env.APP_ROOT ?? APP_ROOT;
-process.env.VITE_PUBLIC = process.env.VITE_PUBLIC ?? VITE_PUBLIC;
-
-if (process.platform === "win32") {
-  app.setAppUserModelId(app.getName());
-}
-
-// ============================================================================
-// Single Instance Lock (production only)
-// ============================================================================
 
 const gotTheLock = isDev ? true : app.requestSingleInstanceLock();
 
@@ -117,11 +23,17 @@ if (!gotTheLock) {
 class AppLifecycleController {
   private mainWindow: BrowserWindow | null = null;
   private logger!: ReturnType<typeof getLogger>;
-  private trayService: TrayService | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private trayService: any = null;
   private isQuitting = false;
   private started = false;
   private disposed = false;
   private latestBootStatus: BootStatus | null = null;
+  private hasReachedTerminalState = false;
+  private trayInitialized = false;
+  // Lazily loaded service references (populated during boot, used by dispose)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private lazy: Record<string, any> = {};
 
   focusMainWindow(): void {
     const win = this.mainWindow;
@@ -155,7 +67,6 @@ class AppLifecycleController {
     this.logger = getLogger("main");
     this.logger.info("App is ready, starting boot sequence...");
 
-    appUpdateService.initialize();
     await this.createAndBoot();
   }
 
@@ -164,26 +75,13 @@ class AppLifecycleController {
    */
   private async createAndBoot(): Promise<void> {
     // 1. Create main window immediately (showing splash)
+    this.trayInitialized = false;
     this.mainWindow = this.createMainWindow();
-    this.trayService = TrayService.getInstance();
-    this.trayService
-      .configure({
-        createWindow: () => {
-          this.mainWindow = this.createMainWindow();
-          return this.mainWindow;
-        },
-        getMainWindow: () => this.mainWindow,
-        onQuit: () => {
-          this.isQuitting = true;
-          app.quit();
-        },
-      })
-      .init();
 
     // 2. Register boot-related IPC handlers
     this.registerBootHandlers();
 
-    // 3. Run boot sequence in background
+    // 3. Run boot sequence in background (all heavy modules loaded lazily)
     void this.runBootSequence();
   }
 
@@ -191,8 +89,23 @@ class AppLifecycleController {
    * Register IPC handlers for boot status
    */
   private registerBootHandlers(): void {
+    // Guard against double-registration (macOS activate can re-enter createAndBoot)
+    ipcMain.removeHandler("boot:get-status");
+    ipcMain.removeHandler("boot:retry-fts-repair");
+    ipcMain.removeHandler("boot:relaunch");
     ipcMain.handle("boot:get-status", () => this.getCurrentBootStatus());
     ipcMain.handle("boot:retry-fts-repair", () => this.handleRetryFtsRepair());
+    ipcMain.handle("boot:relaunch", () => this.handleRelaunch());
+  }
+
+  /**
+   * Relaunch the entire application (main + renderer).
+   * Used as a last-resort retry when the boot sequence has failed.
+   */
+  private handleRelaunch(): void {
+    this.logger.info("Relaunch requested from renderer");
+    app.relaunch();
+    app.exit(0);
   }
 
   /**
@@ -210,8 +123,22 @@ class AppLifecycleController {
 
   /**
    * Emit boot status to all listeners
+   * Prevents state regression: once terminal state (ready/degraded) is reached,
+   * non-terminal states are ignored to avoid UI confusion
    */
   private emitBootStatus(phase: BootPhase, error?: { code: string; message: string }): void {
+    const terminalStates: BootPhase[] = ["ready", "degraded", "failed"];
+    const isTerminal = terminalStates.includes(phase);
+
+    if (this.hasReachedTerminalState && !isTerminal) {
+      this.logger.debug({ phase }, "Ignoring non-terminal state after reaching terminal state");
+      return;
+    }
+
+    if (isTerminal) {
+      this.hasReachedTerminalState = true;
+    }
+
     const progress = this.getPhaseProgress(phase);
     const status: BootStatus = {
       phase,
@@ -222,21 +149,10 @@ class AppLifecycleController {
     };
 
     this.latestBootStatus = status;
-    this.logger.debug({ phase, progress }, "Boot status changed");
+    this.logger.info({ phase, progress }, "Boot status changed");
 
     if (this.mainWindow && !this.mainWindow.isDestroyed()) {
       this.mainWindow.webContents.send("boot:status-changed", status);
-    }
-  }
-
-  /**
-   * Emit FTS health to renderer
-   */
-  private emitFtsHealth(): void {
-    const health = ftsHealthService.getDetails();
-
-    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-      this.mainWindow.webContents.send("boot:fts-health-changed", health);
     }
   }
 
@@ -247,8 +163,9 @@ class AppLifecycleController {
     const progressMap: Record<BootPhase, number> = {
       "db-init": 15,
       "fts-check": 35,
-      "fts-rebuild": 70,
-      "app-init": 90,
+      "fts-rebuild": 55,
+      "app-init": 75,
+      "background-init": 90,
       ready: 100,
       degraded: 100,
       failed: 100,
@@ -265,6 +182,7 @@ class AppLifecycleController {
       "fts-check": "boot.phase.ftsCheck",
       "fts-rebuild": "boot.phase.ftsRebuild",
       "app-init": "boot.phase.appInit",
+      "background-init": "boot.phase.backgroundInit",
       ready: "boot.phase.ready",
       degraded: "boot.phase.degraded",
       failed: "boot.phase.failed",
@@ -274,38 +192,42 @@ class AppLifecycleController {
 
   /**
    * Run the boot sequence
+   *
+   * Startup policy:
+   * 1) show splash immediately
+   * 2) initialize all core/deferred services while splash is visible
+   * 3) emit terminal ready/degraded once initialization finishes
    */
   private async runBootSequence(): Promise<void> {
     try {
-      // Phase 1: Database initialization
+      // Phase 1: register handlers + database
       this.emitBootStatus("db-init");
-      this.registerIPCHandlers();
-      this.initDatabaseService();
+      await this.registerIPCHandlers();
 
-      // Phase 2: FTS5 health check
+      const { databaseService } = await import("./database");
+      this.lazy.databaseService = databaseService;
+      databaseService.initialize();
+      this.logger.info("Database service initialized");
+
+      // Phase 2: quick FTS availability check
       this.emitBootStatus("fts-check");
       const sqlite = databaseService.getSqlite();
-      if (sqlite) {
-        const ftsResult = await ftsHealthService.runStartupCheckAndHeal(sqlite, () => {
-          this.emitBootStatus("fts-rebuild");
-        });
-        this.emitFtsHealth();
-
-        // Phase 3: App services initialization
-        this.emitBootStatus("app-init");
-        await this.initializeAppServices();
-
-        // Final phase: ready or degraded
-        if (ftsResult.status === "healthy") {
-          this.emitBootStatus("ready");
-        } else {
-          this.emitBootStatus("degraded", {
-            code: ftsResult.errorCode || "FTS_UNHEALTHY",
-            message: ftsResult.error || "FTS5 is unavailable",
-          });
-        }
-      } else {
+      if (!sqlite) {
         throw new Error("Database not initialized");
+      }
+
+      const ftsQuickResult = await this.runQuickFtsCheck(sqlite);
+      await this.emitFtsHealth();
+
+      // Phase 3: all deferred initialization runs while splash is visible
+      this.emitBootStatus("app-init");
+      const deferredResult = await this.runDeferredInitialization(sqlite);
+
+      const finalError = ftsQuickResult.error ?? deferredResult.error;
+      if (ftsQuickResult.isHealthy && deferredResult.isHealthy) {
+        this.emitBootStatus("ready");
+      } else {
+        this.emitBootStatus("degraded", finalError);
       }
     } catch (error) {
       this.logger.error({ error }, "Boot sequence failed");
@@ -318,19 +240,96 @@ class AppLifecycleController {
   }
 
   /**
+   * Quick FTS check - runs synchronously during boot
+   * Only checks table existence, defers integrity check to background
+   */
+  private async runQuickFtsCheck(sqlite: Database.Database): Promise<{
+    isHealthy: boolean;
+    error?: { code: string; message: string };
+  }> {
+    try {
+      // Quick check: does table exist?
+      const tableExists = sqlite
+        .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'screenshots_fts'")
+        .get();
+
+      if (!tableExists) {
+        // New user - table will be created by migrations, mark as healthy
+        return { isHealthy: true };
+      }
+
+      // For existing users, defer deep check to background
+      // Return optimistic healthy status for fast startup
+      return { isHealthy: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn({ error: message }, "Quick FTS check failed");
+      return {
+        isHealthy: false,
+        error: { code: "FTS_QUICK_CHECK_FAILED", message },
+      };
+    }
+  }
+
+  /**
+   * Deferred initialization while splash is visible.
+   */
+  private async runDeferredInitialization(sqlite: Database.Database): Promise<{
+    isHealthy: boolean;
+    error?: { code: string; message: string };
+  }> {
+    this.logger.info("Starting deferred initialization...");
+    this.emitBootStatus("background-init");
+
+    let error: { code: string; message: string } | undefined;
+
+    // 1) Deep FTS health check / rebuild
+    const ftsHealthService = await this.getFtsHealthService();
+    const ftsResult = await ftsHealthService.runStartupCheckAndHeal(sqlite, () => {
+      this.emitBootStatus("fts-rebuild");
+    });
+    await this.emitFtsHealth();
+
+    if (ftsResult.status === "degraded") {
+      error = {
+        code: ftsResult.errorCode || "FTS_UNHEALTHY",
+        message: ftsResult.error || "FTS5 is unavailable",
+      };
+    }
+
+    // 2) Initialize remaining services
+    const initFailures = await this.initializeDeferredServices();
+    if (!error && initFailures.length > 0) {
+      error = {
+        code: "DEFERRED_INIT_FAILED",
+        message: initFailures[0],
+      };
+    }
+
+    if (error) {
+      this.logger.warn({ error, initFailures }, "Deferred initialization completed with issues");
+      return { isHealthy: false, error };
+    }
+
+    this.logger.info("Deferred initialization completed");
+    return { isHealthy: true };
+  }
+
+  /**
    * Handle manual FTS repair retry
    */
   private async handleRetryFtsRepair(): Promise<IPCResult<{ success: boolean; error?: string }>> {
     try {
-      const sqlite = databaseService.getSqlite();
+      const sqlite = this.lazy.databaseService?.getSqlite();
       if (!sqlite) {
         return { success: true, data: { success: false, error: "Database not available" } };
       }
 
+      const ftsHealthService = await this.getFtsHealthService();
       const result = await ftsHealthService.retryRepair(sqlite, () => {
         this.emitBootStatus("fts-rebuild");
       });
-      this.emitFtsHealth();
+      await this.emitFtsHealth();
 
       if (result.status === "healthy") {
         this.emitBootStatus("ready");
@@ -348,33 +347,50 @@ class AppLifecycleController {
     }
   }
 
-  /**
-   * Initialize app services (non-critical)
-   */
-  private async initializeAppServices(): Promise<void> {
-    await userSettingService.getSettings();
-    captureScheduleController.initialize({ screenCapture: screenCaptureModule });
-    captureScheduleController.start();
-    await this.initI18nService();
-    // Refresh tray menu now that i18n is ready (initial build used raw keys)
-    this.trayService?.refresh();
-    notificationService.registerEventBusSubscriptions();
-    await this.initAIService();
-    this.initPowerMonitor();
-    await this.initMonitoringServer();
+  private async initializeDeferredServices(): Promise<string[]> {
+    const failures: string[] = [];
 
-    // OCR warmup (non-blocking)
-    void this.tryWarmupOcrService();
+    const runTask = async (name: string, task: () => Promise<void>) => {
+      try {
+        await task();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        failures.push(`${name}: ${message}`);
+        this.logger.error({ error }, `${name} initialization failed`);
+      }
+    };
+
+    // Precondition for capture/update/runtime services
+    await runTask("User settings", async () => {
+      const { userSettingService } = await import("./services/user-setting-service");
+      await userSettingService.getSettings();
+    });
+
+    await Promise.all([
+      runTask("i18n", () => this.initI18nService()),
+      runTask("Tray", () => this.initTrayService()),
+      runTask("App update", () => this.initAppUpdateService()),
+      runTask("Screen capture", () => this.initScreenCaptureService()),
+      runTask("Notification", () => this.initNotificationService()),
+      runTask("AI runtime", () => this.initAIService()),
+      runTask("Power monitor", () => this.initPowerMonitor()),
+      runTask("Monitoring server", () => this.initMonitoringServer()),
+      runTask("OCR warmup", () => this.tryWarmupOcrService()),
+    ]);
+
+    return failures;
   }
 
   private async tryWarmupOcrService(): Promise<void> {
-    // Only warm up if FTS is healthy
+    const ftsHealthService = await this.getFtsHealthService();
     if (!ftsHealthService.isFtsUsable()) {
       this.logger.info("Skipping OCR warmup - FTS is not usable");
       return;
     }
 
     try {
+      const { screenshotProcessingModule } =
+        await import("./services/screenshot-processing/screenshot-processing-module");
       await screenshotProcessingModule.ocrWarmup();
     } catch (error) {
       this.logger.warn({ error }, "Failed to warm up OCR service");
@@ -382,26 +398,68 @@ class AppLifecycleController {
   }
 
   private async initI18nService(): Promise<void> {
-    try {
-      await mainI18n.initialize();
-      this.logger.info("i18n service initialized");
-    } catch (error) {
-      this.logger.error({ error }, "Failed to initialize i18n service");
-    }
+    const { mainI18n } = await import("./services/i18n-service");
+    await mainI18n.initialize();
+    this.logger.info("i18n service initialized");
+  }
+
+  private async initTrayService(): Promise<void> {
+    const { TrayService } = await import("./services/tray-service");
+    this.lazy.TrayService = TrayService;
+    this.trayService = TrayService.getInstance();
+    this.trayService.configure({
+      createWindow: () => {
+        this.mainWindow = this.createMainWindow();
+        return this.mainWindow;
+      },
+      getMainWindow: () => this.mainWindow,
+      onQuit: () => {
+        this.isQuitting = true;
+        app.quit();
+      },
+    });
+    this.trayService.init();
+    this.trayService.refresh();
+    this.trayInitialized = true;
+    this.logger.info("Tray service initialized");
+  }
+
+  private async initAppUpdateService(): Promise<void> {
+    const { appUpdateService } = await import("./services/app-update-service");
+    this.lazy.appUpdateService = appUpdateService;
+    appUpdateService.initialize();
+    this.logger.info("App update service initialized");
+  }
+
+  private async initScreenCaptureService(): Promise<void> {
+    const { captureScheduleController, screenCaptureModule } =
+      await import("./services/screen-capture");
+    this.lazy.captureScheduleController = captureScheduleController;
+    this.lazy.screenCaptureModule = screenCaptureModule;
+    captureScheduleController.initialize({ screenCapture: screenCaptureModule });
+    captureScheduleController.start();
+    this.logger.info("Screen capture service initialized");
+  }
+
+  private async initNotificationService(): Promise<void> {
+    const { notificationService } = await import("./services/notification/notification-service");
+    this.lazy.notificationService = notificationService;
+    notificationService.registerEventBusSubscriptions();
+    this.logger.info("Notification service initialized");
   }
 
   private async initAIService(): Promise<void> {
     try {
-      const llmConfigService = LLMConfigService.getInstance();
-      const config = await llmConfigService.loadConfiguration();
+      const { LLMConfigService } = await import("./services/llm-config-service");
+      const config = await LLMConfigService.getInstance().loadConfiguration();
 
       if (!config) {
         this.logger.info("No LLM configuration found in database, AISDKService not initialized");
         return;
       }
 
-      const aiService = AISDKService.getInstance();
-      aiService.initialize(config);
+      const { AISDKService } = await import("./services/ai-sdk-service");
+      AISDKService.getInstance().initialize(config);
       this.logger.info(
         { mode: config.mode },
         "AISDKService initialized from database configuration"
@@ -414,21 +472,44 @@ class AppLifecycleController {
     }
   }
 
-  private initDatabaseService(): void {
-    try {
-      databaseService.initialize();
-      this.logger.info("Database service initialized");
-    } catch (error) {
-      this.logger.error({ error }, "Failed to initialize database service");
-      throw error;
-    }
-  }
-
-  private registerIPCHandlers(): void {
+  private async registerIPCHandlers(): Promise<void> {
     if (isDev) {
       IPCHandlerRegistry.getInstance().unregisterAll();
       this.logger.debug("Cleaned up existing IPC handlers for hot reload");
     }
+
+    // Dynamic import all handler registrars in parallel
+    const [
+      { registerI18nHandlers },
+      { registerLLMConfigHandlers },
+      { registerScreenCaptureHandlers },
+      { registerPermissionHandlers },
+      { registerCaptureSourceSettingsHandlers },
+      { registerUserSettingsHandlers },
+      { registerContextGraphHandlers },
+      { registerThreadsHandlers },
+      { registerUsageHandlers },
+      { registerActivityMonitorHandlers },
+      { registerMonitoringHandlers },
+      { registerAppHandlers },
+      { registerAppUpdateHandlers },
+      { registerNotificationHandlers },
+    ] = await Promise.all([
+      import("./ipc/i18n-handlers"),
+      import("./ipc/llm-config-handlers"),
+      import("./ipc/screen-capture-handlers"),
+      import("./ipc/permission-handlers"),
+      import("./ipc/capture-source-settings-handlers"),
+      import("./ipc/user-settings-handlers"),
+      import("./ipc/context-graph-handlers"),
+      import("./ipc/threads-handlers"),
+      import("./ipc/usage-handlers"),
+      import("./ipc/activity-monitor-handlers"),
+      import("./ipc/monitoring-handlers"),
+      import("./ipc/app-handlers"),
+      import("./ipc/app-update-handlers"),
+      import("./ipc/notification-handlers"),
+    ]);
 
     registerI18nHandlers();
     registerLLMConfigHandlers();
@@ -447,26 +528,41 @@ class AppLifecycleController {
     this.logger.info("IPC handlers registered");
   }
 
-  private initPowerMonitor(): void {
-    try {
-      powerMonitorService.initialize();
-      this.logger.info("Power monitor initialized");
-    } catch (error) {
-      this.logger.error({ error }, "Failed to initialize power monitor");
-    }
+  private async initPowerMonitor(): Promise<void> {
+    const { powerMonitorService } = await import("./services/power-monitor");
+    this.lazy.powerMonitorService = powerMonitorService;
+    powerMonitorService.initialize();
+    this.logger.info("Power monitor initialized");
   }
 
   private async initMonitoringServer(): Promise<void> {
     if (!isDev) return;
 
-    try {
-      await monitoringServer.start();
-      this.logger.info(
-        { port: monitoringServer.getPort() },
-        "Monitoring server auto-started in dev mode"
-      );
-    } catch (error) {
-      this.logger.error({ error }, "Failed to auto-start monitoring server");
+    const { monitoringServer } = await import("./services/monitoring");
+    this.lazy.monitoringServer = monitoringServer;
+    await monitoringServer.start();
+    this.logger.info(
+      { port: monitoringServer.getPort() },
+      "Monitoring server auto-started in dev mode"
+    );
+  }
+
+  private async getFtsHealthService(): Promise<
+    (typeof import("./services/fts-health-service"))["ftsHealthService"]
+  > {
+    if (!this.lazy.ftsHealthService) {
+      const { ftsHealthService } = await import("./services/fts-health-service");
+      this.lazy.ftsHealthService = ftsHealthService;
+    }
+    return this.lazy.ftsHealthService;
+  }
+
+  private async emitFtsHealth(): Promise<void> {
+    const ftsHealthService = await this.getFtsHealthService();
+    const health = ftsHealthService.getDetails();
+
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send("boot:fts-health-changed", health);
     }
   }
 
@@ -520,7 +616,11 @@ class AppLifecycleController {
     win.on("close", (event) => {
       if (!this.isQuitting) {
         event.preventDefault();
-        win.hide();
+        if (this.trayInitialized) {
+          win.hide();
+        } else {
+          win.minimize();
+        }
       }
     });
 
@@ -549,14 +649,14 @@ class AppLifecycleController {
     if (this.disposed) return;
     this.disposed = true;
 
-    TrayService.resetInstance();
-    notificationService.dispose();
-    captureScheduleController.stop();
-    screenCaptureModule.dispose();
-    powerMonitorService.dispose();
-    appUpdateService.dispose();
-    monitoringServer.stop();
-    databaseService.close();
+    this.lazy.TrayService?.resetInstance();
+    this.lazy.notificationService?.dispose();
+    this.lazy.captureScheduleController?.stop();
+    this.lazy.screenCaptureModule?.dispose();
+    this.lazy.powerMonitorService?.dispose();
+    this.lazy.appUpdateService?.dispose();
+    this.lazy.monitoringServer?.stop();
+    this.lazy.databaseService?.close();
     this.trayService?.dispose();
   }
 }

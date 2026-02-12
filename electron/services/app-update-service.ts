@@ -19,6 +19,11 @@ interface LocalBuildMetadata {
   buildSha: string | null;
 }
 
+interface InitializeOptions {
+  autoCheck?: boolean;
+  startInterval?: boolean;
+}
+
 function normalizeUpdateChannel(value: unknown): AppUpdateChannel | null {
   if (typeof value !== "string") return null;
   const normalized = value.trim().toLowerCase();
@@ -136,9 +141,11 @@ class AppUpdateService {
     AppUpdateService.instance = null;
   }
 
-  initialize(): void {
+  initialize(opts: InitializeOptions = {}): void {
     if (this.initialized) return;
     this.initialized = true;
+    const autoCheck = opts.autoCheck ?? true;
+    const startInterval = opts.startInterval ?? true;
 
     if (!app.isPackaged) {
       this.updateStatus({
@@ -153,13 +160,18 @@ class AppUpdateService {
       this.initializeWindowsUpdater();
     }
 
-    void this.checkNow();
-    this.intervalId = setInterval(
-      () => {
-        void this.checkNow();
-      },
-      60 * 60 * 1000
-    );
+    if (autoCheck) {
+      void this.checkNow();
+    }
+
+    if (startInterval) {
+      this.intervalId = setInterval(
+        () => {
+          void this.checkNow();
+        },
+        60 * 60 * 1000
+      );
+    }
   }
 
   dispose(): void {

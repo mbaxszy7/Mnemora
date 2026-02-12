@@ -267,6 +267,82 @@ describe("AppUpdateService", () => {
     expect(service.getStatus().message).toContain("disabled in development mode");
   });
 
+  it("initialize can skip auto check and interval", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "v0.0.1",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/v0.0.1",
+          prerelease: false,
+          draft: false,
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    service.initialize({ autoCheck: false, startInterval: false });
+    vi.advanceTimersByTime(60 * 60 * 1000);
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(service.getStatus().phase).toBe("idle");
+    vi.useRealTimers();
+  });
+
+  it("initialize can skip auto check but keep interval checks", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "v0.0.1",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/v0.0.1",
+          prerelease: false,
+          draft: false,
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    service.initialize({ autoCheck: false, startInterval: true });
+
+    expect(fetch).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(fetch.mock.calls.length).toBeGreaterThanOrEqual(1);
+    vi.useRealTimers();
+  });
+
+  it("initialize can auto check once without scheduling interval", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          tag_name: "v0.0.1",
+          html_url: "https://github.com/mbaxszy7/Mnemora/releases/tag/v0.0.1",
+          prerelease: false,
+          draft: false,
+        }),
+      }))
+    );
+
+    const service = AppUpdateService.getInstance();
+    service.initialize({ autoCheck: true, startInterval: false });
+    await vi.runAllTicks();
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(60 * 60 * 1000);
+    await vi.runOnlyPendingTimersAsync();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
   it("opens default latest release page when release url is absent", async () => {
     const service = AppUpdateService.getInstance();
     const result = await service.openDownloadPage();

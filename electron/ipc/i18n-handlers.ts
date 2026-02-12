@@ -1,8 +1,12 @@
 import type { IpcMainInvokeEvent } from "electron";
-import { mainI18n } from "../services/i18n-service";
 import { IPC_CHANNELS, IPCResult, toIPCError, LanguageChangePayload } from "@shared/ipc-types";
 import { SupportedLanguage, isSupportedLanguage } from "@shared/i18n-types";
 import { IPCHandlerRegistry } from "./handler-registry";
+
+async function getMainI18n() {
+  const { mainI18n } = await import("../services/i18n-service");
+  return mainI18n;
+}
 
 async function handleChangeLanguage(
   _event: IpcMainInvokeEvent,
@@ -19,6 +23,7 @@ async function handleChangeLanguage(
       };
     }
 
+    const mainI18n = await getMainI18n();
     await mainI18n.changeLanguage(language);
 
     return {
@@ -34,6 +39,7 @@ async function handleChangeLanguage(
 
 async function handleGetLanguage(): Promise<IPCResult<SupportedLanguage>> {
   try {
+    const mainI18n = await getMainI18n();
     const language = mainI18n.getCurrentLanguage();
 
     return {
@@ -50,6 +56,7 @@ async function handleGetLanguage(): Promise<IPCResult<SupportedLanguage>> {
 
 async function handleGetSystemLanguage(): Promise<IPCResult<SupportedLanguage>> {
   try {
+    const mainI18n = await getMainI18n();
     const language = mainI18n.detectSystemLanguage();
 
     return {

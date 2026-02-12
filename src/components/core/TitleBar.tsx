@@ -56,12 +56,15 @@ export const TitleBar: React.FC = () => {
 
   useEffect(() => {
     // Initial state check
-    window.screenCaptureApi.getState().then((result) => {
-      if (result.success && result.data) {
-        setIsRecording(result.data.status === "running");
-        setCaptureStatus(result.data.status);
-      }
-    });
+    window.screenCaptureApi
+      .getState()
+      .then((result) => {
+        if (result.success && result.data) {
+          setIsRecording(result.data.status === "running");
+          setCaptureStatus(result.data.status);
+        }
+      })
+      .catch(() => {});
 
     // Listen for state changes (Running/Paused/Stopped)
     const unsubState = window.screenCaptureApi.onStateChanged((payload) => {

@@ -665,6 +665,7 @@
       "ftsCheck": "正在检查搜索功能...",
       "ftsRebuild": "正在修复搜索功能...",
       "appInit": "正在加载应用...",
+      "backgroundInit": "正在启动后台服务...",
       "ready": "准备就绪",
       "degraded": "应用已启动（搜索功能受限）",
       "failed": "启动失败，请重启"
@@ -673,8 +674,11 @@
       "degraded": "搜索功能受限，OCR 可能不可用。"
     },
     "error": {
-      "failed": "初始化失败，请重启应用。"
+      "failed": "初始化失败，请重启应用。",
+      "default": "应用启动失败"
     },
+    "slowWarning": "初始化耗时较长，请稍候...",
+    "retry": "重试",
     "settings": {
       "ftsDegraded": "全文搜索索引已损坏",
       "ftsDegradedDescription": "OCR 和搜索功能暂时不可用。您可以尝试修复索引。",

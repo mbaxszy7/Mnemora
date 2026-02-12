@@ -112,6 +112,7 @@ export const IPC_CHANNELS = {
   BOOT_GET_STATUS: "boot:get-status",
   BOOT_STATUS_CHANGED: "boot:status-changed",
   BOOT_RETRY_FTS_REPAIR: "boot:retry-fts-repair",
+  BOOT_RELAUNCH: "boot:relaunch",
   BOOT_FTS_HEALTH_CHANGED: "boot:fts-health-changed",
 } as const;
 
@@ -211,6 +212,7 @@ export type BootPhase =
   | "fts-check"
   | "fts-rebuild"
   | "app-init"
+  | "background-init"
   | "ready"
   | "degraded"
   | "failed";
@@ -220,6 +222,7 @@ export type BootMessageKey =
   | "boot.phase.ftsCheck"
   | "boot.phase.ftsRebuild"
   | "boot.phase.appInit"
+  | "boot.phase.backgroundInit"
   | "boot.phase.ready"
   | "boot.phase.degraded"
   | "boot.phase.failed";

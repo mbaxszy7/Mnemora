@@ -16,7 +16,6 @@ import type {
   SetPreferencesRequest,
 } from "@shared/capture-source-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { screenCaptureModule } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("capture-source-settings-handlers");
@@ -32,6 +31,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_GET_SCREENS,
     async (): Promise<IPCResult<GetScreensResponse>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         logger.debug("IPC: Getting screens with thumbnails");
         const captureService = screenCaptureModule.getCaptureService();
         const screens = await captureService.getCaptureScreenInfo();
@@ -48,6 +48,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_GET_APPS,
     async (): Promise<IPCResult<GetAppsResponse>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         logger.debug("IPC: Getting active apps");
         const captureService = screenCaptureModule.getCaptureService();
         const apps = await captureService.getCaptureAppInfo();
@@ -64,6 +65,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_GET_PREFERENCES,
     async (): Promise<IPCResult<PreferencesResponse>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         logger.debug("IPC: Getting capture preferences");
         const preferences = screenCaptureModule.getPreferencesService().getPreferences();
         return { success: true, data: { preferences } };
@@ -79,6 +81,7 @@ export function registerCaptureSourceSettingsHandlers(): void {
     IPC_CHANNELS.CAPTURE_SOURCES_SET_PREFERENCES,
     async (_event, request: SetPreferencesRequest): Promise<IPCResult<PreferencesResponse>> => {
       try {
+        const { screenCaptureModule } = await import("../services/screen-capture");
         const module = screenCaptureModule;
         module.setPreferences(request.preferences);
         const preferences = module.getPreferencesService().getPreferences();

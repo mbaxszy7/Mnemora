@@ -7,22 +7,20 @@
 import { IPC_CHANNELS } from "@shared/ipc-types";
 import { LLMConfig, LLMConfigCheckResult, LLMValidationResult } from "@shared/llm-config-types";
 import { IPCHandlerRegistry } from "./handler-registry";
-import { LLMConfigService } from "../services/llm-config-service";
 import { getLogger } from "../services/logger";
-import { aiRuntimeService } from "../services/ai-runtime-service";
 
 const logger = getLogger("llm-config-handlers");
 
 export function registerLLMConfigHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
-  const configService = LLMConfigService.getInstance();
 
   // Check if valid LLM configuration exists
   registry.registerHandler(
     IPC_CHANNELS.LLM_CONFIG_CHECK,
     async (_event: Electron.IpcMainInvokeEvent): Promise<LLMConfigCheckResult> => {
+      const { LLMConfigService } = await import("../services/llm-config-service");
       logger.debug("Handling LLM_CONFIG_CHECK");
-      return configService.checkConfiguration();
+      return LLMConfigService.getInstance().checkConfiguration();
     }
   );
 
@@ -33,8 +31,9 @@ export function registerLLMConfigHandlers(): void {
       _event: Electron.IpcMainInvokeEvent,
       config: LLMConfig
     ): Promise<LLMValidationResult> => {
+      const { LLMConfigService } = await import("../services/llm-config-service");
       logger.debug({ mode: config.mode }, "Handling LLM_CONFIG_VALIDATE");
-      return configService.validateConfiguration(config);
+      return LLMConfigService.getInstance().validateConfiguration(config);
     }
   );
 
@@ -42,8 +41,12 @@ export function registerLLMConfigHandlers(): void {
   registry.registerHandler(
     IPC_CHANNELS.LLM_CONFIG_SAVE,
     async (_event: Electron.IpcMainInvokeEvent, config: LLMConfig): Promise<void> => {
+      const [{ LLMConfigService }, { aiRuntimeService }] = await Promise.all([
+        import("../services/llm-config-service"),
+        import("../services/ai-runtime-service"),
+      ]);
       logger.debug({ mode: config.mode }, "Handling LLM_CONFIG_SAVE");
-      await configService.saveConfiguration(config);
+      await LLMConfigService.getInstance().saveConfiguration(config);
       await aiRuntimeService.handleConfigSaved(config);
       return void 0;
     }
@@ -53,8 +56,9 @@ export function registerLLMConfigHandlers(): void {
   registry.registerHandler(
     IPC_CHANNELS.LLM_CONFIG_GET,
     async (_event: Electron.IpcMainInvokeEvent): Promise<LLMConfig | null> => {
+      const { LLMConfigService } = await import("../services/llm-config-service");
       logger.debug("Handling LLM_CONFIG_GET");
-      return configService.loadConfiguration();
+      return LLMConfigService.getInstance().loadConfiguration();
     }
   );
 

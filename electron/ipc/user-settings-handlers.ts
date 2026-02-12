@@ -7,11 +7,18 @@ import type {
 } from "@shared/user-settings-types";
 
 import { IPCHandlerRegistry } from "./handler-registry";
-import { userSettingService } from "../services/user-setting-service";
-import { captureScheduleController } from "../services/screen-capture";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("user-settings-handlers");
+
+async function loadSettingsDependencies() {
+  const [{ userSettingService }, { captureScheduleController }] = await Promise.all([
+    import("../services/user-setting-service"),
+    import("../services/screen-capture"),
+  ]);
+
+  return { userSettingService, captureScheduleController };
+}
 
 export function registerUserSettingsHandlers(): void {
   const registry = IPCHandlerRegistry.getInstance();
@@ -20,6 +27,7 @@ export function registerUserSettingsHandlers(): void {
     IPC_CHANNELS.USER_SETTINGS_GET,
     async (): Promise<IPCResult<UserSettingsResponse>> => {
       try {
+        const { userSettingService } = await loadSettingsDependencies();
         const settings = await userSettingService.getSettings();
         return { success: true, data: { settings } };
       } catch (error) {
@@ -36,6 +44,7 @@ export function registerUserSettingsHandlers(): void {
       request: UpdateUserSettingsRequest
     ): Promise<IPCResult<UserSettingsResponse>> => {
       try {
+        const { userSettingService, captureScheduleController } = await loadSettingsDependencies();
         const settings = await userSettingService.updateSettings(request.settings);
         await captureScheduleController.evaluateNow();
         return { success: true, data: { settings } };
@@ -53,6 +62,7 @@ export function registerUserSettingsHandlers(): void {
       request: SetCaptureManualOverrideRequest
     ): Promise<IPCResult<UserSettingsResponse>> => {
       try {
+        const { userSettingService, captureScheduleController } = await loadSettingsDependencies();
         const settings = await userSettingService.setCaptureManualOverride(request.mode);
         await captureScheduleController.evaluateNow();
         return { success: true, data: { settings } };
@@ -70,6 +80,7 @@ export function registerUserSettingsHandlers(): void {
       request: SetOnboardingProgressRequest
     ): Promise<IPCResult<UserSettingsResponse>> => {
       try {
+        const { userSettingService } = await loadSettingsDependencies();
         const settings = await userSettingService.setOnboardingProgress(request.progress);
         return { success: true, data: { settings } };
       } catch (error) {

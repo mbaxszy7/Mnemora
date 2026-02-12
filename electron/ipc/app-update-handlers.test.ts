@@ -9,6 +9,7 @@ const mockLogger = vi.hoisted(() => ({
   debug: vi.fn(),
 }));
 const mockService = vi.hoisted(() => ({
+  initialize: vi.fn(),
   getStatus: vi.fn(() => ({
     phase: "idle",
     currentVersion: "0.0.1",
@@ -73,6 +74,8 @@ describe("registerAppUpdateHandlers", () => {
 
     expect(result.success).toBe(true);
     expect(result.data?.started).toBe(true);
+    expect(mockService.initialize).toHaveBeenCalledWith({ autoCheck: false, startInterval: true });
+    expect(mockService.checkNow).toHaveBeenCalledTimes(1);
   });
 
   it("opens download page", async () => {
@@ -85,5 +88,6 @@ describe("registerAppUpdateHandlers", () => {
 
     expect(result.success).toBe(true);
     expect(result.data?.url).toBe("https://example.com");
+    expect(mockService.initialize).toHaveBeenCalledWith({ autoCheck: false, startInterval: true });
   });
 });

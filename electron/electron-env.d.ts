@@ -345,5 +345,6 @@ interface Window {
     retryFtsRepair(): Promise<
       import("../shared/ipc-types").IPCResult<{ success: boolean; error?: string }>
     >;
+    relaunch(): Promise<void>;
   };
 }

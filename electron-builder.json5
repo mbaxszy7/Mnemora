@@ -101,6 +101,13 @@
     installerIcon: "public/logo.ico",
     uninstallerIcon: "public/logo.ico",
     installerHeaderIcon: "public/logo.ico",
+    // Branded sidebar (164×314 BMP) on Welcome/Finish pages
+    installerSidebar: "public/installerSidebar.bmp",
+    uninstallerSidebar: "public/installerSidebar.bmp",
+    // Branded header (150×57 BMP) on Directory/InstFiles pages
+    installerHeader: "public/installerHeader.bmp",
+    // Custom NSIS include for enhanced installer UX (auto-discovered from build/installer.nsh)
+    include: "build/installer.nsh",
     unicode: true,
     // Show "Run app after install" checkbox
     runAfterFinish: true,

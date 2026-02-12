@@ -71,6 +71,8 @@ export function ActiveThreadLens() {
       }
 
       setLensState(res.data?.snapshot ?? null);
+    } catch {
+      setLensState(null);
     } finally {
       setIsLoading(false);
     }

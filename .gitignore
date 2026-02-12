@@ -49,6 +49,11 @@ dev.db-wal
 *.db-journal
 *.db-wal
 
+# Tesseract.js OCR training data (downloaded at runtime)
+chi_sim.traineddata
+eng.traineddata
+*.traineddata
+
 # Coverage / build artifacts
 coverage
 coverage-full

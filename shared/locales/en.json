@@ -660,6 +660,7 @@
       "ftsCheck": "Checking search...",
       "ftsRebuild": "Repairing search...",
       "appInit": "Loading app...",
+      "backgroundInit": "Starting background services...",
       "ready": "Ready",
       "degraded": "App ready (search limited)",
       "failed": "Failed to start, please restart"
@@ -668,8 +669,11 @@
       "degraded": "Search features limited. OCR may be unavailable."
     },
     "error": {
-      "failed": "Failed to initialize. Please restart the app."
+      "failed": "Failed to initialize. Please restart the app.",
+      "default": "Failed to start application"
     },
+    "slowWarning": "Initialization is taking longer than expected...",
+    "retry": "Retry",
     "settings": {
       "ftsDegraded": "Full-text search index is damaged",
       "ftsDegradedDescription": "OCR and search features are temporarily unavailable. You can try to repair the index.",

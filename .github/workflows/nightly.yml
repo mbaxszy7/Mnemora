@@ -70,6 +70,7 @@ jobs:
           MNEMORA_UPDATE_CHANNEL: nightly
           MNEMORA_APP_NAME: Mnemora - Nightly
           MNEMORA_BUILD_SHA: ${{ github.sha }}
+          MNEMORA_LOG_LEVEL: info
         run: pnpm forge:make --platform=${{ matrix.platform }} --arch=${{ matrix.arch }}
       - name: Verify mac app bundle signature integrity
         if: matrix.platform == 'darwin'

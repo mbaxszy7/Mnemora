@@ -6,7 +6,6 @@ import type {
 } from "@shared/notification-types";
 
 import { IPCHandlerRegistry } from "./handler-registry";
-import { notificationService } from "../services/notification/notification-service";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("notification-handlers");
@@ -18,6 +17,8 @@ export function registerNotificationHandlers(): void {
     IPC_CHANNELS.NOTIFICATION_SHOW,
     async (_event, request: ShowNotificationRequest): Promise<IPCResult<void>> => {
       try {
+        const { notificationService } =
+          await import("../services/notification/notification-service");
         await notificationService.show(request.notification);
         return { success: true, data: undefined };
       } catch (error) {
@@ -31,6 +32,8 @@ export function registerNotificationHandlers(): void {
     IPC_CHANNELS.NOTIFICATION_GET_PREFERENCES,
     async (): Promise<IPCResult<NotificationPreferencesResponse>> => {
       try {
+        const { notificationService } =
+          await import("../services/notification/notification-service");
         const preferences = await notificationService.refreshPreferences();
         return { success: true, data: { preferences } };
       } catch (error) {
@@ -47,6 +50,8 @@ export function registerNotificationHandlers(): void {
       request: NotificationPreferencesRequest
     ): Promise<IPCResult<NotificationPreferencesResponse>> => {
       try {
+        const { notificationService } =
+          await import("../services/notification/notification-service");
         const preferences = await notificationService.updatePreferences(request.preferences);
         return { success: true, data: { preferences } };
       } catch (error) {

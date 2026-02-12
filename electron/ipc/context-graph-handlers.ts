@@ -7,12 +7,17 @@ import type {
   ExpandedContextNode,
   ScreenshotEvidence,
 } from "../services/screenshot-processing/types";
-import { contextSearchService } from "../services/screenshot-processing/context-search-service";
 import { getLogger } from "../services/logger";
 
 const logger = getLogger("context-graph-handlers");
 
 let inFlightSearchController: AbortController | null = null;
+
+async function getContextSearchService() {
+  const { contextSearchService } =
+    await import("../services/screenshot-processing/context-search-service");
+  return contextSearchService;
+}
 
 /**
  * Handle semantic search
@@ -35,6 +40,7 @@ async function handleSearch(
     inFlightSearchController = controller;
 
     try {
+      const contextSearchService = await getContextSearchService();
       const result = await contextSearchService.search(trimmed, controller.signal);
       return { success: true, data: result };
     } finally {
@@ -79,6 +85,7 @@ async function handleGetThread(
     if (!id) {
       return { success: true, data: [] };
     }
+    const contextSearchService = await getContextSearchService();
     const data = await contextSearchService.getThread(id);
     return { success: true, data };
   } catch (error) {
@@ -96,6 +103,7 @@ async function handleGetEvidence(
 ): Promise<IPCResult<ScreenshotEvidence[]>> {
   try {
     const ids = Array.isArray(nodeIds) ? nodeIds : [];
+    const contextSearchService = await getContextSearchService();
     const data = await contextSearchService.getEvidence(ids);
     return { success: true, data };
   } catch (error) {

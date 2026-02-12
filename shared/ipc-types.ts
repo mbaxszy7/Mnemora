@@ -112,6 +112,7 @@ export const IPC_CHANNELS = {
   BOOT_GET_STATUS: "boot:get-status",
   BOOT_STATUS_CHANGED: "boot:status-changed",
   BOOT_RETRY_FTS_REPAIR: "boot:retry-fts-repair",
+  BOOT_RELAUNCH: "boot:relaunch",
   BOOT_FTS_HEALTH_CHANGED: "boot:fts-health-changed",
 } as const;
 

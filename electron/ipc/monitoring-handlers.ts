@@ -5,7 +5,6 @@ import {
   type IPCResult,
   type MonitoringOpenDashboardResult,
 } from "@shared/ipc-types";
-import { monitoringServer } from "../services/monitoring";
 import { getLogger } from "../services/logger";
 import { IPCHandlerRegistry } from "./handler-registry";
 
@@ -25,6 +24,7 @@ export function registerMonitoringHandlers(): void {
     IPC_CHANNELS.MONITORING_OPEN_DASHBOARD,
     async (): Promise<IPCResult<MonitoringOpenDashboardResult>> => {
       try {
+        const { monitoringServer } = await import("../services/monitoring");
         await monitoringServer.start();
         const url = `http://127.0.0.1:${monitoringServer.getPort()}`;
 

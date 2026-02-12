@@ -67,7 +67,7 @@ export function useActivityMonitor() {
       const rangeMs = opts?.rangeMs ?? latestLoadedRangeRef.current;
       const merge = opts?.merge ?? false;
       const markLoading = opts?.markLoading ?? true;
-      const toTs = opts?.toTs ?? Date.now();
+      const toTs = opts?.toTs ?? latestToTsRef.current;
 
       // Track the latest toTs used for fetching to keep filtering consistent
       latestToTsRef.current = toTs;

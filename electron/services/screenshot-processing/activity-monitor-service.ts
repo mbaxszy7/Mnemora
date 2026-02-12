@@ -6,6 +6,7 @@ import type {
   ActivityEventKind,
   ActivityStats,
   EventDetailsResponse,
+  LatestActivityTimestampResponse,
   LongEventMarker,
   RegenerateSummaryResponse,
   SummaryResponse,
@@ -289,6 +290,34 @@ export class ActivityMonitorService {
     }));
 
     return { windows, longEvents };
+  }
+
+  async getLatestActivityTimestamp(): Promise<LatestActivityTimestampResponse> {
+    const db = getDb();
+
+    const latestSummary = db
+      .select({ windowEnd: activitySummaries.windowEnd })
+      .from(activitySummaries)
+      .orderBy(desc(activitySummaries.windowEnd))
+      .limit(1)
+      .get();
+
+    if (latestSummary?.windowEnd) {
+      return { timestamp: latestSummary.windowEnd, source: "activity_summaries" };
+    }
+
+    const latestNode = db
+      .select({ eventTime: contextNodes.eventTime })
+      .from(contextNodes)
+      .orderBy(desc(contextNodes.eventTime))
+      .limit(1)
+      .get();
+
+    if (latestNode?.eventTime) {
+      return { timestamp: latestNode.eventTime, source: "context_nodes" };
+    }
+
+    return { timestamp: null, source: null };
   }
 
   async getSummary(windowStart: number, windowEnd: number): Promise<SummaryResponse | null> {

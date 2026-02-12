@@ -152,3 +152,12 @@ export interface RegenerateSummaryResponse {
   ok: boolean;
   reason?: "not_found" | "not_failed_permanent" | "not_initialized" | "already_running" | "failed";
 }
+
+/**
+ * Response payload for activity:get-latest-timestamp
+ * Returns the timestamp of the most recent activity in the database
+ */
+export interface LatestActivityTimestampResponse {
+  timestamp: number | null; // null if no activities exist
+  source: "context_nodes" | "activity_summaries" | null;
+}

@@ -46,6 +46,7 @@ export default defineConfig({
         "electron/electron-env.d.ts",
         "electron/preload.ts",
         "electron/env.ts",
+        "electron/main.ts",
         "electron/services/**/events.ts",
         "electron/services/screen-capture/index.ts",
         // Database layer (integration)

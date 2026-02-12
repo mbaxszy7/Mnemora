@@ -211,6 +211,7 @@ export type BootPhase =
   | "fts-check"
   | "fts-rebuild"
   | "app-init"
+  | "background-init"
   | "ready"
   | "degraded"
   | "failed";
@@ -220,6 +221,7 @@ export type BootMessageKey =
   | "boot.phase.ftsCheck"
   | "boot.phase.ftsRebuild"
   | "boot.phase.appInit"
+  | "boot.phase.backgroundInit"
   | "boot.phase.ready"
   | "boot.phase.degraded"
   | "boot.phase.failed";

@@ -14,6 +14,7 @@ const BOOT_PHASE_PROGRESS: Record<BootPhase, number> = {
   "fts-check": 35,
   "fts-rebuild": 70,
   "app-init": 90,
+  "background-init": 95,
   ready: 100,
   degraded: 100,
   failed: 100,
@@ -34,8 +35,10 @@ export default function SplashScreen() {
   // Boot status state
   const [bootStatus, setBootStatus] = useState<BootStatus | null>(null);
   const [hasNavigated, setHasNavigated] = useState(false);
+  // Track if we've reached a terminal state (ready/degraded) to prevent state regression
+  const hasReachedTerminalStateRef = useRef(false);
   const mountedAtRef = useRef(Date.now());
-  const minDisplayMs = 6000;
+  const minDisplayMs = 1500;
 
   // LLM configuration check state
   const [configCheckResult, setConfigCheckResult] = useState<{
@@ -68,8 +71,13 @@ export default function SplashScreen() {
       }
     });
 
-    // Subscribe to updates
+    // Subscribe to updates with state machine latch
     const unsubscribe = window.bootApi.onStatusChanged((status) => {
+      if (hasReachedTerminalStateRef.current) return;
+      const isTerminal = status.phase === "ready" || status.phase === "degraded";
+      if (isTerminal) {
+        hasReachedTerminalStateRef.current = true;
+      }
       setBootStatus(status);
     });
 
@@ -154,6 +162,7 @@ export default function SplashScreen() {
       "fts-check": t("boot.phase.ftsCheck"),
       "fts-rebuild": t("boot.phase.ftsRebuild"),
       "app-init": t("boot.phase.appInit"),
+      "background-init": t("boot.phase.backgroundInit"),
       ready: t("boot.phase.ready"),
       degraded: t("boot.phase.degraded"),
       failed: t("boot.phase.failed"),

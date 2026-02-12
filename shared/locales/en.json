@@ -660,6 +660,7 @@
       "ftsCheck": "Checking search...",
       "ftsRebuild": "Repairing search...",
       "appInit": "Loading app...",
+      "backgroundInit": "Starting background services...",
       "ready": "Ready",
       "degraded": "App ready (search limited)",
       "failed": "Failed to start, please restart"

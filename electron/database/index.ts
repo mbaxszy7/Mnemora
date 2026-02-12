@@ -104,40 +104,71 @@ class DatabaseService {
 
     this.logger.info("Running database migrations...");
 
-    // Resolve migrations folder (supports dev, packaged, and unpacked-asar layouts)
-    const candidates: string[] = [];
-
-    // Allow explicit override for tests or custom setups
-    if (process.env.MIGRATIONS_DIR) {
-      candidates.push(process.env.MIGRATIONS_DIR);
-    }
-
-    candidates.push(
-      path.join(process.env.APP_ROOT ?? app.getAppPath(), "electron", "database", "migrations")
-    );
-
-    // Packaged app: prefer unpacked resources path
-    candidates.push(
-      path.join(process.resourcesPath, "app.asar.unpacked", "dist-electron", "migrations"),
-      path.join(process.resourcesPath, "dist-electron", "migrations"),
-      path.join(app.getAppPath(), "dist-electron", "migrations"),
-      // Inside asar archive (Vite copies migrations to dist-electron/migrations)
-      path.join(process.resourcesPath, "app.asar", "dist-electron", "migrations")
-    );
-
-    const migrationsFolder = candidates.find((p) => fs.existsSync(p));
-
-    this.logger.info({ migrationsFolder, candidates }, "Migrations folder resolution");
+    // Resolve migrations folder with optimized path resolution
+    // Prioritize unpacked path for packaged apps to avoid asar extraction overhead
+    const migrationsFolder = this.resolveMigrationsFolder();
 
     if (!migrationsFolder) {
-      this.logger.warn({ candidates }, "Migrations folder not found, skipping migrations");
+      this.logger.warn("Migrations folder not found, skipping migrations");
       return;
     }
+
+    this.logger.info({ migrationsFolder }, "Migrations folder resolved");
 
     // Run migrations using drizzle-orm's migrate function
     migrate(this.db, { migrationsFolder });
 
     this.logger.info("Migrations completed");
+  }
+
+  /**
+   * Resolve migrations folder with minimal file system checks
+   * Optimized for Windows performance: avoids multiple existsSync calls
+   */
+  private resolveMigrationsFolder(): string | null {
+    // Allow explicit override for tests or custom setups
+    if (process.env.MIGRATIONS_DIR && fs.existsSync(process.env.MIGRATIONS_DIR)) {
+      return process.env.MIGRATIONS_DIR;
+    }
+
+    // Development mode: use source path directly
+    if (!app.isPackaged) {
+      const devPath = path.join(
+        process.env.APP_ROOT ?? app.getAppPath(),
+        "electron",
+        "database",
+        "migrations"
+      );
+      if (fs.existsSync(devPath)) {
+        return devPath;
+      }
+      return null;
+    }
+
+    // Packaged app: prioritize unpacked path (fastest, no asar extraction)
+    const unpackedPath = path.join(
+      process.resourcesPath,
+      "app.asar.unpacked",
+      "dist-electron",
+      "migrations"
+    );
+    if (fs.existsSync(unpackedPath)) {
+      return unpackedPath;
+    }
+
+    // Fallback to other common paths (single check each)
+    const fallbackPaths = [
+      path.join(process.resourcesPath, "dist-electron", "migrations"),
+      path.join(app.getAppPath(), "dist-electron", "migrations"),
+    ];
+
+    for (const p of fallbackPaths) {
+      if (fs.existsSync(p)) {
+        return p;
+      }
+    }
+
+    return null;
   }
 
   /**

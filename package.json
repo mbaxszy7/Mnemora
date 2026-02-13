@@ -2,7 +2,7 @@
   "name": "mnemora",
   "productName": "Mnemora",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Intelligent context-aware desktop application - Let your screen become your second brain",
   "license": "MIT",
   "type": "module",

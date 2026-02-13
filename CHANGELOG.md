@@ -1,5 +1,35 @@
 # Changelog
 
+## [0.2.0](https://github.com/mbaxszy7/Mnemora/compare/v0.1.0...v0.2.0) (2026-02-13)
+
+
+### Features
+
+* **splash:** add simulated boot progress with slow start warning ([964903a](https://github.com/mbaxszy7/Mnemora/commit/964903a2539befab9e078b520ccdfc0632ebe477))
+
+
+### Bug Fixes
+
+* **activity-monitor:** use latest activity timestamp as timeline baseline ([a7f9f45](https://github.com/mbaxszy7/Mnemora/commit/a7f9f45cb3a5a374af4195808f7bac6ed596d1b8))
+* **main:** initialize i18n before tray to ensure translations load ([ad6067c](https://github.com/mbaxszy7/Mnemora/commit/ad6067c5a13060e8e8de926a8ac4eb5b91cee252))
+* publish-stable workflow tag mismatch with release-please ([42068f6](https://github.com/mbaxszy7/Mnemora/commit/42068f677e0c19edee39c05bb5dc11c10f1326ac))
+* resolve merge conflict in main.ts combining Squirrel events and error handlers ([f74119e](https://github.com/mbaxszy7/Mnemora/commit/f74119e55d704beab257d3e6b258494e35679c4e))
+* unpack .dll from asar for Windows sharp/libvips and improve inst… ([b810bea](https://github.com/mbaxszy7/Mnemora/commit/b810bea69e81da067cc5f36aa71584e3af785ebe))
+* unpack .dll from asar for Windows sharp/libvips and improve installer UX ([b82cdb9](https://github.com/mbaxszy7/Mnemora/commit/b82cdb9f787387910bcc2d14e50f5a4714800e57))
+* **use-activity-monitor:** use latestToTsRef as default baseline on r… ([150d95c](https://github.com/mbaxszy7/Mnemora/commit/150d95c9730ff6d560e171ef23d7f54c74e8d894))
+* **use-activity-monitor:** use latestToTsRef as default baseline on refresh ([c07726f](https://github.com/mbaxszy7/Mnemora/commit/c07726f520bd4d39ed7fd36e986fdf7c4212476f))
+* win platform installer ([55f697b](https://github.com/mbaxszy7/Mnemora/commit/55f697b12efec03260af28701a21df6e78ef85f8))
+* win platform installer ([a9fb5da](https://github.com/mbaxszy7/Mnemora/commit/a9fb5da6c556eae48406fc3c7c0c9af9ec5f1070))
+* **win:** add Squirrel startup events for ARM64 install and tray i18n refresh ([2606af8](https://github.com/mbaxszy7/Mnemora/commit/2606af8f62847055c31f410b5ec12408489d96f0))
+* **win:** add Squirrel startup events for ARM64 install and tray i18n… ([8f9fe13](https://github.com/mbaxszy7/Mnemora/commit/8f9fe138761187bf127ecccd3594e2d469b5cea9))
+* **win:** use app name as Windows AUMID for notification title ([2f39bdd](https://github.com/mbaxszy7/Mnemora/commit/2f39bdd0f91aaab18131a120cb9f294f23c9430d))
+* **win:** use app name as Windows AUMID for notification title ([a71ed10](https://github.com/mbaxszy7/Mnemora/commit/a71ed10f94595ba2a7358ad8056c41076aff9997))
+
+
+### Performance Improvements
+
+* optimize startup by deferring non-essential imports to dynamic import() ([b1a5c0d](https://github.com/mbaxszy7/Mnemora/commit/b1a5c0d89d972d38a7b0f6a02a5e4147e38674da))
+
 ## [0.1.0](https://github.com/mbaxszy7/Mnemora/compare/mnemora-v0.0.1...mnemora-v0.1.0) (2026-02-08)
 
 

@@ -14,7 +14,7 @@ vi.mock("electron", () => ({
   app: mockApp,
 }));
 
-const mockSpawn = vi.fn(() => ({ on: vi.fn() }));
+const mockSpawn = vi.fn(() => ({ on: vi.fn(), unref: vi.fn() }));
 vi.mock("node:child_process", () => ({
   spawn: mockSpawn,
 }));

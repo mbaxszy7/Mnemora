@@ -39,15 +39,14 @@ export function handleSquirrelEvents(): boolean {
     const exeName = path.basename(process.execPath);
 
     if (squirrelCommand === "--squirrel-install" || squirrelCommand === "--squirrel-updated") {
-      spawn(updateExe, ["--createShortcut", exeName], { detached: true });
+      const child = spawn(updateExe, ["--createShortcut", exeName], { detached: true });
+      child.unref();
     } else if (squirrelCommand === "--squirrel-uninstall") {
-      spawn(updateExe, ["--removeShortcut", exeName], { detached: true });
+      const child = spawn(updateExe, ["--removeShortcut", exeName], { detached: true });
+      child.unref();
     }
 
     app.quit();
-    if (!process.env.VITEST) {
-      process.exit(0);
-    }
     return true;
   }
 
